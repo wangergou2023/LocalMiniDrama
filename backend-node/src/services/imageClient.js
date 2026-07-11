@@ -11,6 +11,7 @@ const taskService = require('./taskService');
 const { loadConfig } = require('../config');
 const { postJSONWithTimeout } = require('./aiClient');
 const seedance2AssetGuards = require('../utils/seedance2AssetGuards');
+const { callComfyUIImageApi } = require("./comfyuiClient");
 
 /** 图生 POST 使用 Node http(s)，默认 10 分钟，避免 undici fetch 大包体/慢链路下模糊失败 */
 const IMAGE_HTTP_TIMEOUT_MS = 600000;
@@ -94,6 +95,7 @@ function inferProtocol(provider, model) {
   const p = String(provider || '').toLowerCase();
   if (p === 'dashscope' || p === 'qwen_image') return 'dashscope';
   if (p === 'nano_banana') return 'nano_banana';
+  if (p === 'comfyui' || p === 'comfy') return 'comfyui';
   if (p === 'gemini' || p === 'google') return 'gemini';
   if (p === 'volces' || p === 'volcengine' || p === 'volc') return 'volcengine';
   if (/seedream|doubao/i.test(model || '')) return 'volcengine';
@@ -1596,6 +1598,15 @@ async function callImageApi(db, log, opts) {
       files_base_url: opts.files_base_url,
       storage_local_path: opts.storage_local_path,
       negative_prompt: mergedNegativePrompt,
+    });
+  }
+
+  if (protocol === 'comfyui') {
+    return callComfyUIImageApi(config, log, {
+      prompt: effectivePrompt, model, size, image_gen_id,
+      reference_image_urls: opts.reference_image_urls,
+      files_base_url: opts.files_base_url,
+      storage_local_path: opts.storage_local_path,
     });
   }
 

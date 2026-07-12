@@ -4,7 +4,9 @@ export const videosAPI = {
   list(params) {
     return request.get('/videos', { params: params || {} })
   },
-  /** 创建单条分镜视频生成任务，body: { drama_id, storyboard_id, prompt, image_url?, model?, ... } */
+  delete(id) {
+    return request.delete('/videos/' + id)
+  },
   create(body) {
     return request.post('/videos', body)
   }

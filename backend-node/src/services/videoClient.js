@@ -1,6 +1,7 @@
 // ? Go pkg/video + VideoGenerationService ????????? API??????(????)
 const fs = require('fs');
 const path = require('path');
+const { callComfyUIVideoApi } = require("./comfyuiClient");
 const aiConfigService = require('./aiConfigService');
 let sharp; try { sharp = require('sharp'); } catch (_) { sharp = null; }
 const { uploadLocalImageToProxy, uploadToImageProxy } = require('./uploadService');
@@ -3436,6 +3437,19 @@ async function callVideoApi(db, log, opts) {
     model,
     endpoint: config.endpoint || '(auto)',
   });
+
+  if (protocol === 'comfyui') {
+    return callComfyUIVideoApi(config, log, {
+      prompt,
+      model,
+      image_url: opts.image_url || opts.first_frame_url,
+      aspect_ratio,
+      duration: opts.duration,
+      files_base_url: opts.files_base_url,
+      storage_local_path: opts.storage_local_path,
+      video_gen_id: opts.video_gen_id,
+    });
+  }
 
   if (protocol === 'jimeng_ai_api') {
     return callJimengAiApiVideo(config, log, {

@@ -1501,6 +1501,7 @@
                   :title="`${item.label}（点击切换）`"
                   @click="onSelectSbMainVideo(sb, item.video)"
                 >
+                  <span class="sb-video-thumb-delete" @click.stop="onDeleteSbVideo(sb.id, item.video)">✕</span>
                   <video :src="item.src" preload="metadata" class="sb-video-thumb-player" />
                   <span class="sb-video-thumb-label">{{ item.label }}</span>
                 </div>
@@ -8117,6 +8118,22 @@ watch(
     }
   }
 )
+
+/** 删除分镜视频 */
+async function onDeleteSbVideo(storyboardId, video) {
+  if (!video || !video.id) return;
+  try {
+    await ElMessageBox.confirm('确定要删除该视频记录吗？', '提示', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' });
+  } catch { return; }
+  try {
+    await videosAPI.delete(video.id);
+    ElMessage.success('视频已删除');
+    const res = await videosAPI.list({ storyboard_id: storyboardId, page: 1, page_size: 50 });
+    sbVideos.value[storyboardId] = (res && res.items) ? res.items : [];
+  } catch (e) {
+    ElMessage.error('删除失败：' + (e?.message || e));
+  }
+}
 </script>
 
 <style scoped>
@@ -10698,4 +10715,25 @@ html.light .frame-layout-anchor {
   margin-top: 4px;
   line-height: 1.4;
 }
+
+.sb-video-thumb-delete {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+  z-index: 2;
+}
+.sb-video-thumb:hover .sb-video-thumb-delete { opacity: 1; }
+.sb-video-thumb-delete:hover { background: #f56c6c; }
 </style>

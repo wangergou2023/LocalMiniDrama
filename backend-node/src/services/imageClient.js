@@ -2,6 +2,8 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const http = require('http');
+const https = require('https');
 const aiConfigService = require('./aiConfigService');
 const uploadService = require('./uploadService');
 const storageLayout = require('./storageLayout');
@@ -849,6 +851,131 @@ function resolveImageRef(value, filesBaseUrl, storageLocalPath) {
   }
 }
 
+/**
+ * 将 resolveImageRef 的输出转为 { buffer, filename, mimeType }，供 multipart form-data 使用。
+ * 支持 base64 data URL 和 HTTP(S) URL 两种情况。
+ */
+async function bufferFromRef(ref, log) {
+  const s = String(ref).trim();
+  // base64 data URL
+  if (s.startsWith('data:')) {
+    const match = s.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) throw new Error('Invalid base64 data URL');
+    const mimeType = match[1];
+    const ext = mimeType.split('/')[1] || 'png';
+    const buffer = Buffer.from(match[2], 'base64');
+    return { buffer, filename: `ref_${crypto.randomBytes(4).toString('hex')}.${ext}`, mimeType };
+  }
+  // HTTP(S) URL → 下载
+  if (s.startsWith('http://') || s.startsWith('https://')) {
+    return new Promise((resolve, reject) => {
+      const parsed = new URL(s);
+      const mod = parsed.protocol === 'https:' ? https : http;
+      const req = mod.get(s, { timeout: 60000 }, (res) => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(`Download ref failed: ${res.statusCode}`));
+          return;
+        }
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const buffer = Buffer.concat(chunks);
+          const contentType = res.headers['content-type'] || 'image/png';
+          const ext = contentType.split('/')[1] || 'png';
+          resolve({ buffer, filename: `ref_${crypto.randomBytes(4).toString('hex')}.${ext}`, mimeType: contentType });
+        });
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('Download ref timeout')); });
+    });
+  }
+  // 本地路径 → readFile
+  try {
+    if (fs.existsSync(s)) {
+      const buf = fs.readFileSync(s);
+      const ext = path.extname(s).toLowerCase();
+      const mime = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' }[ext] || 'image/png';
+      return { buffer: buf, filename: `ref_${crypto.randomBytes(4).toString('hex')}${ext || '.png'}`, mimeType: mime };
+    }
+  } catch (_) {}
+  throw new Error(`Cannot resolve ref to buffer: ${s.slice(0, 80)}`);
+}
+
+/**
+ * 发送 multipart/form-data POST 请求（用于 OpenAI /images/edits 等原生端点）
+ */
+function postMultipartWithTimeout(url, fields, files, bearerToken, timeoutMs = 600000) {
+  return new Promise((resolve, reject) => {
+    const boundary = '----FormBoundary' + crypto.randomBytes(16).toString('hex');
+    const CRLF = '\r\n';
+    const parts = [];
+
+    // 文本字段
+    for (const [name, value] of Object.entries(fields)) {
+      if (value == null) continue;
+      parts.push(Buffer.from(
+        `--${boundary}${CRLF}Content-Disposition: form-data; name="${name}"${CRLF}${CRLF}${String(value)}${CRLF}`
+      ));
+    }
+
+    // 文件字段
+    for (const { name, buffer, filename, mimeType } of files) {
+      parts.push(Buffer.from(
+        `--${boundary}${CRLF}Content-Disposition: form-data; name="${name}"; filename="${filename}"${CRLF}Content-Type: ${mimeType}${CRLF}${CRLF}`
+      ));
+      parts.push(buffer);
+      parts.push(Buffer.from(CRLF));
+    }
+
+    // 结束边界
+    parts.push(Buffer.from(`--${boundary}--${CRLF}`));
+
+    const body = Buffer.concat(parts);
+    const parsed = new URL(url);
+    const mod = parsed.protocol === 'https:' ? https : http;
+
+    const headers = {
+      'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      'Content-Length': String(body.length),
+      Authorization: 'Bearer ' + (bearerToken || ''),
+    };
+
+    const options = {
+      hostname: parsed.hostname,
+      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: 'POST',
+      headers,
+    };
+
+    const req = mod.request(options, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        clearTimeout(timer);
+        const raw = Buffer.concat(chunks).toString('utf-8');
+        resolve({ statusCode: res.statusCode || 0, raw });
+      });
+      res.on('error', (e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
+    });
+
+    const timer = setTimeout(() => {
+      req.destroy();
+      reject(new Error(`Multipart HTTP timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    req.on('error', (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    req.write(body);
+    req.end();
+  });
+}
+
 // 通义万象：支持参考图（角色/场景），content 为 [text, image, image, ...]；本地调试时参考图可转 base64
 // 通义千问 qwen-image：仅支持 content 中一个 text，用同步接口，parameters 不含 stream/enable_interleave
 async function callDashScopeImageApi(config, log, opts) {
@@ -1500,19 +1627,27 @@ async function callImageApi(db, log, opts) {
     });
   }
 
-  const url = buildImageUrl(config);
+  const baseUrl = buildImageUrl(config);
   const isVolc = protocol === 'volcengine';
   const isAgnes = isAgnesImageConfig(config, model);
   // doubao-seedream 系列模型（含通过自定义代理使用的场景）：使用 volcengine 图片 API 规范
   const isSeedream = isVolc || /seedream|doubao/i.test(model);
+  // OpenAI 原生 API（非 volcengine/seedream/agnes）：有参考图时切到 /images/edits 端点
+  // 因为 /images/generations 是纯文生图，OpenAI 未文档化 image 参数
+  const isOpenAINative = !isVolc && !isSeedream && !isAgnes;
   // 解析参考图：本地路径/localhost URL → base64，公网 URL → 直接传
   const rawRefs = Array.isArray(reference_image_urls) ? reference_image_urls.filter(Boolean) : [];
   const resolvedRefs = rawRefs.map((r) => resolveImageRef(r, files_base_url, storage_local_path)).filter(Boolean);
+  // OpenAI 原生有参考图时自动切换到 edits 端点
+  const url = (isOpenAINative && resolvedRefs.length > 0)
+    ? baseUrl.replace(/\/images\/generations\/?$/, '/images/edits')
+    : baseUrl;
   if (resolvedRefs.length > 0) {
     log.info('Image API request with reference images', {
       url: url.slice(0, 60), model, image_gen_id,
       ref_count: resolvedRefs.length,
       ref_types: resolvedRefs.map((r) => (r.startsWith('data:') ? 'base64' : 'url')),
+      endpoint_switched: baseUrl !== url ? `${baseUrl} → ${url}` : undefined,
     });
   }
 
@@ -1521,6 +1656,74 @@ async function callImageApi(db, log, opts) {
   if (isSeedream && size) effectiveSize = fixSeedreamSize(size);
   else if (isAgnes && size) effectiveSize = fixAgnesImageSize(size);
 
+  // ── OpenAI 原生 API + 参考图：multipart/form-data 发到 /images/edits ──────
+  if (isOpenAINative && resolvedRefs.length > 0) {
+    log.info('OpenAI native edit request (multipart)', {
+      url: url.slice(0, 60), model, image_gen_id,
+      ref_count: resolvedRefs.length, size: effectiveSize,
+    });
+
+    let refBuffers;
+    try {
+      refBuffers = await Promise.all(resolvedRefs.map((r, i) =>
+        bufferFromRef(r, log).then(b => ({ ...b, name: 'image' }))
+      ));
+    } catch (e) {
+      log.error('Failed to prepare ref buffers for OpenAI edit', { image_gen_id, error: e.message });
+      return { error: '参考图处理失败: ' + e.message };
+    }
+
+    const fields = {
+      model,
+      prompt: effectivePrompt,
+      ...(effectiveSize ? { size: effectiveSize } : {}),
+      ...(quality ? { quality } : {}),
+    };
+
+    let raw;
+    let httpStatus;
+    try {
+      const out = await postMultipartWithTimeout(url, fields, refBuffers, config.api_key || '', IMAGE_HTTP_TIMEOUT_MS);
+      httpStatus = out.statusCode;
+      raw = out.raw;
+    } catch (e) {
+      log.error('OpenAI edit API network error', { image_gen_id, error: e.message, url: url.slice(0, 80) });
+      return { error: e.message && e.message.includes('timeout')
+        ? e.message
+        : ('图片生成网络请求失败: ' + e.message) };
+    }
+
+    if (httpStatus < 200 || httpStatus >= 300) {
+      log.error('OpenAI edit API failed', { status: httpStatus, body: raw.slice(0, 300) });
+      let errMsg = '图片生成请求失败: ' + httpStatus;
+      try {
+        const errJson = JSON.parse(raw);
+        const msg = errJson.error?.message || errJson.message || errJson.error;
+        if (msg) errMsg += ' - ' + (typeof msg === 'string' ? msg : JSON.stringify(msg).slice(0, 200));
+      } catch (_) {
+        if (raw && raw.length) errMsg += ' - ' + raw.slice(0, 200);
+      }
+      return { error: errMsg };
+    }
+
+    let data;
+    try { data = JSON.parse(raw); } catch (e) {
+      log.warn('OpenAI edit API response parse error', { image_gen_id, raw_preview: raw.slice(0, 200) });
+      return { error: '图片生成返回格式异常' };
+    }
+    const item = data.data && data.data[0];
+    let imageUrl = item && (item.url || item.image_url);
+    if (!imageUrl && item?.b64_json) {
+      imageUrl = `data:image/png;base64,${String(item.b64_json).replace(/\s/g, '')}`;
+    }
+    if (!imageUrl) {
+      log.warn('OpenAI edit API no image in response', { image_gen_id, response_keys: Object.keys(data || {}) });
+      return { error: '未返回图片地址' };
+    }
+    return { image_url: imageUrl };
+  }
+
+  // ── 通用 OpenAI 兼容 / Volcengine / Agnes 路径（JSON）──────────────────
   const body = {
     model,
     prompt: effectivePrompt,
@@ -1674,6 +1877,7 @@ function createAndGenerateImage(db, log, opts) {
   setImmediate(async () => {
     try {
       db.prepare('UPDATE image_generations SET status = ? WHERE id = ?').run('processing', imageGenId);
+      taskService.updateTaskStatus(db, taskId, 'processing', 0, '正在生成图片...');
       const result = await callImageApi(db, log, {
         prompt,
         model,

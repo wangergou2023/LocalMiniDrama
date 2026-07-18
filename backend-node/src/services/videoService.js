@@ -439,26 +439,36 @@ async function processVideoGeneration(db, log, videoGenId) {
         `正在上传 ${reference_urls.length} 张参考图到图床…`
       );
     }
-    const result = await videoClient.callVideoApi(db, log, {
-      prompt: row.prompt,
-      model: row.model,
-      duration: effectiveDuration,
-      aspect_ratio: rowForAspect.aspect_ratio,
-      resolution: row.resolution,
-      seed: row.seed,
-      camera_fixed: row.camera_fixed,
-      watermark: row.watermark,
-      provider: row.provider,
-      drama_id: row.drama_id,
-      storyboard_id: row.storyboard_id || undefined,
-      image_url: row.image_url,
-      first_frame_url: row.first_frame_url,
-      last_frame_url: hasOmniRefs ? undefined : row.last_frame_url,
-      reference_urls,
-      files_base_url: filesBaseUrl,
-      storage_local_path: storageLocalPath,
-      video_gen_id: videoGenId,
+    const stopHeartbeat = taskService.startHeartbeat(db, row.task_id, () => {
+      db.prepare('UPDATE video_generations SET updated_at = ? WHERE id = ? AND status IN (?, ?)').run(
+        new Date().toISOString(), videoGenId, 'pending', 'processing'
+      );
     });
+    let result;
+    try {
+      result = await videoClient.callVideoApi(db, log, {
+        prompt: row.prompt,
+        model: row.model,
+        duration: effectiveDuration,
+        aspect_ratio: rowForAspect.aspect_ratio,
+        resolution: row.resolution,
+        seed: row.seed,
+        camera_fixed: row.camera_fixed,
+        watermark: row.watermark,
+        provider: row.provider,
+        drama_id: row.drama_id,
+        storyboard_id: row.storyboard_id || undefined,
+        image_url: row.image_url,
+        first_frame_url: row.first_frame_url,
+        last_frame_url: hasOmniRefs ? undefined : row.last_frame_url,
+        reference_urls,
+        files_base_url: filesBaseUrl,
+        storage_local_path: storageLocalPath,
+        video_gen_id: videoGenId,
+      });
+    } finally {
+      stopHeartbeat();
+    }
     const now2 = new Date().toISOString();
     if (result.error) {
       setVideoGenFailed(db, videoGenId, result.error, now2);

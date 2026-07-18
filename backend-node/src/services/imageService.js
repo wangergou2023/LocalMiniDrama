@@ -1363,22 +1363,32 @@ async function processImageGeneration(db, log, imageGenId) {
       });
     }
 
-    const result = await imageClient.callImageApi(db, log, {
-      prompt: finalPrompt,
-      model: row.model,
-      size: imageSize,
-      quality: row.quality,
-      drama_id: row.drama_id,
-      character_id: row.character_id,
-      image_gen_id: imageGenId,
-      imageServiceType,
-      reference_image_urls: reference_image_urls || undefined,
-      files_base_url: filesBaseUrl,
-      storage_local_path: storageLocalPath,
-      system_prompt: apiSystemPrompt,
-      negative_prompt: row.negative_prompt || undefined,
-      frame_identity_lock: isFrameIdentityLock,
+    const stopHeartbeat = taskService.startHeartbeat(db, row.task_id, () => {
+      db.prepare('UPDATE image_generations SET updated_at = ? WHERE id = ? AND status IN (?, ?)').run(
+        new Date().toISOString(), imageGenId, 'pending', 'processing'
+      );
     });
+    let result;
+    try {
+      result = await imageClient.callImageApi(db, log, {
+        prompt: finalPrompt,
+        model: row.model,
+        size: imageSize,
+        quality: row.quality,
+        drama_id: row.drama_id,
+        character_id: row.character_id,
+        image_gen_id: imageGenId,
+        imageServiceType,
+        reference_image_urls: reference_image_urls || undefined,
+        files_base_url: filesBaseUrl,
+        storage_local_path: storageLocalPath,
+        system_prompt: apiSystemPrompt,
+        negative_prompt: row.negative_prompt || undefined,
+        frame_identity_lock: isFrameIdentityLock,
+      });
+    } finally {
+      stopHeartbeat();
+    }
     log.info('[图生] Step4 图生 API 返回', { id: imageGenId, api_ms: Date.now() - tApi, has_error: !!result.error, elapsed: elapsed() });
 
     const now2 = new Date().toISOString();

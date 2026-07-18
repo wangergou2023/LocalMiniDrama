@@ -58,6 +58,32 @@ function updateTaskResult(db, taskId, result) {
   ).run(resultStr, now, now, taskId);
 }
 
+/** 心跳：仅刷新 updated_at（任务仍活跃时），供前端僵尸任务检测判定"有进展" */
+function touchTask(db, taskId) {
+  if (!taskId) return;
+  try {
+    db.prepare(
+      `UPDATE async_tasks SET updated_at = ? WHERE id = ? AND status IN ('pending', 'processing', 'running')`
+    ).run(new Date().toISOString(), taskId);
+  } catch (_) {}
+}
+
+/**
+ * 启动长任务心跳定时器，返回停止函数。用法：
+ *   const stop = taskService.startHeartbeat(db, taskId, [其他表刷新函数]);
+ *   try { ...长调用... } finally { stop(); }
+ */
+function startHeartbeat(db, taskId, extraTouch, intervalMs = 60000) {
+  const timer = setInterval(() => {
+    touchTask(db, taskId);
+    if (typeof extraTouch === 'function') {
+      try { extraTouch(); } catch (_) {}
+    }
+  }, intervalMs);
+  if (timer.unref) timer.unref();
+  return () => clearInterval(timer);
+}
+
 function rowToTask(r) {
   return {
     id: r.id,
@@ -121,6 +147,8 @@ module.exports = {
   updateTaskStatus,
   updateTaskError,
   updateTaskResult,
+  touchTask,
+  startHeartbeat,
   failOrphanedAsyncTasksOnStartup,
   cancelTask,
   ORPHAN_ASYNC_TASK_MSG,

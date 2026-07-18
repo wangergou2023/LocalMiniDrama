@@ -204,11 +204,8 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
     const now = Date.now()
 
     for (const t of running) {
-      if (t.startedAt && now - t.startedAt > STALE_TASK_MS) {
-        markFailed(t, '任务等待超时，已自动清除（请刷新确认是否已完成）')
-        continue
-      }
-
+      // 有 taskId 的任务以后端状态为准（后端有 60s 心跳 + 僵尸检测），不按本地时长强杀，
+      // 避免多个视频在 ComfyUI 队列串行排队时（等待可远超 30 分钟）被误清理
       if (t.taskId) {
         try {
           const remote = await taskAPI.get(t.taskId)
@@ -230,6 +227,12 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
         } catch (_) {
           // 网络异常跳过，下次 reconcile 再试
         }
+        continue
+      }
+
+      // 无 taskId 的本地条目才按本地时长兜底清理
+      if (t.startedAt && now - t.startedAt > STALE_TASK_MS) {
+        markFailed(t, '任务等待超时，已自动清除（请刷新确认是否已完成）')
         continue
       }
 
@@ -309,6 +312,18 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
         if (attempts < maxAttempts) {
           setTimeout(tick, interval)
         } else {
+          // 达到轮询上限时，若后端任务仍活跃且心跳新鲜（未被判僵尸），说明只是排队/执行慢，
+          // 重置计数继续等待；仅在任务真正无进展时才按超时处理
+          let stillAlive = false
+          try {
+            const t2 = await taskAPI.get(taskId)
+            stillAlive = isActiveTaskStatus(t2.status) && !isOrphanedProcessingTask(t2)
+          } catch (_) {}
+          if (stillAlive) {
+            attempts = 0
+            setTimeout(tick, interval)
+            return
+          }
           const timeoutMsg = options.timeoutMessage
             || '生成任务已超时（超过15分钟），请刷新页面查看是否已完成'
           markFailed(key, timeoutMsg)

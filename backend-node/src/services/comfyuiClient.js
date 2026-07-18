@@ -1,28 +1,11 @@
 /**
  * ComfyUI Image Generation Client
- * 支持 Z-Image Turbo（文生图）和 Flux Kontext（多参考图）
+ * 支持 Qwen-Image-Edit-2511（多参考图/图像编辑，GGUF）和 Z-Image Turbo（纯文生图）
  */
 const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-
-const FLUX_KONTEXT_WORKFLOW = {
-  "37": {"inputs":{"unet_name":"flux1-dev-kontext_fp8_scaled.safetensors","weight_dtype":"default"},"class_type":"UNETLoader"},
-  "38": {"inputs":{"clip_name1":"clip_l.safetensors","clip_name2":"t5xxl_fp8_e4m3fn_scaled.safetensors","type":"flux"},"class_type":"DualCLIPLoader"},
-  "39": {"inputs":{"vae_name":"ae.safetensors"},"class_type":"VAELoader"},
-  // LoadImage/ImageBatch 节点在运行时动态创建（根据参考图数量）
-  "42": {"inputs":{"image":["batch",0]},"class_type":"FluxKontextImageScale"},
-  "124": {"inputs":{"pixels":["42",0],"vae":["39",0]},"class_type":"VAEEncode"},
-  "6": {"inputs":{"clip":["38",0],"clip_l":"__PROMPT__","t5xxl":"__PROMPT__","guidance":2.5},"class_type":"CLIPTextEncodeFlux"},
-  "177": {"inputs":{"conditioning":["6",0],"latent":["124",0]},"class_type":"ReferenceLatent"},
-  "35": {"inputs":{"guidance":2.5,"conditioning":["177",0]},"class_type":"FluxGuidance"},
-  "neg": {"inputs":{"conditioning":["6",0]},"class_type":"ConditioningZeroOut"},
-  "188": {"inputs":{"width":1024,"height":1024,"batch_size":1},"class_type":"EmptySD3LatentImage"},
-  "31": {"inputs":{"seed":42,"steps":20,"cfg":1,"sampler_name":"euler","scheduler":"simple","denoise":1,"model":["37",0],"positive":["35",0],"negative":["neg",0],"latent_image":["188",0]},"class_type":"KSampler"},
-  "8": {"inputs":{"samples":["31",0],"vae":["39",0]},"class_type":"VAEDecode"},
-  "136": {"inputs":{"images":["8",0],"filename_prefix":"ComfyUI"},"class_type":"SaveImage"}
-};
 
 const ZIMAGE_WORKFLOW = {
   "1": {"inputs":{"unet_name":"z_image_turbo_bf16.safetensors","weight_dtype":"default"},"class_type":"UNETLoader"},
@@ -113,32 +96,182 @@ function httpDownload(url, destPath) {
   });
 }
 
-async function prepareReferenceImages(referenceUrls, comfyuiInputDir, log) {
+async function prepareReferenceImages(referenceUrls, comfyuiInputDir, log, storageLocalPath) {
   if (!Array.isArray(referenceUrls) || referenceUrls.length === 0) return [];
   const filenames = [];
+  const srcIndices = [];
   for (let i = 0; i < referenceUrls.length; i++) {
     const ref = referenceUrls[i];
     if (!ref) continue;
     try {
       const name = 'ref_' + Date.now() + '_' + i + '.png';
       const destPath = path.join(comfyuiInputDir, name);
+      let via = null;
       if (ref.startsWith('data:')) {
         const base64Data = ref.replace(/^data:image\/\w+;base64,/, '');
         fs.writeFileSync(destPath, Buffer.from(base64Data, 'base64'));
+        via = 'base64';
       } else if (ref.startsWith('http://') || ref.startsWith('https://')) {
         await httpDownload(ref, destPath);
+        via = 'http';
       } else if (fs.existsSync(ref)) {
         fs.copyFileSync(ref, destPath);
+        via = 'abs-path';
+      } else if (storageLocalPath && fs.existsSync(path.join(storageLocalPath, ref.replace(/^\//, '')))) {
+        fs.copyFileSync(path.join(storageLocalPath, ref.replace(/^\//, '')), destPath);
+        via = 'storage-rel';
       } else {
-        log.warn('[ComfyUI] Reference image not found: ' + ref);
+        log.warn('[ComfyUI] 参考图 ' + (i + 1) + '/' + referenceUrls.length + ' 未找到，跳过: ' + String(ref).slice(0, 160));
         continue;
       }
+      log.info('[ComfyUI] 参考图 ' + (i + 1) + '/' + referenceUrls.length + ' 已就绪 (' + via + '): ' + String(ref).slice(0, 120) + ' -> ' + name);
       filenames.push(name);
+      srcIndices.push(i);
     } catch (e) {
-      log.warn('[ComfyUI] Failed to prepare reference image: ' + e.message);
+      log.warn('[ComfyUI] 参考图 ' + (i + 1) + '/' + referenceUrls.length + ' 处理失败: ' + String(ref).slice(0, 120) + ' err=' + e.message);
     }
   }
+  filenames.srcIndices = srcIndices;
   return filenames;
+}
+
+// Qwen-Image-Edit-2511 GGUF 工作流固定文件名（models 目录下）
+const QWEN_EDIT_FILES = {
+  unet: 'qwen-image-edit-2511-Q4_K_M.gguf',
+  clip: 'qwen_2.5_vl_7b_fp8_scaled.safetensors',
+  vae: 'qwen_image_vae.safetensors',
+  lightning_lora: 'Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors',
+  angles_lora: 'qwen-image-edit-2511-multiple-angles-lora.safetensors',
+};
+
+/** Qwen-Edit 输出尺寸：保持宽高比，总像素压到 ~1.5MP 内，边长对齐 16 */
+function qwenDims(size) {
+  const d = parseSize(size);
+  const maxPx = 1664 * 928;
+  const px = d.w * d.h;
+  const scale = px > maxPx ? Math.sqrt(maxPx / px) : 1;
+  const w = Math.max(512, Math.round(d.w * scale / 16) * 16);
+  const h = Math.max(512, Math.round(d.h * scale / 16) * 16);
+  return { w, h };
+}
+
+/**
+ * 按参考图标签分组：首帧站位锁+场景 / 角色 / 道具（无标签的归入道具组）。
+ * labels 形如 'Image 2: character appearance reference for "张伟" ...'，与 refs 按下标对齐。
+ */
+function groupQwenRefs(refFilenames, labels) {
+  const groups = { lock: [], scene: [], chars: [], props: [] };
+  const names = { chars: [], props: [] };
+  for (let i = 0; i < refFilenames.length; i++) {
+    const lbl = (labels && labels[i]) || '';
+    const nameMatch = lbl.match(/for\s+"([^"]+)"/i);
+    const name = nameMatch ? nameMatch[1] : '';
+    if (/LAYOUT_LOCK/i.test(lbl)) {
+      groups.lock.push(refFilenames[i]);
+    } else if (/scene background/i.test(lbl)) {
+      groups.scene.push(refFilenames[i]);
+    } else if (/character appearance/i.test(lbl)) {
+      groups.chars.push(refFilenames[i]);
+      names.chars.push(name || ('角色' + (groups.chars.length)));
+    } else {
+      groups.props.push(refFilenames[i]);
+      names.props.push(name || ('物品' + (groups.props.length)));
+    }
+  }
+  return { groups, names };
+}
+
+/**
+ * Qwen-Image-Edit-2511（GGUF Q4_K_M + Lightning 4步）工作流。
+ * 参考官方 image_qwen_image_edit_2509 模板 Raw Latent 变体：
+ *   UNET(GGUF) → LoRA → ModelSamplingAuraFlow(3) → CFGNorm → KSampler(4步 cfg1)
+ *   TextEncodeQwenImageEditPlus 原生吃 image1..3（视觉token+参考潜变量）
+ *   三通道分配：image1=场景整图，image2=全部角色 ImageStitch 横拼，image3=全部道具横拼
+ * prompt 含 <sks> 触发词时自动加挂 Multiple-Angles 机位 LoRA。
+ * 返回 { wf, header }：header 为按通道生成的中文参考说明，需拼在提示词前。
+ */
+function buildQwenEditWorkflow(prompt, dims, seed, refFilenames, refLabels) {
+  const useAnglesLora = /<sks>/i.test(prompt || '');
+  const wf = {
+    'unet': { inputs: { unet_name: QWEN_EDIT_FILES.unet }, class_type: 'UnetLoaderGGUF' },
+    'clip': { inputs: { clip_name: QWEN_EDIT_FILES.clip, type: 'qwen_image', device: 'default' }, class_type: 'CLIPLoader' },
+    'vae': { inputs: { vae_name: QWEN_EDIT_FILES.vae }, class_type: 'VAELoader' },
+    'lora_lightning': { inputs: { lora_name: QWEN_EDIT_FILES.lightning_lora, strength_model: 1, model: ['unet', 0] }, class_type: 'LoraLoaderModelOnly' },
+    'shift': { inputs: { shift: 3, model: [useAnglesLora ? 'lora_angles' : 'lora_lightning', 0] }, class_type: 'ModelSamplingAuraFlow' },
+    'cfgnorm': { inputs: { strength: 1, model: ['shift', 0] }, class_type: 'CFGNorm' },
+    'pos': { inputs: { clip: ['clip', 0], prompt: prompt || '', vae: ['vae', 0] }, class_type: 'TextEncodeQwenImageEditPlus' },
+    'negp': { inputs: { clip: ['clip', 0], prompt: '' }, class_type: 'TextEncodeQwenImageEditPlus' },
+    'latent': { inputs: { width: dims.w, height: dims.h, batch_size: 1 }, class_type: 'EmptySD3LatentImage' },
+    'sampler': { inputs: { seed, steps: 4, cfg: 1, sampler_name: 'euler', scheduler: 'simple', denoise: 1, model: ['cfgnorm', 0], positive: ['pos', 0], negative: ['negp', 0], latent_image: ['latent', 0] }, class_type: 'KSampler' },
+    'decode': { inputs: { samples: ['sampler', 0], vae: ['vae', 0] }, class_type: 'VAEDecode' },
+    'save': { inputs: { images: ['decode', 0], filename_prefix: 'LocalMiniDrama_qwen' }, class_type: 'SaveImage' },
+  };
+  if (useAnglesLora) {
+    wf['lora_angles'] = { inputs: { lora_name: QWEN_EDIT_FILES.angles_lora, strength_model: 1, model: ['lora_lightning', 0] }, class_type: 'LoraLoaderModelOnly' };
+  }
+
+  /** 组内多图 → LoadImage(+ImageStitch 横拼) → 返回可接入 image1..3 的 [nodeKey, 0] */
+  let nodeSeq = 0;
+  function buildGroupInput(files, tag) {
+    const imgKeys = files.map((f) => {
+      const k = 'ld_' + tag + '_' + (nodeSeq++);
+      wf[k] = { inputs: { image: f }, class_type: 'LoadImage' };
+      return k;
+    });
+    let prev = imgKeys[0];
+    for (let i = 1; i < imgKeys.length; i++) {
+      const sk = 'st_' + tag + '_' + (nodeSeq++);
+      wf[sk] = {
+        inputs: {
+          image1: [prev, 0], image2: [imgKeys[i], 0],
+          direction: 'right', match_image_size: true, spacing_width: 16, spacing_color: 'white'
+        },
+        class_type: 'ImageStitch'
+      };
+      prev = sk;
+    }
+    return [prev, 0];
+  }
+
+  const { groups, names } = groupQwenRefs(refFilenames, refLabels || []);
+  const slots = [];
+  const headerLines = [];
+  const slot1Files = [...groups.lock, ...groups.scene.slice(0, 1)];
+  if (slot1Files.length) {
+    let desc;
+    if (groups.lock.length && groups.scene.length) {
+      desc = '左为首帧画面参考（保持构图与人物站位一致），右为场景环境参考（只取空间、光线与氛围）';
+    } else if (groups.lock.length) {
+      desc = '首帧画面参考（保持构图、人物站位与环境一致，仅演化动作与表情）';
+    } else {
+      desc = '场景环境参考（只取空间布局、光线与氛围，禁止照搬其取景/构图）';
+    }
+    slots.push({ input: buildGroupInput(slot1Files, 'scene'), desc });
+  }
+  if (groups.chars.length) {
+    slots.push({
+      input: buildGroupInput(groups.chars, 'char'),
+      desc: groups.chars.length > 1
+        ? `角色外貌参考拼图，从左到右依次为：${names.chars.join('、')}（严格保持每个人的长相、发型、服装）`
+        : `角色「${names.chars[0]}」外貌参考（严格保持长相、发型、服装）`
+    });
+  }
+  if (groups.props.length) {
+    slots.push({
+      input: buildGroupInput(groups.props, 'prop'),
+      desc: groups.props.length > 1
+        ? `道具外观参考拼图，从左到右依次为：${names.props.join('、')}`
+        : `道具「${names.props[0]}」外观参考`
+    });
+  }
+  for (let i = 0; i < Math.min(slots.length, 3); i++) {
+    wf['pos'].inputs['image' + (i + 1)] = slots[i].input;
+    headerLines.push(`图${i + 1}：${slots[i].desc}`);
+  }
+  const header = headerLines.length
+    ? headerLines.join('\n') + '\n\n生成一张全新的单幅完整画面（禁止拼贴、分屏、宫格）：\n'
+    : '';
+  return { wf, header };
 }
 
 async function callComfyUIImageApi(config, log, opts) {
@@ -146,10 +279,13 @@ async function callComfyUIImageApi(config, log, opts) {
   const baseUrl = (config.base_url || 'http://127.0.0.1:8188').replace(/\/$/, '');
   const hasRefs = Array.isArray(reference_image_urls) && reference_image_urls.some(Boolean);
 
-  // model 可能是字符串或数组（LocalMiniDrama 多模型选择）
-  const modelStr = Array.isArray(config.model) ? config.model.join(',') : (config.model || '');
-  const useFlux = !modelStr.toLowerCase().includes("z-image");
-  const workflowName = useFlux ? 'Flux Kontext' : 'Z-Image Turbo';
+  // 优先用上游解析好的模型名（default_model/请求指定），回退到配置模型列表拼接
+  const modelStr = (opts.model && String(opts.model).trim())
+    || (Array.isArray(config.model) ? config.model.join(',') : (config.model || ''));
+  const isZImage = modelStr.toLowerCase().includes('z-image');
+  // z-image 走纯文生图；其余（含 qwen、空、未知）一律走 Qwen-Edit
+  const isQwenEdit = !isZImage;
+  const workflowName = isQwenEdit ? 'Qwen-Edit-2511' : 'Z-Image Turbo';
 
   log.info('[ComfyUI/' + workflowName + '] Starting generation', {
     baseUrl, size, hasRefs,
@@ -162,57 +298,28 @@ async function callComfyUIImageApi(config, log, opts) {
   if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir, { recursive: true });
   let refFilenames = [];
   if (hasRefs) {
-    refFilenames = await prepareReferenceImages(reference_image_urls.filter(Boolean), inputDir, log);
+    refFilenames = await prepareReferenceImages(reference_image_urls.filter(Boolean), inputDir, log, storage_local_path);
     log.info('[ComfyUI/' + workflowName + '] Prepared ' + refFilenames.length + ' reference images');
   }
 
   // 选择工作流
-  const workflow = JSON.parse(JSON.stringify(useFlux ? FLUX_KONTEXT_WORKFLOW : ZIMAGE_WORKFLOW));
-  const dims = parseSize(size);
+  const dims = isQwenEdit ? qwenDims(size) : parseSize(size);
   const seed = Math.floor(Math.random() * 9007199254740991);
-
-  // 注入参数
-  if (useFlux) {
-    workflow['6'].inputs.clip_l = prompt || '';
-    workflow['6'].inputs.t5xxl = prompt || '';
-    workflow['188'].inputs.width = dims.w;
-    workflow['188'].inputs.height = dims.h;
-    workflow['31'].inputs.seed = seed;
-    // 动态参考图注入（支持任意数量）
-    if (refFilenames.length > 0) {
-      // 清理旧的固定 LoadImage/ImageBatch 节点
-      var oldKeys = ['190', '191', 'batch'];
-      for (var k = 0; k < oldKeys.length; k++) { delete workflow[oldKeys[k]]; }
-      
-      // 创建 LoadImage 节点
-      var imgNodes = [];
-      for (var ri = 0; ri < refFilenames.length; ri++) {
-        var imgKey = 'ref_img_' + ri;
-        workflow[imgKey] = {"inputs":{"image": refFilenames[ri]},"class_type":"LoadImage"};
-        imgNodes.push(imgKey);
-      }
-      
-      // 链式 ImageBatch
-      if (imgNodes.length === 1) {
-        workflow['42'].inputs.image = [imgNodes[0], 0];
-      } else {
-        var prevBatchKey = '';
-        for (var ri = 0; ri < imgNodes.length - 1; ri++) {
-          var batchKey = 'ref_batch_' + ri;
-          if (ri === 0) {
-            workflow[batchKey] = {"inputs":{"image1":[imgNodes[ri],0],"image2":[imgNodes[ri+1],0]},"class_type":"ImageBatch"};
-          } else {
-            workflow[batchKey] = {"inputs":{"image1":[prevBatchKey,0],"image2":[imgNodes[ri+1],0]},"class_type":"ImageBatch"};
-          }
-          prevBatchKey = batchKey;
-        }
-        workflow['42'].inputs.image = [prevBatchKey, 0];
-      }
-    } else {
-      workflow['190'].inputs.image = 'example.png';
-      workflow['191'].inputs.image = 'example.png';
-    }
+  let workflow;
+  let finalPrompt = prompt || '';
+  if (isQwenEdit) {
+    // Qwen 用原始提示词（不要 imageClient 注入的英文 Image N 头），标签按下载成功的下标对齐
+    const rawPrompt = (opts.raw_prompt && String(opts.raw_prompt).trim()) || (prompt || '');
+    const srcIndices = refFilenames.srcIndices || refFilenames.map((_, i) => i);
+    const alignedLabels = srcIndices.map((si) => (opts.reference_labels || [])[si] || '');
+    const built = buildQwenEditWorkflow(rawPrompt, dims, seed, refFilenames, alignedLabels);
+    workflow = built.wf;
+    finalPrompt = built.header + rawPrompt;
+    workflow['pos'].inputs.prompt = finalPrompt;
+    log.info('[ComfyUI/Qwen-Edit-2511] 参考图 ' + refFilenames.length + ' 张 → ' + Math.min(3, Object.keys(workflow).filter(k => k.startsWith('ld_')).length ? (workflow['pos'].inputs.image3 ? 3 : workflow['pos'].inputs.image2 ? 2 : 1) : 0) + ' 个通道 (场景/角色拼图/道具拼图)'
+      + (/<sks>/i.test(rawPrompt) ? ' + 机位LoRA' : '') + ', 输出 ' + dims.w + 'x' + dims.h);
   } else {
+    workflow = JSON.parse(JSON.stringify(ZIMAGE_WORKFLOW));
     // Z-Image: 直接注入到 CLIPTextEncode 和 EmptyLatentImage
     workflow['5'].inputs.text = prompt || '';
     workflow['7'].inputs.width = dims.w;
@@ -221,6 +328,10 @@ async function callComfyUIImageApi(config, log, opts) {
   }
 
   const payload = { prompt: workflow, client_id: 'localminidrama_' + Date.now() };
+  log.info('[ComfyUI/' + workflowName + '] 最终提交: 节点=' + Object.keys(workflow).length
+    + ', 参考图=' + refFilenames.length
+    + ', 尺寸=' + dims.w + 'x' + dims.h
+    + '\n[ComfyUI] PROMPT 全文:\n' + (finalPrompt || '(空)'));
 
   // 提交
   let submitResp;
@@ -375,14 +486,6 @@ async function callComfyUIVideoApi(config, log, opts) {
   const fps = 24;
   const videoDuration = Number(opts.duration) || 5;
   const frames = Math.max(9, Math.round(videoDuration * fps / 8) * 8 + 1);
-  for (const [nid, node] of Object.entries(prompt_data)) {
-    if (node.class_type === "PrimitiveInt" && parseInt(node.inputs.value) === 97) node.inputs.value = frames;
-    if (node.class_type === "PrimitiveInt" && parseInt(node.inputs.value) === 24) node.inputs.value = fps;
-    if (node.class_type === "PrimitiveFloat" && parseFloat(node.inputs.value) === 24) node.inputs.value = fps;
-    if (node.class_type === "EmptyLTXVLatentVideo") node.inputs.length = frames;
-  }
-  log.info("[ComfyUI/LTX] Duration: " + videoDuration + "s, frames: " + frames + ", fps: " + fps);
-
 
   // Adjust video resolution based on aspect ratio
   const ratio = (opts.aspect_ratio || '').toString();
@@ -390,49 +493,31 @@ async function callComfyUIVideoApi(config, log, opts) {
   const totalPx = 768 * 512; const ratioVal = rw / rh;
   const vidW = Math.max(256, Math.round(Math.sqrt(totalPx * ratioVal) / 32) * 32);
   const vidH = Math.max(256, Math.round(Math.sqrt(totalPx / ratioVal) / 32) * 32);
+
   for (const [nid, node] of Object.entries(prompt_data)) {
-  const fps = 24; const videoDuration = Number(opts.duration) || 5; const frames = Math.max(9, Math.round(videoDuration * fps / 8) * 8 + 1); log.info("[ComfyUI/LTX] Duration: " + videoDuration + "s, frames: " + frames + ", fps: " + fps);
-    if (node.class_type === 'PrimitiveFloat' && parseFloat(node.inputs.value) === 24) { node.inputs.value = fps; }
-    if (node.class_type === 'EmptyLTXVLatentVideo') {
+    if (node.class_type === "PrimitiveInt" && parseInt(node.inputs.value) === 97) node.inputs.value = frames;
+    if (node.class_type === "PrimitiveInt" && parseInt(node.inputs.value) === 24) node.inputs.value = fps;
+    if (node.class_type === "PrimitiveFloat" && parseFloat(node.inputs.value) === 24) node.inputs.value = fps;
+    if (node.class_type === "EmptyLTXVLatentVideo") {
+      node.inputs.length = frames;
       node.inputs.width = vidW;
       node.inputs.height = vidH;
     }
+    // Increase I2V strength to better match reference image
+    if (node.class_type === "LTXVImgToVideoInplace" && node.inputs.strength != null && node.inputs.strength < 0.95) {
+      node.inputs.strength = 0.8;
+    }
   }
-  log.info("[ComfyUI/LTX] Video size: " + vidW + "x" + vidH + " (aspect: " + ratio + ")");
+  log.info("[ComfyUI/LTX] Duration: " + videoDuration + "s, frames: " + frames + ", fps: " + fps + ", size: " + vidW + "x" + vidH + " (aspect: " + ratio + ")");
 
-  // Increase I2V strength to better match reference image
-  for (const [nid, node] of Object.entries(prompt_data)) {
-  for (const [nid, node] of Object.entries(prompt_data)) {
-    if (node.class_type === "PrimitiveInt" && parseInt(node.inputs.value) === 97 || parseInt(node.inputs.value) === 24) {
-      node.inputs.value = (parseInt(node.inputs.value) === 97) ? frames : fps;
-    }
-    if (node.class_type === 'PrimitiveFloat' && parseFloat(node.inputs.value) === 24) { node.inputs.value = fps; }
-    if (node.class_type === "EmptyLTXVLatentVideo") {
-      node.inputs.length = frames;
-    }
-  }
-  log.info("[ComfyUI/LTX] Frames: " + frames + ", FPS: " + fps);
-    if (node.class_type === 'LTXVImgToVideoInplace') {
-      if (node.inputs.strength != null && node.inputs.strength < 0.95) {
-        node.inputs.strength = 0.8;
-      }
-    }
-  }
-
-  // Set input image
+  // Set input image（支持 http(s) / data: / 本地绝对路径 / storage 相对路径）
   const inputDir = require("path").join(require("os").homedir(), "ComfyUI", "input");
+  if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir, { recursive: true });
   let imgName = "example.png";
   if (image_url) {
-    // Download reference image to ComfyUI input dir
-    const imgPath = require("path").join(inputDir, "ltx_input_" + Date.now() + ".png");
-    try {
-      log.info("[ComfyUI/LTX] Downloading image: " + (image_url || "NULL"));
-      // use local httpDownload
-      await httpDownload(image_url, imgPath);
-      imgName = require("path").basename(imgPath);
-    } catch (e) {
-      log.warn("[ComfyUI/LTX] Failed to download input image: " + e.message);
-    }
+    const prepared = await prepareReferenceImages([image_url], inputDir, log, storage_local_path);
+    if (prepared.length > 0) imgName = prepared[0];
+    else log.warn("[ComfyUI/LTX] Failed to prepare input image: " + String(image_url).slice(0, 120));
   }
 
   for (const [nid, node] of Object.entries(prompt_data)) {

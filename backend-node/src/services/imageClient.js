@@ -1607,6 +1607,8 @@ async function callImageApi(db, log, opts) {
       reference_image_urls: opts.reference_image_urls,
       files_base_url: opts.files_base_url,
       storage_local_path: opts.storage_local_path,
+      raw_prompt: prompt,
+      reference_labels: (system_prompt ? String(system_prompt).split('\n').filter(l => /^Image\s+/i.test(l)) : []),
     });
   }
 
@@ -2072,6 +2074,11 @@ function getStoryboardReferenceLimits(config, modelName) {
   const protocol = (config?.api_protocol || '').toLowerCase() || inferProtocol(provider, modelName || config?.model);
   if (protocol === 'kling') {
     return { total: 1, maxCharacters: 1, maxObjects: 1 };
+  }
+  if (protocol === 'comfyui') {
+    // Qwen-Image-Edit 三通道：image1..3 = 场景整图 / 全部角色拼图 / 全部道具拼图（工作流内 ImageStitch）
+    // 每张原图独立全分辨率进入拼图：场景1 + 角色至多3 + 道具至多2
+    return { total: 6, maxCharacters: 3, maxObjects: 3 };
   }
   return { total: 4, maxCharacters: 3, maxObjects: 4 };
 }

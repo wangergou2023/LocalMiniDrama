@@ -274,6 +274,68 @@ function buildQwenEditWorkflow(prompt, dims, seed, refFilenames, refLabels) {
   return { wf, header };
 }
 
+/**
+ * 队列感知的 ComfyUI 任务等待：
+ * - 任务仍在 queue_pending（排队）时不计入执行超时（串行队列里等前面的任务是正常现象）
+ * - 仅对 queue_running（实际执行）时间应用 runningBudgetMs
+ * - 任务既不在队列也不在历史中连续多次 → 视为丢失
+ * - absoluteCapMs 兜底防止无限等待
+ * @returns {Promise<object>} history item（status.completed 后返回）
+ */
+async function waitForComfyJob(baseUrl, promptId, log, { runningBudgetMs, absoluteCapMs, tag }) {
+  const startTime = Date.now();
+  let runningSince = null;
+  let missCount = 0;
+  let lastState = '';
+  while (Date.now() - startTime < absoluteCapMs) {
+    await new Promise((r) => setTimeout(r, 5000));
+    let hist = null;
+    try {
+      hist = await getJSON(baseUrl + '/history/' + promptId, 10000);
+    } catch (_) {}
+    if (hist && hist[promptId]) {
+      const status = hist[promptId].status;
+      if (status && status.completed) return hist[promptId];
+      if (status && status.status_str === 'error') {
+        const errMsg = (status.messages || []).find((m) => m[0] === 'execution_error');
+        throw new Error(errMsg ? errMsg[1].exception_message : 'ComfyUI execution error');
+      }
+    }
+    let state = 'unknown';
+    try {
+      const q = await getJSON(baseUrl + '/queue', 10000);
+      const inRunning = (q.queue_running || []).some((it) => it && it[1] === promptId);
+      const inPending = (q.queue_pending || []).some((it) => it && it[1] === promptId);
+      if (inRunning) state = 'running';
+      else if (inPending) state = 'queued';
+      else state = 'absent';
+    } catch (_) {
+      state = 'unknown'; // ComfyUI 暂时失联不算任务丢失
+    }
+    if (state === 'running') {
+      if (runningSince == null) {
+        runningSince = Date.now();
+        log.info('[ComfyUI' + tag + '] 任务开始执行 prompt_id=' + promptId);
+      }
+      missCount = 0;
+      if (Date.now() - runningSince > runningBudgetMs) {
+        throw new Error('ComfyUI' + tag + ' 执行超时（运行超过 ' + Math.round(runningBudgetMs / 60000) + ' 分钟）');
+      }
+    } else if (state === 'queued') {
+      missCount = 0;
+      if (lastState !== 'queued') log.info('[ComfyUI' + tag + '] 任务排队中 prompt_id=' + promptId);
+    } else if (state === 'absent') {
+      // 不在队列也未 completed：可能是 history 写入延迟，连续 3 次才判丢失
+      missCount += 1;
+      if (missCount >= 3) {
+        throw new Error('ComfyUI' + tag + ' 任务丢失（不在队列且无产出，可能被手动取消或 ComfyUI 重启）');
+      }
+    }
+    lastState = state;
+  }
+  throw new Error('ComfyUI' + tag + ' 等待超过绝对上限 ' + Math.round(absoluteCapMs / 3600000) + ' 小时');
+}
+
 async function callComfyUIImageApi(config, log, opts) {
   const { prompt, size, image_gen_id, reference_image_urls, files_base_url, storage_local_path } = opts;
   const baseUrl = (config.base_url || 'http://127.0.0.1:8188').replace(/\/$/, '');
@@ -344,28 +406,12 @@ async function callComfyUIImageApi(config, log, opts) {
   if (!promptId) throw new Error('ComfyUI submit returned no prompt_id');
   log.info('[ComfyUI] Submitted prompt_id=' + promptId);
 
-  // 等待完成
-  const startTime = Date.now();
-  const maxWait = 900000;
-  let result = null;
-  while (Date.now() - startTime < maxWait) {
-    await new Promise((r) => setTimeout(r, 5000));
-    try {
-      const hist = await getJSON(baseUrl + '/history/' + promptId, 10000);
-      if (hist && hist[promptId]) {
-        const status = hist[promptId].status;
-        if (status && status.completed) { result = hist[promptId]; break; }
-        if (status && status.status_str === 'error') {
-          const errMsg = (status.messages || []).find(function(m) { return m[0] === 'execution_error'; });
-          throw new Error(errMsg ? errMsg[1].exception_message : 'ComfyUI execution error');
-        }
-      }
-    } catch (e) {
-      if (e.message && (e.message.indexOf('ComfyUI execution error') >= 0 || e.message.indexOf('ComfyUI get timeout') >= 0)) throw e;
-      log.warn('[ComfyUI] Poll error: ' + e.message);
-    }
-  }
-  if (!result) throw new Error('ComfyUI generation timed out');
+  // 等待完成（排队时间不计入执行超时）
+  const result = await waitForComfyJob(baseUrl, promptId, log, {
+    runningBudgetMs: 20 * 60 * 1000,
+    absoluteCapMs: 2 * 3600 * 1000,
+    tag: '',
+  });
 
   // 提取图片
   let imageFilename = null;
@@ -383,102 +429,21 @@ async function callComfyUIImageApi(config, log, opts) {
 }
 
 
-// LTX 2.3 图生视频工作流（基于 WYC-LTX2.3 工作流）
-// 注意：当前存在 audio+video tensor 兼容性问题，通过 API 提交可能失败，经 ComfyUI UI 直接加载可正常工作
+// LTX 2.3 图生视频工作流（API 格式已固化在 workflows/ltx23-i2v-api.json，
+// 两阶段采样 + 音轨；由 WYC UI 工作流一次性转换而来，不再依赖 ComfyUI 用户目录）
 
 async function callComfyUIVideoApi(config, log, opts) {
   const { prompt, model, image_url, video_gen_id, files_base_url, storage_local_path } = opts;
   const baseUrl = (config.base_url || "http://127.0.0.1:8188").replace(/\/$/, "");
 
-  // 使用已保存的完整工作流文件
   const fs = require("fs");
-  const wfPath = require("path").join(require("os").homedir(), "ComfyUI", "user", "default", "workflows", "WYC-LTX2.3图生视频.json");
-  
-  if (!fs.existsSync(wfPath)) {
-    throw new Error("LTX workflow not found: " + wfPath);
-  }
+  const wfPath = require("path").join(__dirname, "workflows", "ltx23-i2v-api.json");
+  const prompt_data = JSON.parse(fs.readFileSync(wfPath, "utf-8"));
 
-  const wf = JSON.parse(fs.readFileSync(wfPath, "utf-8"));
-  
-  const SKIP_TYPES = new Set(["MarkdownNote"]);
-  const SKIP_IDS = new Set([]); // Keep all nodes, replace missing LoRA files // I2V adapter LoRA not available
-  
-  const prompt_data = {};
-  const links_by_id = {};
-  for (const l of wf.links || []) {
-    if (Array.isArray(l) && l.length >= 5) {
-      links_by_id[l[0]] = { from_id: l[1], from_slot: l[2], to_id: l[3], to_slot: l[4] };
-    }
-  }
-
-  for (const n of wf.nodes) {
-    if (SKIP_TYPES.has(n.type) || SKIP_IDS.has(n.id)) continue;
-    const nid = String(n.id);
-    const node_info = { inputs: {} };
-    const ws = n.widgets_values || [];
-    let wi = 0;
-
-    for (const inp of n.inputs || []) {
-      const name = inp.name;
-      const link = inp.link;
-
-      if (link != null) {
-        const l = links_by_id[link];
-        if (l) {
-          let sid = l.from_id;
-          let ss = l.from_slot;
-          
-          // Rewire around skipped I2V adapter LoRA (node 184)
-          if (sid === 184) {
-            for (const [lid, l2] of Object.entries(links_by_id)) {
-              if (l2.to_id === 184 && l2.to_slot === 0) {
-                sid = l2.from_id;
-                ss = l2.from_slot;
-                break;
-              }
-            }
-          }
-          
-          if (!SKIP_IDS.has(sid)) {
-            node_info.inputs[name] = [String(sid), ss];
-          }
-        }
-        // Always advance widget index for linked widgets too
-        if (inp.widget) {
-          if (wi < ws.length) {
-            const wname = inp.widget.name;
-            if (wname === "seed" && wi + 1 < ws.length && typeof ws[wi + 1] === "string") {
-              wi += 2;
-            } else {
-              wi += 1;
-            }
-          }
-        }
-      } else if (inp.widget) {
-        const wname = inp.widget.name;
-        if (wname === "seed" && wi + 1 < ws.length && typeof ws[wi + 1] === "string") {
-          node_info.inputs[name] = ws[wi];
-          wi += 2;
-        } else {
-          if (wi < ws.length) {
-            node_info.inputs[name] = ws[wi];
-            wi += 1;
-          }
-        }
-      }
-    }
-    node_info.class_type = n.type;
-    prompt_data[nid] = node_info;
-  }
-
-  // Replace missing I2V adapter LoRA with available distilled LoRA
-  for (const [nid, node] of Object.entries(prompt_data)) {
-    if (node.class_type === "LoraLoaderModelOnly") {
-      const loraName = node.inputs.lora_name || "";
-      if (loraName.includes("Image2Vid") || loraName.includes("I2V")) {
-        node.inputs.lora_name = "ltx-2.3-22b-distilled-lora-dynamic_fro09_avg_rank_105_bf16.safetensors"
-        log.info("[ComfyUI/LTX] Replaced missing I2V LoRA with available distilled LoRA");
-      }
+  // 每次生成随机种子（模板里是固化时捕获的固定值）
+  for (const node of Object.values(prompt_data)) {
+    if (node.class_type === "RandomNoise") {
+      node.inputs.noise_seed = Math.floor(Math.random() * 9007199254740991);
     }
   }
 
@@ -565,43 +530,12 @@ async function callComfyUIVideoApi(config, log, opts) {
 
   log.info("[ComfyUI/LTX] Submitted prompt_id=" + promptId);
 
-  // Wait for result
-  const startTime = Date.now();
-  const maxWait = 1200000; // 20 min for LTX video
-  let result = null;
-  
-  while (Date.now() - startTime < maxWait) {
-    await new Promise(r => setTimeout(r, 5000));
-    try {
-      const hist = await new Promise((resolve, reject) => {
-        const req = mod.get({
-          hostname: parsed.hostname, port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
-          path: "/history/" + promptId
-        }, (res) => {
-          let data = "";
-          res.on("data", c => data += c);
-          res.on("end", () => { try { resolve(JSON.parse(data)); } catch (e) { resolve(null); } });
-        });
-        req.setTimeout(10000, () => { req.destroy(); resolve(null); });
-        req.on("error", () => resolve(null));
-      });
-      
-      if (hist && hist[promptId]) {
-        const status = hist[promptId].status;
-        if (status && status.completed) { result = hist[promptId]; break; }
-        if (status && status.status_str === "error") {
-          const msgs = status.messages || [];
-          const errMsg = msgs.find(m => m[0] === "execution_error");
-          throw new Error(errMsg ? errMsg[1].exception_message : "ComfyUI execution error");
-        }
-      }
-    } catch (e) {
-      if (e.message.includes("ComfyUI execution error") || e.message.includes("Sizes of tensors")) throw e;
-      log.warn("[ComfyUI/LTX] Poll error: " + e.message);
-    }
-  }
-
-  if (!result) throw new Error("ComfyUI LTX generation timed out");
+  // Wait for result（排队时间不计入执行超时；22B 两阶段执行预算 60 分钟）
+  const result = await waitForComfyJob(baseUrl, promptId, log, {
+    runningBudgetMs: 60 * 60 * 1000,
+    absoluteCapMs: 6 * 3600 * 1000,
+    tag: '/LTX',
+  });
 
   // Extract video
   let videoFilename = null;

@@ -124,35 +124,40 @@ async function downloadVideoToLocal(storagePath, videoUrl, videoGenId, log, proj
 }
 
 /** 与图生 aspectRatioToSize 对齐的归一化分辨率（偶数像素，便于 H.264） */
-function targetVideoPixelsForAspect(aspectRatio) {
+function targetVideoPixelsForAspect(aspectRatio, resolution) {
+  const base = resolutionBasePixels(resolution);
   const r = String(aspectRatio || '16:9').trim();
-  const map = {
-    '16:9': { w: 2560, h: 1440 },
-    '9:16': { w: 1440, h: 2560 },
-    '1:1': { w: 1920, h: 1920 },
-    '4:3': { w: 1920, h: 1440 },
-    '3:4': { w: 1440, h: 1920 },
-    '3:2': { w: 2560, h: 1708 },
-    '2:3': { w: 1708, h: 2560 },
-    '21:9': { w: 2560, h: 1080 },
-  };
-  if (map[r]) return map[r];
+  if (r === '16:9') {
+    const w = Math.round((base * 16) / 9 / 2) * 2;
+    return { w, h: base };
+  }
+  if (r === '9:16') {
+    const h = Math.round((base * 16) / 9 / 2) * 2;
+    return { w: base, h };
+  }
   const m = r.match(/^(\d+)\s*:\s*(\d+)$/);
   if (m) {
     const a = parseInt(m[1], 10);
     const b = parseInt(m[2], 10);
     if (a > 0 && b > 0 && a !== b) {
       if (a > b) {
-        const w = 2560;
-        const h = Math.max(2, Math.round((w * b) / a / 2) * 2);
-        return { w, h };
+        const w = Math.round((base * a) / b / 2) * 2;
+        return { w, h: base };
       }
-      const h = 2560;
-      const w = Math.max(2, Math.round((h * a) / b / 2) * 2);
-      return { w, h };
+      const h = Math.round((base * b) / a / 2) * 2;
+      return { w: base, h };
     }
   }
-  return { w: 1280, h: 720 };
+  return { w: Math.round((base * 16) / 9 / 2) * 2, h: base };
+}
+
+function resolutionBasePixels(resolution) {
+  const s = String(resolution || '720p').trim().toLowerCase();
+  if (s.includes('2160')) return 2160;
+  if (s.includes('1080')) return 1080;
+  if (s.includes('720')) return 720;
+  if (s.includes('480')) return 480;
+  return 720;
 }
 
 /**
@@ -199,7 +204,7 @@ function normalizeVideoFileToTargetPixels(absPath, tw, th, log, videoGenId) {
 function maybeNormalizeVideoAfterDownload(storagePath, localPath, row, videoGenId, log) {
   if (!localPath) return;
   const abs = path.join(storagePath, localPath);
-  const dim = targetVideoPixelsForAspect(row.aspect_ratio);
+  const dim = targetVideoPixelsForAspect(row.aspect_ratio, row.resolution);
   normalizeVideoFileToTargetPixels(abs, dim.w, dim.h, log, videoGenId);
 }
 

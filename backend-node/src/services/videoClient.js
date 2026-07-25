@@ -1715,10 +1715,6 @@ function viduLetterboxCanvasPixels(aspectStr) {
   const m = {
     '16:9': [1280, 720],
     '9:16': [720, 1280],
-    '1:1': [720, 720],
-    '4:3': [960, 720],
-    '3:4': [720, 960],
-    '21:9': [1680, 720],
   };
   return m[String(aspectStr || '').trim()] || null;
 }
@@ -2329,10 +2325,6 @@ function agnesDimensionsFromAspectRatio(ratio) {
   const map = {
     '16:9': { width: 1152, height: 768 },
     '9:16': { width: 768, height: 1152 },
-    '4:3': { width: 1024, height: 768 },
-    '3:4': { width: 768, height: 1024 },
-    '1:1': { width: 768, height: 768 },
-    '21:9': { width: 1344, height: 576 },
   };
   return map[ratio] || map['16:9'];
 }
@@ -2562,12 +2554,8 @@ async function callSoraVideoApi(config, log, opts) {
 
   // aspect_ratio ? size???? 4 ?????720x1280 / 1280x720 / 1024x1792 / 1792x1024?
   const sizeMap = {
-    '9:16': '720x1280',  // ????
-    '3:4':  '1024x1792', // ????
-    '1:1':  '720x1280',  // ????????
-    '16:9': '1280x720',  // ????
-    '4:3':  '1280x720',  // ????
-    '21:9': '1792x1024', // ????
+    '9:16': '720x1280',
+    '16:9': '1280x720',
   };
   const size = sizeMap[aspect_ratio || ''] || '720x1280';
 
@@ -2838,7 +2826,7 @@ async function callJimengAiApiVideo(config, log, opts) {
   if (seedance) {
     if (dur === 5) dur = 4;
     dur = Math.min(15, Math.max(4, Math.round(dur)));
-    if (ratio === '1:1') ratio = '4:3';
+    if (ratio === '1:1') ratio = '16:9';
   } else {
     dur = dur <= 7 ? 5 : 10;
   }

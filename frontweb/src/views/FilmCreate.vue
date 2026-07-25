@@ -357,13 +357,9 @@
       <section class="section card pipeline-section">
         <div class="one-click-actions">
           <span class="one-click-label">🚀 一键全流程</span>
-          <el-select v-model="projectAspectRatio" style="width: 130px" @change="() => saveProjectSettings(false)">
-            <el-option label="16:9 横屏" value="16:9" />
-            <el-option label="9:16 竖屏" value="9:16" />
-            <el-option label="3:4 竖版" value="3:4" />
-            <el-option label="1:1 方形" value="1:1" />
-            <el-option label="4:3" value="4:3" />
-            <el-option label="21:9 宽银幕" value="21:9" />
+          <el-select v-model="projectAspectRatio" style="width: 180px" @change="() => saveProjectSettings(false)">
+            <el-option :label="aspectRatio16x9Label" value="16:9" />
+            <el-option :label="aspectRatio9x16Label" value="9:16" />
           </el-select>
           <el-select v-model="videoClipDuration" style="width: 105px" @change="() => saveProjectSettings(false)">
             <el-option label="4秒/段" :value="4" />
@@ -1552,9 +1548,9 @@
         <div class="config-grid">
           <el-form-item label="分辨率">
             <el-select v-model="videoResolution" style="width: 160px">
-              <el-option label="480p" value="480p" />
-              <el-option label="720p" value="720p" />
-              <el-option label="1080p" value="1080p" />
+              <el-option label="1K (720p)" value="720p" />
+              <el-option label="2K (1080p)" value="1080p" />
+              <el-option label="4K (2160p)" value="2160p" />
             </el-select>
           </el-form-item>
           <!--
@@ -2718,6 +2714,28 @@ const isStoryGenRunning = computed(() => {
 const generationStyle = ref('')
 const projectAspectRatio = ref('16:9')
 const videoClipDuration = ref(5)
+
+function aspectRatioPixels(aspectRatio, resolution) {
+  const res = String(resolution || '720p').toLowerCase()
+  let base = 720
+  if (res.includes('2160')) base = 2160
+  else if (res.includes('1080')) base = 1080
+  else if (res.includes('720')) base = 720
+  else if (res.includes('480')) base = 480
+  const r = String(aspectRatio || '16:9').trim()
+  if (r === '16:9') {
+    const w = Math.round((base * 16) / 9 / 2) * 2
+    return `${w}x${base}`
+  }
+  if (r === '9:16') {
+    const h = Math.round((base * 16) / 9 / 2) * 2
+    return `${base}x${h}`
+  }
+  return `${base}x${base}`
+}
+
+const aspectRatio16x9Label = computed(() => `16:9 横屏 (${aspectRatioPixels('16:9', videoResolution.value)})`)
+const aspectRatio9x16Label = computed(() => `9:16 竖屏 (${aspectRatioPixels('9:16', videoResolution.value)})`)
 
 /** 根据 value 查找样式选项对象 */
 function _findStyleOption(val) {
@@ -4545,6 +4563,7 @@ async function loadDrama() {
     storyType.value = d.genre || ''
     generationStyle.value = d.style || ''
     projectAspectRatio.value = (d.metadata && d.metadata.aspect_ratio) ? d.metadata.aspect_ratio : '16:9'
+    storeVideoResolution.value = (d.metadata && d.metadata.video_resolution) ? d.metadata.video_resolution : '720p'
     videoClipDuration.value = (d.metadata && d.metadata.video_clip_duration) ? Number(d.metadata.video_clip_duration) : 5
     storyboardIncludeNarration.value = !!(d.metadata && d.metadata.storyboard_include_narration)
     storyboardUniversalOmni.value = !!(d.metadata && d.metadata.storyboard_universal_omni)

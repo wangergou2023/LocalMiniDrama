@@ -11,8 +11,8 @@ describe('fixAgnesImageSize', () => {
     assert.equal(fixAgnesImageSize('2560x1440'), '1792x1024');
   });
 
-  it('maps 1:1 project size to Agnes square preset', () => {
-    assert.equal(fixAgnesImageSize('1920x1920'), '1024x1024');
+  it('maps 1:1 project size to closest Agnes preset (16:9)', () => {
+    assert.equal(fixAgnesImageSize('1920x1920'), '1792x1024');
   });
 });
 

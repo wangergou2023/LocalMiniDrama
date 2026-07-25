@@ -57,8 +57,6 @@
             <el-select v-model="aspectRatio">
               <el-option label="16:9" value="16:9" />
               <el-option label="9:16" value="9:16" />
-              <el-option label="1:1" value="1:1" />
-              <el-option label="4:3" value="4:3" />
             </el-select>
           </div>
           <div v-if="mode === 'video'" class="form-item">

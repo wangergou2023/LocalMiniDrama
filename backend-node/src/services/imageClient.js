@@ -194,10 +194,6 @@ function fixSeedreamSize(size) {
 const AGNES_IMAGE_SIZE_BY_RATIO = {
   '16:9': '1792x1024',
   '9:16': '1024x1792',
-  '1:1': '1024x1024',
-  '4:3': '1024x768',
-  '3:4': '768x1024',
-  '21:9': '1792x1024',
 };
 
 function isAgnesImageConfig(config, model) {
@@ -209,13 +205,13 @@ function isAgnesImageConfig(config, model) {
 
 /** 将项目内高分辨率 size 映射为 Agnes 支持的尺寸，保持宽高比类别 */
 function fixAgnesImageSize(size) {
-  if (!size || typeof size !== 'string') return AGNES_IMAGE_SIZE_BY_RATIO['4:3'];
+  if (!size || typeof size !== 'string') return AGNES_IMAGE_SIZE_BY_RATIO['16:9'];
   const s = size.trim().toLowerCase().replace(/\*/g, 'x');
   const match = s.match(/^(\d+)\s*x\s*(\d+)$/);
-  if (!match) return AGNES_IMAGE_SIZE_BY_RATIO['4:3'];
+  if (!match) return AGNES_IMAGE_SIZE_BY_RATIO['16:9'];
   const w = parseInt(match[1], 10);
   const h = parseInt(match[2], 10);
-  if (!w || !h) return AGNES_IMAGE_SIZE_BY_RATIO['4:3'];
+  if (!w || !h) return AGNES_IMAGE_SIZE_BY_RATIO['16:9'];
   const mapped = AGNES_IMAGE_SIZE_BY_RATIO['16:9'];
   const ratio = w / h;
   const candidates = Object.entries(AGNES_IMAGE_SIZE_BY_RATIO).map(([label, sz]) => {
@@ -278,23 +274,15 @@ function parseDashScopeImageUrl(data) {
 
 // Gemini 支持的宽高比标签 → 数值 w/h（与 API 一致）
 const GEMINI_ASPECT_NUMERIC = [
-  ['21:9', 21 / 9],
   ['16:9', 16 / 9],
-  ['3:2', 3 / 2],
-  ['4:3', 4 / 3],
-  ['5:4', 5 / 4],
-  ['1:1', 1],
-  ['4:5', 4 / 5],
-  ['3:4', 3 / 4],
-  ['2:3', 2 / 3],
   ['9:16', 9 / 16],
 ];
 
 /** 按像素尺寸选最接近的 Gemini aspectRatio（对数距离，避免 1440×2560 被误判为 4:5） */
 function closestGeminiAspectRatioFromPixels(w, h) {
-  if (!w || !h) return '1:1';
+  if (!w || !h) return '16:9';
   const r = w / h;
-  let best = '1:1';
+  let best = '16:9';
   let bestD = Infinity;
   for (const [label, tr] of GEMINI_ASPECT_NUMERIC) {
     const d = Math.abs(Math.log(r) - Math.log(tr));
@@ -313,7 +301,7 @@ function geminiAspectRatio(size) {
   const ratioSet = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9']);
   if (ratioSet.has(s)) return s;
   const match = s.match(/^(\d+)[x*](\d+)$/);
-  if (!match) return '1:1';
+  if (!match) return '16:9';
   const w = parseInt(match[1], 10);
   const h = parseInt(match[2], 10);
   return closestGeminiAspectRatioFromPixels(w, h);
@@ -366,18 +354,15 @@ function nanoBananaAspectRatio(size) {
 function klingImageAspectRatio(size) {
   if (!size) return '16:9';
   const s = String(size).trim().toLowerCase().replace(/\s/g, '');
-  const ratioSet = new Set(['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3']);
+  const ratioSet = new Set(['16:9', '9:16']);
   if (ratioSet.has(s)) return s;
   const match = s.match(/^(\d+)[x*](\d+)$/);
-  if (!match) return '1:1';
+  if (!match) return '16:9';
   const w = parseInt(match[1], 10);
   const h = parseInt(match[2], 10);
-  if (!w || !h) return '1:1';
+  if (!w || !h) return '16:9';
   const r = w / h;
-  if (r >= 1.6) return '16:9';
-  if (r >= 1.2) return '4:3';
-  if (r >= 0.9) return '1:1';
-  if (r >= 0.7) return '3:4';
+  if (r >= 1.3) return '16:9';
   return '9:16';
 }
 
@@ -786,7 +771,7 @@ function isQwenImageProvider(config, model) {
 
 // qwen-image 仅支持以下 size：1664*928(16:9), 1472*1104(4:3), 1328*1328(1:1), 1104*1472(3:4), 928*1664(9:16)
 function qwenImageSize(size) {
-  const allowed = ['1664*928', '1472*1104', '1328*1328', '1104*1472', '928*1664'];
+  const allowed = ['1664*928', '928*1664'];
   if (!size || typeof size !== 'string') return '1664*928';
   const s = String(size).trim().toLowerCase().replace(/x/g, '*');
   const match = s.match(/^(\d+)\s*\*\s*(\d+)$/);
@@ -795,10 +780,7 @@ function qwenImageSize(size) {
   const h = parseInt(match[2], 10);
   if (!w || !h) return '1664*928';
   const ratio = w / h;
-  if (ratio >= 1.7) return '1664*928';   // 16:9
-  if (ratio >= 1.2) return '1472*1104';   // 4:3
-  if (ratio >= 0.85) return '1328*1328';  // 1:1
-  if (ratio >= 0.65) return '1104*1472';  // 3:4
+  if (ratio >= 1.3) return '1664*928';   // 16:9
   return '928*1664';                      // 9:16
 }
 

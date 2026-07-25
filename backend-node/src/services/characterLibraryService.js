@@ -82,7 +82,7 @@ function generateCharacterImage(db, log, cfg, characterId, modelName, style) {
   let imageSize = null;
   try {
     const meta = drama.metadata ? (typeof drama.metadata === 'string' ? JSON.parse(drama.metadata) : drama.metadata) : null;
-    if (meta && meta.aspect_ratio) imageSize = aspectRatioToSize(meta.aspect_ratio);
+    if (meta && meta.aspect_ratio) imageSize = aspectRatioToSize(meta.aspect_ratio, meta.video_resolution);
   } catch (_) {}
   imageSize = imageSize || '1920x1920';
   const userNeg = imageClient.resolveAssetUserNegativeForApi(modelName, charRow.negative_prompt);

@@ -57,20 +57,14 @@ function clampToViduAspectRatio(ratio) {
 function aspectRatioLabelFromPixelSize(size) {
   if (!size || typeof size !== 'string') return '16:9';
   const s = String(size).trim().toLowerCase().replace(/\s/g, '');
-  const ratioSet = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9']);
+  const ratioSet = new Set(['16:9', '9:16']);
   if (ratioSet.has(s)) return s;
   const match = s.match(/^(\d+)[x*](\d+)$/);
   if (!match) return '16:9';
   const w = parseInt(match[1], 10);
   const h = parseInt(match[2], 10);
   if (!w || !h) return '16:9';
-  const r = w / h;
-  if (r > 2) return '21:9';
-  if (r >= 1.6) return '16:9';
-  if (r >= 1.2) return '4:3';
-  if (r >= 0.9) return '1:1';
-  if (r >= 0.7) return '3:4';
-  if (r >= 0.55) return '4:5';
+  if (w >= h) return '16:9';
   return '9:16';
 }
 

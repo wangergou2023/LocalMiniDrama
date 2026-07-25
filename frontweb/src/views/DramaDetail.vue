@@ -87,16 +87,20 @@
             <el-col :span="12">
               <el-form-item label="画面比例">
                 <el-select v-model="infoForm.aspect_ratio" style="width: 100%" @change="saveInfo">
-                  <el-option label="16:9 横屏（默认）" value="16:9" />
-                  <el-option label="9:16 竖屏（短视频）" value="9:16" />
-                  <el-option label="3:4 竖版" value="3:4" />
-                  <el-option label="1:1 方形" value="1:1" />
-                  <el-option label="4:3 传统横屏" value="4:3" />
-                  <el-option label="21:9 宽银幕" value="21:9" />
+                  <el-option label="16:9 横屏" value="16:9" />
+                  <el-option label="9:16 竖屏" value="9:16" />
                 </el-select>
               </el-form-item>
             </el-col>
-            <el-col :span="24">
+            <el-col :span="12">
+              <el-form-item label="分辨率">
+                <el-select v-model="infoForm.video_resolution" style="width: 100%" @change="saveInfo">
+                  <el-option label="1K (720p)" value="720p" />
+                  <el-option label="2K (1080p)" value="1080p" />
+                  <el-option label="4K (2160p)" value="2160p" />
+                </el-select>
+              </el-form-item>
+            </el-col>
               <el-form-item label="故事梗概">
                 <el-input v-model="infoForm.description" type="textarea" :rows="3" placeholder="一句话描述故事梗概" @blur="saveInfo" />
               </el-form-item>
@@ -882,7 +886,7 @@ const nextEpisodeNumber = computed(() => (
     : 1
 ))
 
-const infoForm = reactive({ title: '', description: '', genre: '', style: '', aspect_ratio: '16:9' })
+const infoForm = reactive({ title: '', description: '', genre: '', style: '', aspect_ratio: '16:9', video_resolution: '720p' })
 
 function assetImageUrl(item) {
   if (!item) return ''
@@ -908,6 +912,7 @@ async function loadDrama() {
     infoForm.genre = d.genre || ''
     infoForm.style = d.style || ''
     infoForm.aspect_ratio = d.metadata?.aspect_ratio || '16:9'
+    infoForm.video_resolution = d.metadata?.video_resolution || '720p'
   } catch (e) {
     ElMessage.error(e.message || '加载失败')
   } finally {
@@ -927,6 +932,7 @@ function saveInfo() {
         metadata: {
           ...stylePromptMetadataForSave(infoForm.style),
           aspect_ratio: infoForm.aspect_ratio || '16:9',
+          video_resolution: infoForm.video_resolution || '720p',
         },
       })
     } catch (e) {

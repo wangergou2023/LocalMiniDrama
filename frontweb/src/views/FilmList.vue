@@ -126,14 +126,18 @@
         </el-form-item>
         <el-form-item label="画面比例">
           <el-select v-model="newForm.aspect_ratio" style="width: 100%">
-            <el-option label="16:9 横屏（默认）" value="16:9" />
-            <el-option label="9:16 竖屏（短视频）" value="9:16" />
-            <el-option label="3:4 竖版" value="3:4" />
-            <el-option label="1:1 方形" value="1:1" />
-            <el-option label="4:3 传统横屏" value="4:3" />
-            <el-option label="21:9 宽银幕" value="21:9" />
+            <el-option label="16:9 横屏" value="16:9" />
+            <el-option label="9:16 竖屏" value="9:16" />
           </el-select>
-          <p style="margin: 4px 0 0; font-size: 12px; color: #71717a;">影响分镜图和视频的生成比例，短视频选 9:16</p>
+
+        </el-form-item>
+        <el-form-item label="分辨率">
+          <el-select v-model="newForm.video_resolution" style="width: 100%">
+            <el-option label="1K (720p)" value="720p" />
+            <el-option label="2K (1080p)" value="1080p" />
+            <el-option label="4K (2160p)" value="2160p" />
+          </el-select>
+          <p style="margin: 4px 0 0; font-size: 12px; color: #71717a;">影响视频生成画质，越高级别耗时越长</p>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -580,7 +584,7 @@ async function onDeletePropLibrary(item) {
 }
 
 const showNewDialog = ref(false)
-const newForm = ref({ title: '', description: '', aspect_ratio: '16:9' })
+const newForm = ref({ title: '', description: '', aspect_ratio: '16:9', video_resolution: '720p' })
 const newSaving = ref(false)
 const exportingId = ref(null)
 const importing = ref(false)
@@ -697,7 +701,7 @@ function goNewProject() {
 }
 
 function resetNewForm() {
-  newForm.value = { title: '', description: '', aspect_ratio: '16:9' }
+  newForm.value = { title: '', description: '', aspect_ratio: '16:9', video_resolution: '720p' }
 }
 
 async function submitNew() {
@@ -705,7 +709,7 @@ async function submitNew() {
   if (!title) return
   newSaving.value = true
   try {
-    const drama = await dramaAPI.create({ title, description: newForm.value.description?.trim() || undefined, metadata: { aspect_ratio: newForm.value.aspect_ratio || '16:9' } })
+    const drama = await dramaAPI.create({ title, description: newForm.value.description?.trim() || undefined, metadata: { aspect_ratio: newForm.value.aspect_ratio || '16:9', video_resolution: newForm.value.video_resolution || '720p' } })
     showNewDialog.value = false
     ElMessage.success('项目已创建')
     loadList()

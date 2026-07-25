@@ -389,21 +389,32 @@ async function splitNineGridToImages(db, log, originalRow, absLocalPath, storage
 }
 
 /**
- * 将 aspect_ratio（如 "9:16"）转换为图片生成 size 字符串（如 "720*1280"）
- * DashScope/Wan 用 W*H 格式，OpenAI 用 WxH 格式；统一返回 W*H，callDashScopeImageApi 内部会调 dashScopeSize 做最终校验
+ * 分辨率档位 → 基准像素高度（短边），用于 aspectRatioToSize / targetVideoPixelsForAspect
  */
-function aspectRatioToSize(aspectRatio) {
-  // 统一用 WxH（小写 x）格式：DashScope 的 dashScopeSize() 会把 x 转成 * 并自动缩放
-  // 各尺寸均 >= 3,686,400 像素，满足 ChatFire/OpenAI 兼容接口的最低像素要求
-  const map = {
-    '16:9':  '2560x1440',
-    '9:16':  '1440x2560',
-    '1:1':   '1920x1920',
-    '4:3':   '2240x1680',
-    '3:4':   '1680x2240',
-    '21:9':  '2940x1260',
-  };
-  return map[aspectRatio] || null;
+function resolutionBasePixels(resolution) {
+  const s = String(resolution || '720p').trim().toLowerCase();
+  if (s.includes('2160')) return 2160;
+  if (s.includes('1080')) return 1080;
+  if (s.includes('720')) return 720;
+  if (s.includes('480')) return 480;
+  return 720;
+}
+
+/**
+ * 将 aspect_ratio（如 "9:16"）+ 分辨率（如 "1080p"）转换为图片生成 size 字符串（如 "1080*1920"）
+ */
+function aspectRatioToSize(aspectRatio, resolution) {
+  const base = resolutionBasePixels(resolution);
+  const r = String(aspectRatio || '16:9').trim();
+  if (r === '16:9') {
+    const w = Math.round((base * 16) / 9 / 2) * 2;
+    return `${w}x${base}`;
+  }
+  if (r === '9:16') {
+    const h = Math.round((base * 16) / 9 / 2) * 2;
+    return `${base}x${h}`;
+  }
+  return null;
 }
 
 /** 解析 image_generations.size / aspectRatioToSize 结果，如 2560x1440 */
@@ -547,10 +558,20 @@ function create(db, log, req) {
     });
   }
   const mergedPrompt = mergePromptWithStyle(req.prompt || '', req.style);
-  // 优先使用请求中直接传入的 size；其次将 aspect_ratio 转成 size；未提供则存 NULL 留给 processImageGeneration 从 drama 元数据读取
+  // 优先使用请求中直接传入的 size；其次将 aspect_ratio + resolution 转成 size；未提供则存 NULL 留给 processImageGeneration 从 drama 元数据读取
   let reqSize = req.size || null;
   if (!reqSize && req.aspect_ratio) {
-    reqSize = aspectRatioToSize(req.aspect_ratio) || null;
+    let res = req.resolution || null;
+    if (!res && req.drama_id) {
+      try {
+        const dr = db.prepare('SELECT metadata FROM dramas WHERE id = ? AND deleted_at IS NULL').get(Number(req.drama_id));
+        if (dr && dr.metadata) {
+          const m = typeof dr.metadata === 'string' ? JSON.parse(dr.metadata) : dr.metadata;
+          res = m && m.video_resolution ? m.video_resolution : null;
+        }
+      } catch (_) {}
+    }
+    reqSize = aspectRatioToSize(req.aspect_ratio, res) || null;
   }
   const useFirstFrameLayoutLock = resolveUseFirstFrameLayoutLock(req, frameType);
   const info = db.prepare(
@@ -1145,7 +1166,7 @@ async function processImageGeneration(db, log, imageGenId) {
         const dramaRow = db.prepare('SELECT metadata FROM dramas WHERE id = ? AND deleted_at IS NULL').get(row.drama_id);
         if (dramaRow && dramaRow.metadata) {
           const meta = typeof dramaRow.metadata === 'string' ? JSON.parse(dramaRow.metadata) : dramaRow.metadata;
-          if (meta && meta.aspect_ratio) imageSize = aspectRatioToSize(meta.aspect_ratio);
+          if (meta && meta.aspect_ratio) imageSize = aspectRatioToSize(meta.aspect_ratio, meta.video_resolution);
         }
       } catch (_) {}
     }
@@ -1693,5 +1714,6 @@ module.exports = {
   upload,
   processImageGeneration,
   aspectRatioToSize,
+  resolutionBasePixels,
   syncStoryboardCharacters,
 };

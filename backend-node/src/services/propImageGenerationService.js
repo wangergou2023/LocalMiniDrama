@@ -54,7 +54,7 @@ async function processPropImageGeneration(db, log, taskId, propId, opts) {
       const dramaRow = db.prepare('SELECT metadata FROM dramas WHERE id = ? AND deleted_at IS NULL').get(prop.drama_id);
       if (dramaRow && dramaRow.metadata) {
         const meta = typeof dramaRow.metadata === 'string' ? JSON.parse(dramaRow.metadata) : dramaRow.metadata;
-        if (meta && meta.aspect_ratio) imageSize = aspectRatioToSize(meta.aspect_ratio);
+        if (meta && meta.aspect_ratio) imageSize = aspectRatioToSize(meta.aspect_ratio, meta.video_resolution);
       }
     } catch (_) {}
   }

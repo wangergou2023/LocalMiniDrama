@@ -101,6 +101,7 @@
                 </el-select>
               </el-form-item>
             </el-col>
+            <el-col :span="24">
               <el-form-item label="故事梗概">
                 <el-input v-model="infoForm.description" type="textarea" :rows="3" placeholder="一句话描述故事梗概" @blur="saveInfo" />
               </el-form-item>

@@ -1,0 +1,6008 @@
+{
+  "id": "9f4add53-8e00-48d7-81b5-8fb4c609aa2f",
+  "revision": 0,
+  "last_node_id": 489,
+  "last_link_id": 800,
+  "nodes": [
+    {
+      "id": 37,
+      "type": "WanAnimatePlus ModelLoader",
+      "pos": [
+        3910,
+        5780
+      ],
+      "size": [
+        310,
+        320
+      ],
+      "flags": {},
+      "order": 26,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "compile_args",
+          "shape": 7,
+          "type": "WANCOMPILEARGS",
+          "link": null
+        },
+        {
+          "name": "block_swap_args",
+          "shape": 7,
+          "type": "BLOCKSWAPARGS",
+          "link": null
+        },
+        {
+          "name": "lora",
+          "shape": 7,
+          "type": "WANVIDLORA",
+          "link": null
+        },
+        {
+          "name": "vram_management_args",
+          "shape": 7,
+          "type": "VRAM_MANAGEMENTARGS",
+          "link": null
+        },
+        {
+          "name": "extra_model",
+          "shape": 7,
+          "type": "VACEPATH",
+          "link": null
+        },
+        {
+          "name": "fantasytalking_model",
+          "shape": 7,
+          "type": "FANTASYTALKINGMODEL",
+          "link": null
+        },
+        {
+          "name": "multitalk_model",
+          "shape": 7,
+          "type": "MULTITALKMODEL",
+          "link": null
+        },
+        {
+          "name": "fantasyportrait_model",
+          "shape": 7,
+          "type": "FANTASYPORTRAITMODEL",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "WANVIDEOMODEL",
+          "links": [
+            61
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "wuwukaka/ComfyUI-WanVideoWrapper",
+        "ver": "c3bb8e981e6ccfb5936e8d86ec7b41892a8d6b5e",
+        "Node name for S&R": "WanAnimatePlus ModelLoader",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        "Wan/wan2.1_14B_SCAIL_2_fp8_scaled.safetensors",
+        "fp16_fast",
+        "disabled",
+        "offload_device",
+        "sageattn",
+        "default"
+      ],
+      "color": "#6e6ea8",
+      "bgcolor": "#333355"
+    },
+    {
+      "id": 38,
+      "type": "Note",
+      "pos": [
+        6980,
+        6010
+      ],
+      "size": [
+        270,
+        90
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "如果你跑的分辨率过大，视频时长太长，解码的时候爆了，那就打开启用VAE分块"
+      ],
+      "color": "#e100a9",
+      "bgcolor": "#7b005d"
+    },
+    {
+      "id": 40,
+      "type": "WanAnimatePlus SamplerSettings",
+      "pos": [
+        6190,
+        5750
+      ],
+      "size": [
+        330,
+        930
+      ],
+      "flags": {},
+      "order": 66,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "WANVIDEOMODEL",
+          "link": 33
+        },
+        {
+          "name": "image_embeds",
+          "type": "WANVIDIMAGE_EMBEDS",
+          "link": 655
+        },
+        {
+          "name": "text_embeds",
+          "shape": 7,
+          "type": "WANVIDEOTEXTEMBEDS",
+          "link": 35
+        },
+        {
+          "name": "samples",
+          "shape": 7,
+          "type": "LATENT",
+          "link": null
+        },
+        {
+          "name": "feta_args",
+          "shape": 7,
+          "type": "FETAARGS",
+          "link": null
+        },
+        {
+          "name": "context_options",
+          "shape": 7,
+          "type": "WANVIDCONTEXT",
+          "link": 759
+        },
+        {
+          "name": "cache_args",
+          "shape": 7,
+          "type": "CACHEARGS",
+          "link": null
+        },
+        {
+          "name": "flowedit_args",
+          "shape": 7,
+          "type": "FLOWEDITARGS",
+          "link": null
+        },
+        {
+          "name": "slg_args",
+          "shape": 7,
+          "type": "SLGARGS",
+          "link": null
+        },
+        {
+          "name": "loop_args",
+          "shape": 7,
+          "type": "LOOPARGS",
+          "link": null
+        },
+        {
+          "name": "experimental_args",
+          "shape": 7,
+          "type": "EXPERIMENTALARGS",
+          "link": null
+        },
+        {
+          "name": "sigmas",
+          "shape": 7,
+          "type": "SIGMAS",
+          "link": null
+        },
+        {
+          "name": "unianimate_poses",
+          "shape": 7,
+          "type": "UNIANIMATE_POSE",
+          "link": null
+        },
+        {
+          "name": "fantasytalking_embeds",
+          "shape": 7,
+          "type": "FANTASYTALKING_EMBEDS",
+          "link": null
+        },
+        {
+          "name": "uni3c_embeds",
+          "shape": 7,
+          "type": "UNI3C_EMBEDS",
+          "link": null
+        },
+        {
+          "name": "multitalk_embeds",
+          "shape": 7,
+          "type": "MULTITALK_EMBEDS",
+          "link": null
+        },
+        {
+          "name": "freeinit_args",
+          "shape": 7,
+          "type": "FREEINITARGS",
+          "link": null
+        },
+        {
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": 656
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sampler_inputs",
+          "type": "SAMPLER_ARGS",
+          "links": [
+            39
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "wuwukaka/ComfyUI-WanVideoWrapper",
+        "ver": "c3bb8e981e6ccfb5936e8d86ec7b41892a8d6b5e",
+        "Node name for S&R": "WanAnimatePlus SamplerSettings",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        6,
+        1,
+        5,
+        592274725942722,
+        "randomize",
+        false,
+        "euler",
+        0,
+        1,
+        false,
+        "comfy",
+        0,
+        -1,
+        false,
+        "cfg",
+        0.5,
+        0,
+        8,
+        4,
+        4.5,
+        4,
+        1.25,
+        4.5,
+        4
+      ],
+      "color": "#55372a",
+      "bgcolor": "#8c5a45"
+    },
+    {
+      "id": 41,
+      "type": "WanAnimatePlus SamplerFromSettings",
+      "pos": [
+        6570,
+        5790
+      ],
+      "size": [
+        330,
+        610
+      ],
+      "flags": {},
+      "order": 76,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "sampler_inputs",
+          "type": "SAMPLER_ARGS",
+          "link": 39
+        }
+      ],
+      "outputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "links": [
+            42
+          ]
+        },
+        {
+          "name": "denoised_samples",
+          "type": "LATENT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "aux_id": "wuwukaka/ComfyUI-WanVideoWrapper",
+        "ver": "c3bb8e981e6ccfb5936e8d86ec7b41892a8d6b5e",
+        "Node name for S&R": "WanAnimatePlus SamplerFromSettings",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [],
+      "color": "#55372a",
+      "bgcolor": "#8c5a45"
+    },
+    {
+      "id": 42,
+      "type": "PlaySound|pysssss",
+      "pos": [
+        6980,
+        6280
+      ],
+      "size": [
+        270,
+        110
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 89,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "输入",
+          "name": "any",
+          "type": "*",
+          "link": 40
+        },
+        {
+          "label": "模式",
+          "name": "mode",
+          "type": "COMBO",
+          "widget": {
+            "name": "mode"
+          },
+          "link": null
+        },
+        {
+          "label": "音量",
+          "name": "volume",
+          "type": "FLOAT",
+          "widget": {
+            "name": "volume"
+          },
+          "link": null
+        },
+        {
+          "label": "file",
+          "name": "file",
+          "type": "STRING",
+          "widget": {
+            "name": "file"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "*",
+          "name": "*",
+          "shape": 6,
+          "type": "*"
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-custom-scripts",
+        "ver": "f2838ed5e59de4d73cde5c98354b87a8d3200190",
+        "Node name for S&R": "PlaySound|pysssss",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "mode": true,
+            "volume": true,
+            "file": true
+          },
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "always",
+        0.3,
+        "notify.mp3"
+      ],
+      "color": "#55372a",
+      "bgcolor": "#8c5a45"
+    },
+    {
+      "id": 43,
+      "type": "WanAnimatePlus Decode",
+      "pos": [
+        6980,
+        5750
+      ],
+      "size": [
+        270,
+        200
+      ],
+      "flags": {},
+      "order": 86,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "vae",
+          "type": "WANVAE",
+          "link": 41
+        },
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 42
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            43
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "wuwukaka/ComfyUI-WanVideoWrapper",
+        "ver": "c3bb8e981e6ccfb5936e8d86ec7b41892a8d6b5e",
+        "Node name for S&R": "WanAnimatePlus Decode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        false,
+        272,
+        272,
+        144,
+        216,
+        "default"
+      ],
+      "color": "#55372a",
+      "bgcolor": "#8c5a45"
+    },
+    {
+      "id": 44,
+      "type": "SetNode",
+      "pos": [
+        6980,
+        6160
+      ],
+      "size": [
+        210,
+        60
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 88,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "输入",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "link": 43
+        }
+      ],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            40
+          ]
+        }
+      ],
+      "title": "Set_视频输出",
+      "properties": {
+        "Node name for S&R": "SetNode",
+        "aux_id": "SetNode",
+        "previousName": "视频输出",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.5.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "视频输出"
+      ],
+      "color": "#2a363b",
+      "bgcolor": "#3f5159"
+    },
+    {
+      "id": 45,
+      "type": "Seed (rgthree)",
+      "pos": [
+        5020,
+        6260
+      ],
+      "size": [
+        260,
+        130
+      ],
+      "flags": {},
+      "order": 30,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "dir": 4,
+          "label": "随机种",
+          "name": "SEED",
+          "shape": 3,
+          "type": "INT",
+          "links": [
+            656
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "rgthree-comfy",
+        "ver": "42e73c3c48e8268129a6a1ea6d9766913bfc5435",
+        "randomMax": 1125899906842624,
+        "randomMin": 0,
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.5.2"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        -1,
+        "",
+        "",
+        ""
+      ],
+      "color": "#55372a",
+      "bgcolor": "#8c5a45"
+    },
+    {
+      "id": 47,
+      "type": "GetNode",
+      "pos": [
+        5430,
+        5870
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 13,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "WANVAE",
+          "type": "WANVAE",
+          "links": [
+            41,
+            642
+          ]
+        }
+      ],
+      "title": "Get_VAE",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "VAE"
+      ],
+      "color": "#322",
+      "bgcolor": "#533"
+    },
+    {
+      "id": 48,
+      "type": "GetNode",
+      "pos": [
+        5430,
+        5930
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 16,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "WANVIDIMAGE_CLIPEMBEDS",
+          "type": "WANVIDIMAGE_CLIPEMBEDS",
+          "links": [
+            643
+          ]
+        }
+      ],
+      "title": "Get_视觉clip",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "视觉clip"
+      ]
+    },
+    {
+      "id": 49,
+      "type": "GetNode",
+      "pos": [
+        5430,
+        5990
+      ],
+      "size": [
+        210,
+        60
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 31,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            644
+          ]
+        }
+      ],
+      "title": "Get_输入图像",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "输入图像"
+      ],
+      "color": "#2a363b",
+      "bgcolor": "#3f5159"
+    },
+    {
+      "id": 51,
+      "type": "GetNode",
+      "pos": [
+        5430,
+        6110
+      ],
+      "size": [
+        210,
+        50
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 17,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            649
+          ]
+        }
+      ],
+      "title": "Get_pose_video_mask",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "pose_video_mask"
+      ],
+      "color": "#2a363b",
+      "bgcolor": "#3f5159"
+    },
+    {
+      "id": 53,
+      "type": "GetNode",
+      "pos": [
+        5430,
+        6230
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 21,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "INT",
+          "type": "INT",
+          "links": [
+            651
+          ]
+        }
+      ],
+      "title": "Get_宽度",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "宽度"
+      ],
+      "color": "#1b4669",
+      "bgcolor": "#29699c"
+    },
+    {
+      "id": 54,
+      "type": "GetNode",
+      "pos": [
+        5430,
+        6290
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 25,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "INT",
+          "type": "INT",
+          "links": [
+            652
+          ]
+        }
+      ],
+      "title": "Get_高度",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "高度"
+      ],
+      "color": "#1b4669",
+      "bgcolor": "#29699c"
+    },
+    {
+      "id": 55,
+      "type": "GetNode",
+      "pos": [
+        5430,
+        6350
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 7,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "INT",
+          "type": "INT",
+          "links": [
+            653,
+            791
+          ]
+        }
+      ],
+      "title": "Get_总帧数",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "总帧数"
+      ],
+      "color": "#1b4669",
+      "bgcolor": "#29699c"
+    },
+    {
+      "id": 57,
+      "type": "GetNode",
+      "pos": [
+        5430,
+        5810
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 14,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "WANVIDEOMODEL",
+          "type": "WANVIDEOMODEL",
+          "links": [
+            33
+          ]
+        }
+      ],
+      "title": "Get_模型",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "模型"
+      ]
+    },
+    {
+      "id": 58,
+      "type": "WanVideoTextEncodeCached",
+      "pos": [
+        4950,
+        5750
+      ],
+      "size": [
+        380,
+        440
+      ],
+      "flags": {},
+      "order": 46,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "扩展参数",
+          "name": "extender_args",
+          "shape": 7,
+          "type": "WANVIDEOPROMPTEXTENDER_ARGS",
+          "link": null
+        },
+        {
+          "label": "模型名",
+          "name": "model_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "model_name"
+          },
+          "link": null
+        },
+        {
+          "label": "精度",
+          "name": "precision",
+          "type": "COMBO",
+          "widget": {
+            "name": "precision"
+          },
+          "link": null
+        },
+        {
+          "label": "正面提示",
+          "name": "positive_prompt",
+          "type": "STRING",
+          "widget": {
+            "name": "positive_prompt"
+          },
+          "link": null
+        },
+        {
+          "label": "负面提示",
+          "name": "negative_prompt",
+          "type": "STRING",
+          "widget": {
+            "name": "negative_prompt"
+          },
+          "link": null
+        },
+        {
+          "label": "量化",
+          "name": "quantization",
+          "type": "COMBO",
+          "widget": {
+            "name": "quantization"
+          },
+          "link": null
+        },
+        {
+          "label": "使用磁盘缓存",
+          "name": "use_disk_cache",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "use_disk_cache"
+          },
+          "link": null
+        },
+        {
+          "label": "设备",
+          "name": "device",
+          "type": "COMBO",
+          "widget": {
+            "name": "device"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "文本嵌入",
+          "name": "text_embeds",
+          "type": "WANVIDEOTEXTEMBEDS",
+          "links": [
+            35
+          ]
+        },
+        {
+          "label": "负面文本嵌入",
+          "name": "negative_text_embeds",
+          "type": "WANVIDEOTEXTEMBEDS"
+        },
+        {
+          "label": "正面提示",
+          "name": "positive_prompt",
+          "type": "STRING"
+        }
+      ],
+      "properties": {
+        "cnr_id": "ComfyUI-WanVideoWrapper",
+        "ver": "761b1d191e50d589465e31dc0d40ff7c59b1b7b0",
+        "Node name for S&R": "WanVideoTextEncodeCached",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "aux_id": "FX-FeiHou/ComfyUI-WanVideoWrapper",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "umt5-xxl-enc-fp8_e4m3fn.safetensors",
+        "bf16",
+        "一个女人背对着镜头在跳舞\n一个女人面对着镜头在跳舞\n一个女人一边转身一边跳舞",
+        "文字，字幕，色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+        "disabled",
+        false,
+        "gpu"
+      ],
+      "color": "#55372a",
+      "bgcolor": "#8c5a45"
+    },
+    {
+      "id": 59,
+      "type": "SetNode",
+      "pos": [
+        4580,
+        6040
+      ],
+      "size": [
+        210,
+        60
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 67,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "输入",
+          "name": "WANVIDIMAGE_CLIPEMBEDS",
+          "type": "WANVIDIMAGE_CLIPEMBEDS",
+          "link": 659
+        }
+      ],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "WANVIDIMAGE_CLIPEMBEDS",
+          "type": "WANVIDIMAGE_CLIPEMBEDS"
+        }
+      ],
+      "title": "Set_视觉clip",
+      "properties": {
+        "Node name for S&R": "SetNode",
+        "aux_id": "SetNode",
+        "previousName": "视觉clip",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "视觉clip"
+      ],
+      "color": "#6e6ea8",
+      "bgcolor": "#333355"
+    },
+    {
+      "id": 61,
+      "type": "SetNode",
+      "pos": [
+        4580,
+        5910
+      ],
+      "size": [
+        210,
+        60
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 87,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "输入",
+          "name": "WANVIDEOMODEL",
+          "type": "WANVIDEOMODEL",
+          "link": 57
+        }
+      ],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "WANVIDEOMODEL",
+          "type": "WANVIDEOMODEL"
+        }
+      ],
+      "title": "Set_模型",
+      "properties": {
+        "Node name for S&R": "SetNode",
+        "aux_id": "SetNode",
+        "previousName": "模型",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "模型"
+      ],
+      "color": "#6e6ea8",
+      "bgcolor": "#333355"
+    },
+    {
+      "id": 62,
+      "type": "WanAnimatePlus SetBlockSwap",
+      "pos": [
+        4580,
+        5780
+      ],
+      "size": [
+        260,
+        50
+      ],
+      "flags": {},
+      "order": 81,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "WANVIDEOMODEL",
+          "link": 58
+        },
+        {
+          "name": "block_swap_args",
+          "shape": 7,
+          "type": "BLOCKSWAPARGS",
+          "link": 59
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "WANVIDEOMODEL",
+          "links": [
+            57
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "wuwukaka/ComfyUI-WanVideoWrapper",
+        "ver": "c3bb8e981e6ccfb5936e8d86ec7b41892a8d6b5e",
+        "Node name for S&R": "WanAnimatePlus SetBlockSwap",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [],
+      "color": "#6e6ea8",
+      "bgcolor": "#333355"
+    },
+    {
+      "id": 64,
+      "type": "Note",
+      "pos": [
+        4290,
+        6130
+      ],
+      "size": [
+        230,
+        90
+      ],
+      "flags": {},
+      "order": 19,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "81帧的情况下，配置低就把交换块开到40，配置比较高的可以不开交换块，还不行就把模型换成GGUF Q6或者Q4。\n如果开了帧循环，跑200-400帧，不论是4060还是5090，都要开到40。"
+      ],
+      "color": "#6e6ea8",
+      "bgcolor": "#333355"
+    },
+    {
+      "id": 67,
+      "type": "WanAnimatePlus BlockSwap",
+      "pos": [
+        4290,
+        5880
+      ],
+      "size": [
+        230,
+        210
+      ],
+      "flags": {},
+      "order": 24,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "block_swap_args",
+          "type": "BLOCKSWAPARGS",
+          "links": [
+            59
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "wuwukaka/ComfyUI-WanVideoWrapper",
+        "ver": "c3bb8e981e6ccfb5936e8d86ec7b41892a8d6b5e",
+        "Node name for S&R": "WanAnimatePlus BlockSwap",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        30,
+        false,
+        false,
+        true,
+        1,
+        0,
+        false
+      ],
+      "color": "#6e6ea8",
+      "bgcolor": "#333355"
+    },
+    {
+      "id": 68,
+      "type": "CLIPVisionLoader",
+      "pos": [
+        4290,
+        6280
+      ],
+      "size": [
+        230,
+        60
+      ],
+      "flags": {},
+      "order": 23,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "CLIP视觉",
+          "name": "CLIP_VISION",
+          "type": "CLIP_VISION",
+          "links": [
+            657
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.59",
+        "Node name for S&R": "CLIPVisionLoader",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"
+      ],
+      "color": "#6e6ea8",
+      "bgcolor": "#333355"
+    },
+    {
+      "id": 69,
+      "type": "WanAnimatePlus SetLoRAs",
+      "pos": [
+        4290,
+        5780
+      ],
+      "size": [
+        220,
+        50
+      ],
+      "flags": {},
+      "order": 71,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "WANVIDEOMODEL",
+          "link": 61
+        },
+        {
+          "name": "lora",
+          "shape": 7,
+          "type": "WANVIDLORA",
+          "link": 795
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "WANVIDEOMODEL",
+          "links": [
+            58
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "wuwukaka/ComfyUI-WanVideoWrapper",
+        "ver": "c3bb8e981e6ccfb5936e8d86ec7b41892a8d6b5e",
+        "Node name for S&R": "WanAnimatePlus SetLoRAs",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [],
+      "color": "#6e6ea8",
+      "bgcolor": "#333355"
+    },
+    {
+      "id": 70,
+      "type": "SetNode",
+      "pos": [
+        4120,
+        6350
+      ],
+      "size": [
+        210,
+        60
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 53,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "输入",
+          "name": "WANVAE",
+          "type": "WANVAE",
+          "link": 63
+        }
+      ],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "WANVAE",
+          "type": "WANVAE"
+        }
+      ],
+      "title": "Set_VAE",
+      "properties": {
+        "Node name for S&R": "SetNode",
+        "aux_id": "SetNode",
+        "previousName": "VAE",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "VAE"
+      ],
+      "color": "#6e6ea8",
+      "bgcolor": "#333355"
+    },
+    {
+      "id": 71,
+      "type": "WanAnimatePlus VAELoader",
+      "pos": [
+        3930,
+        6160
+      ],
+      "size": [
+        290,
+        130
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "compile_args",
+          "shape": 7,
+          "type": "WANCOMPILEARGS",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "vae",
+          "type": "WANVAE",
+          "links": [
+            63
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "wuwukaka/ComfyUI-WanVideoWrapper",
+        "ver": "c3bb8e981e6ccfb5936e8d86ec7b41892a8d6b5e",
+        "Node name for S&R": "WanAnimatePlus VAELoader",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        "Wan2_1_VAE_bf16.safetensors",
+        "bf16",
+        false,
+        false
+      ],
+      "color": "#6e6ea8",
+      "bgcolor": "#333355"
+    },
+    {
+      "id": 75,
+      "type": "CLIPTextEncode",
+      "pos": [
+        6090,
+        5120
+      ],
+      "size": [
+        280,
+        100
+      ],
+      "flags": {},
+      "order": 54,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 73
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            76,
+            80
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.24.0",
+        "Node name for S&R": "CLIPTextEncode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "person"
+      ],
+      "color": "#04837e",
+      "bgcolor": "#024745"
+    },
+    {
+      "id": 76,
+      "type": "GetNode",
+      "pos": [
+        6090,
+        5280
+      ],
+      "size": [
+        210,
+        50
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 12,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            74
+          ]
+        }
+      ],
+      "title": "Get_输入视频",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "kijai/ComfyUI-KJNodes",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "输入视频"
+      ],
+      "color": "#04837e",
+      "bgcolor": "#024745"
+    },
+    {
+      "id": 78,
+      "type": "CheckpointLoaderSimple",
+      "pos": [
+        6090,
+        4950
+      ],
+      "size": [
+        280,
+        100
+      ],
+      "flags": {},
+      "order": 29,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            75,
+            79
+          ]
+        },
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            73
+          ]
+        },
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.24.0",
+        "Node name for S&R": "CheckpointLoaderSimple",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "sam3.1_multiplex_fp16.safetensors"
+      ],
+      "color": "#04837e",
+      "bgcolor": "#024745"
+    },
+    {
+      "id": 79,
+      "type": "SAM3_VideoTrack",
+      "pos": [
+        6440,
+        4940
+      ],
+      "size": [
+        230,
+        170
+      ],
+      "flags": {},
+      "order": 64,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 74
+        },
+        {
+          "label": "model",
+          "name": "model",
+          "type": "MODEL",
+          "link": 75
+        },
+        {
+          "label": "initial_mask",
+          "name": "initial_mask",
+          "shape": 7,
+          "type": "MASK",
+          "link": null
+        },
+        {
+          "label": "conditioning",
+          "name": "conditioning",
+          "shape": 7,
+          "type": "CONDITIONING",
+          "link": 76
+        }
+      ],
+      "outputs": [
+        {
+          "name": "track_data",
+          "type": "SAM3_TRACK_DATA",
+          "links": [
+            218
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.24.0",
+        "Node name for S&R": "SAM3_VideoTrack",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        0.5,
+        6,
+        1
+      ],
+      "color": "#04837e",
+      "bgcolor": "#024745"
+    },
+    {
+      "id": 80,
+      "type": "SetNode",
+      "pos": [
+        6470,
+        5470
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 83,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "输入",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "link": 257
+        }
+      ],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": null
+        }
+      ],
+      "title": "Set_pose_video_mask",
+      "properties": {
+        "Node name for S&R": "SetNode",
+        "aux_id": "kijai/ComfyUI-KJNodes",
+        "previousName": "pose_video_mask",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "pose_video_mask"
+      ],
+      "color": "#04837e",
+      "bgcolor": "#024745"
+    },
+    {
+      "id": 81,
+      "type": "SAM3_VideoTrack",
+      "pos": [
+        6440,
+        5230
+      ],
+      "size": [
+        230,
+        170
+      ],
+      "flags": {},
+      "order": 65,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 557
+        },
+        {
+          "label": "model",
+          "name": "model",
+          "type": "MODEL",
+          "link": 79
+        },
+        {
+          "label": "initial_mask",
+          "name": "initial_mask",
+          "shape": 7,
+          "type": "MASK",
+          "link": null
+        },
+        {
+          "label": "conditioning",
+          "name": "conditioning",
+          "shape": 7,
+          "type": "CONDITIONING",
+          "link": 80
+        }
+      ],
+      "outputs": [
+        {
+          "name": "track_data",
+          "type": "SAM3_TRACK_DATA",
+          "links": [
+            219
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.24.0",
+        "Node name for S&R": "SAM3_VideoTrack",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        0.5,
+        6,
+        1
+      ],
+      "color": "#04837e",
+      "bgcolor": "#024745"
+    },
+    {
+      "id": 84,
+      "type": "SetNode",
+      "pos": [
+        6450,
+        5530
+      ],
+      "size": [
+        230,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 85,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "输入",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "link": 258
+        }
+      ],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": []
+        }
+      ],
+      "title": "Set_reference_image_mask",
+      "properties": {
+        "Node name for S&R": "SetNode",
+        "aux_id": "kijai/ComfyUI-KJNodes",
+        "previousName": "reference_image_mask",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "reference_image_mask"
+      ],
+      "color": "#04837e",
+      "bgcolor": "#024745"
+    },
+    {
+      "id": 85,
+      "type": "GetNode",
+      "pos": [
+        3980,
+        4960
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 15,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "INT",
+          "type": "INT",
+          "links": [
+            92
+          ]
+        }
+      ],
+      "title": "Get_高度",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "高度"
+      ],
+      "color": "#1b4669",
+      "bgcolor": "#29699c"
+    },
+    {
+      "id": 87,
+      "type": "GetNode",
+      "pos": [
+        3980,
+        4920
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 9,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "INT",
+          "type": "INT",
+          "links": [
+            91
+          ]
+        }
+      ],
+      "title": "Get_宽度",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "宽度"
+      ],
+      "color": "#1b4669",
+      "bgcolor": "#29699c"
+    },
+    {
+      "id": 88,
+      "type": "SetNode",
+      "pos": [
+        3940,
+        5410
+      ],
+      "size": [
+        210,
+        60
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 72,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "输入",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "link": 149
+        }
+      ],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "IMAGE",
+          "type": "IMAGE"
+        }
+      ],
+      "title": "Set_输入图像",
+      "properties": {
+        "Node name for S&R": "SetNode",
+        "aux_id": "SetNode",
+        "previousName": "输入图像",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "输入图像"
+      ],
+      "color": "#2a363b",
+      "bgcolor": "#3f5159"
+    },
+    {
+      "id": 89,
+      "type": "ImageResizeKJv2",
+      "pos": [
+        3940,
+        5020
+      ],
+      "size": [
+        210,
+        340
+      ],
+      "flags": {},
+      "order": 62,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "图像",
+          "name": "image",
+          "type": "IMAGE",
+          "link": 90
+        },
+        {
+          "label": "遮罩",
+          "name": "mask",
+          "shape": 7,
+          "type": "MASK",
+          "link": null
+        },
+        {
+          "label": "宽度",
+          "name": "width",
+          "type": "INT",
+          "widget": {
+            "name": "width"
+          },
+          "link": 91
+        },
+        {
+          "label": "高度",
+          "name": "height",
+          "type": "INT",
+          "widget": {
+            "name": "height"
+          },
+          "link": 92
+        },
+        {
+          "label": "缩放方法",
+          "name": "upscale_method",
+          "type": "COMBO",
+          "widget": {
+            "name": "upscale_method"
+          },
+          "link": null
+        },
+        {
+          "label": "固定宽高比",
+          "name": "keep_proportion",
+          "type": "COMBO",
+          "widget": {
+            "name": "keep_proportion"
+          },
+          "link": null
+        },
+        {
+          "label": "填充颜色",
+          "name": "pad_color",
+          "type": "STRING",
+          "widget": {
+            "name": "pad_color"
+          },
+          "link": null
+        },
+        {
+          "label": "裁剪位置",
+          "name": "crop_position",
+          "type": "COMBO",
+          "widget": {
+            "name": "crop_position"
+          },
+          "link": null
+        },
+        {
+          "label": "因数",
+          "name": "divisible_by",
+          "type": "INT",
+          "widget": {
+            "name": "divisible_by"
+          },
+          "link": null
+        },
+        {
+          "label": "设备",
+          "name": "device",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "device"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "图像",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            149,
+            781
+          ]
+        },
+        {
+          "label": "宽度",
+          "name": "width",
+          "type": "INT",
+          "links": []
+        },
+        {
+          "label": "高度",
+          "name": "height",
+          "type": "INT",
+          "links": []
+        },
+        {
+          "label": "遮罩",
+          "name": "mask",
+          "type": "MASK"
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-kjnodes",
+        "ver": "468fcc86f0b29e79a8510e8239eb15714d6747a6",
+        "Node name for S&R": "ImageResizeKJv2",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "width": true,
+            "height": true
+          },
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {
+          "width": true,
+          "height": true
+        }
+      },
+      "widgets_values": [
+        1280,
+        1280,
+        "bicubic",
+        "crop",
+        "0, 0, 0",
+        "center",
+        16,
+        "cpu"
+      ],
+      "color": "#495d4e",
+      "bgcolor": "#6d8b74"
+    },
+    {
+      "id": 90,
+      "type": "ImageResizeKJv2",
+      "pos": [
+        4770,
+        4860
+      ],
+      "size": [
+        270,
+        340
+      ],
+      "flags": {},
+      "order": 68,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "图像",
+          "name": "image",
+          "type": "IMAGE",
+          "link": 724
+        },
+        {
+          "label": "遮罩",
+          "name": "mask",
+          "shape": 7,
+          "type": "MASK",
+          "link": null
+        },
+        {
+          "label": "宽度",
+          "name": "width",
+          "type": "INT",
+          "widget": {
+            "name": "width"
+          },
+          "link": 94
+        },
+        {
+          "label": "高度",
+          "name": "height",
+          "type": "INT",
+          "widget": {
+            "name": "height"
+          },
+          "link": 95
+        },
+        {
+          "label": "缩放方法",
+          "name": "upscale_method",
+          "type": "COMBO",
+          "widget": {
+            "name": "upscale_method"
+          },
+          "link": null
+        },
+        {
+          "label": "固定宽高比",
+          "name": "keep_proportion",
+          "type": "COMBO",
+          "widget": {
+            "name": "keep_proportion"
+          },
+          "link": null
+        },
+        {
+          "label": "填充颜色",
+          "name": "pad_color",
+          "type": "STRING",
+          "widget": {
+            "name": "pad_color"
+          },
+          "link": null
+        },
+        {
+          "label": "裁剪位置",
+          "name": "crop_position",
+          "type": "COMBO",
+          "widget": {
+            "name": "crop_position"
+          },
+          "link": null
+        },
+        {
+          "label": "因数",
+          "name": "divisible_by",
+          "type": "INT",
+          "widget": {
+            "name": "divisible_by"
+          },
+          "link": null
+        },
+        {
+          "label": "设备",
+          "name": "device",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "device"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "图像",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            103
+          ]
+        },
+        {
+          "label": "宽度",
+          "name": "width",
+          "type": "INT"
+        },
+        {
+          "label": "高度",
+          "name": "height",
+          "type": "INT"
+        },
+        {
+          "label": "遮罩",
+          "name": "mask",
+          "type": "MASK"
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-kjnodes",
+        "ver": "068d4fee62d379723dd96dd3e768ed807f7d7135",
+        "Node name for S&R": "ImageResizeKJv2",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        },
+        "widget_ue_connectable": {
+          "crop_position": true,
+          "pad_color": true,
+          "divisible_by": true,
+          "width": true,
+          "keep_proportion": true,
+          "upscale_method": true,
+          "device": true,
+          "height": true
+        }
+      },
+      "widgets_values": [
+        1280,
+        720,
+        "bilinear",
+        "crop",
+        "0, 0, 0",
+        "center",
+        2,
+        "cpu"
+      ],
+      "color": "#008662",
+      "bgcolor": "#004935"
+    },
+    {
+      "id": 95,
+      "type": "Note",
+      "pos": [
+        4200,
+        5380
+      ],
+      "size": [
+        210,
+        220
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "以下几个参数需要注意：\n\nforce_rate(强制帧率)：强制帧率请手动输入，节点默认为每秒16帧，如果希望动作更流畅这里设置为30帧，不同的帧率也会让帧数上限改变\n\nframe_load_cap（帧数读取上限）：读取的总帧数，视频的时长就是通过这个来控制\n\nskip_first_frames（跳过前X帧）：从头开始跳过的帧数\n\nselect_every_nth（间隔）：每间隔多少帧读取一帧，也就跳帧抽帧"
+      ],
+      "color": "#008662",
+      "bgcolor": "#004935"
+    },
+    {
+      "id": 98,
+      "type": "GetNode",
+      "pos": [
+        4200,
+        5260
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "INT",
+          "type": "INT",
+          "links": [
+            94
+          ]
+        }
+      ],
+      "title": "Get_宽度",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "宽度"
+      ],
+      "color": "#008662",
+      "bgcolor": "#004935"
+    },
+    {
+      "id": 99,
+      "type": "GetNode",
+      "pos": [
+        4200,
+        5320
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "INT",
+          "type": "INT",
+          "links": [
+            95
+          ]
+        }
+      ],
+      "title": "Get_高度",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "高度"
+      ],
+      "color": "#008662",
+      "bgcolor": "#004935"
+    },
+    {
+      "id": 101,
+      "type": "VHS_VideoInfoLoaded",
+      "pos": [
+        4770,
+        5250
+      ],
+      "size": [
+        270,
+        110
+      ],
+      "flags": {},
+      "order": 70,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "视频信息",
+          "name": "video_info",
+          "type": "VHS_VIDEOINFO",
+          "link": 101
+        }
+      ],
+      "outputs": [
+        {
+          "label": "FPS🟦",
+          "name": "fps🟦",
+          "type": "FLOAT",
+          "links": [
+            104,
+            799
+          ]
+        },
+        {
+          "label": "帧数🟦",
+          "name": "frame_count🟦",
+          "type": "INT",
+          "links": [
+            102,
+            800
+          ]
+        },
+        {
+          "label": "时长🟦",
+          "name": "duration🟦",
+          "type": "FLOAT"
+        },
+        {
+          "label": "宽度🟦",
+          "name": "width🟦",
+          "type": "INT",
+          "links": []
+        },
+        {
+          "label": "高度🟦",
+          "name": "height🟦",
+          "type": "INT",
+          "links": []
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-videohelpersuite",
+        "ver": "537f3a02269e14ab4b0350d4189a52034e9a3b12",
+        "Node name for S&R": "VHS_VideoInfoLoaded",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.5.2"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": {},
+      "color": "#008662",
+      "bgcolor": "#004935"
+    },
+    {
+      "id": 102,
+      "type": "SetNode",
+      "pos": [
+        4920,
+        5520
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 79,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "输入",
+          "name": "INT",
+          "type": "INT",
+          "link": 102
+        }
+      ],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "INT",
+          "type": "INT"
+        }
+      ],
+      "title": "Set_总帧数",
+      "properties": {
+        "Node name for S&R": "SetNode",
+        "aux_id": "SetNode",
+        "previousName": "总帧数",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "总帧数"
+      ],
+      "color": "#008662",
+      "bgcolor": "#004935"
+    },
+    {
+      "id": 103,
+      "type": "SetNode",
+      "pos": [
+        4770,
+        5470
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 77,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "输入",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "link": 103
+        }
+      ],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": []
+        }
+      ],
+      "title": "Set_输入视频",
+      "properties": {
+        "Node name for S&R": "SetNode",
+        "aux_id": "SetNode",
+        "previousName": "输入视频",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "输入视频"
+      ],
+      "color": "#008662",
+      "bgcolor": "#004935"
+    },
+    {
+      "id": 104,
+      "type": "SetNode",
+      "pos": [
+        4770,
+        5520
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 78,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "输入",
+          "name": "FLOAT",
+          "type": "FLOAT",
+          "link": 104
+        }
+      ],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "FLOAT",
+          "type": "FLOAT"
+        }
+      ],
+      "title": "Set_帧率",
+      "properties": {
+        "Node name for S&R": "SetNode",
+        "aux_id": "SetNode",
+        "previousName": "帧率",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "帧率"
+      ],
+      "color": "#008662",
+      "bgcolor": "#004935"
+    },
+    {
+      "id": 107,
+      "type": "SetNode",
+      "pos": [
+        4920,
+        5470
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 69,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "输入",
+          "name": "AUDIO",
+          "type": "AUDIO",
+          "link": 107
+        }
+      ],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "AUDIO",
+          "type": "AUDIO"
+        }
+      ],
+      "title": "Set_输入音频",
+      "properties": {
+        "Node name for S&R": "SetNode",
+        "aux_id": "SetNode",
+        "previousName": "输入音频",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "输入音频"
+      ],
+      "color": "#008662",
+      "bgcolor": "#004935"
+    },
+    {
+      "id": 108,
+      "type": "LoadImage",
+      "pos": [
+        3470,
+        4890
+      ],
+      "size": [
+        440,
+        700
+      ],
+      "flags": {},
+      "order": 50,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "image",
+          "name": "image",
+          "type": "COMBO",
+          "widget": {
+            "name": "image"
+          },
+          "link": null
+        },
+        {
+          "label": "upload",
+          "name": "upload",
+          "type": "IMAGEUPLOAD",
+          "widget": {
+            "name": "upload"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "IMAGE",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            90
+          ]
+        },
+        {
+          "label": "MASK",
+          "name": "MASK",
+          "type": "MASK"
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.9.1",
+        "Node name for S&R": "LoadImage",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.5.2"
+        },
+        "image": "clipspace/clipspace-painted-masked-1774270692143.png [input]",
+        "widget_ue_connectable": {
+          "image": true,
+          "upload": true
+        }
+      },
+      "widgets_values": [
+        "TIFA.jpg",
+        "image"
+      ],
+      "color": "#495d4e",
+      "bgcolor": "#6d8b74"
+    },
+    {
+      "id": 110,
+      "type": "Int",
+      "pos": [
+        4200,
+        4940
+      ],
+      "size": [
+        210,
+        60
+      ],
+      "flags": {},
+      "order": 34,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "整数",
+          "name": "INT",
+          "type": "INT",
+          "links": [
+            768
+          ]
+        }
+      ],
+      "title": "读取帧数",
+      "properties": {
+        "cnr_id": "ComfyLiterals",
+        "ver": "bdddb08ca82d90d75d97b1d437a652e0284a32ac",
+        "Node name for S&R": "Int",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        "0"
+      ],
+      "color": "#008662",
+      "bgcolor": "#004935"
+    },
+    {
+      "id": 111,
+      "type": "Int",
+      "pos": [
+        4200,
+        5060
+      ],
+      "size": [
+        210,
+        60
+      ],
+      "flags": {},
+      "order": 27,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "整数",
+          "name": "INT",
+          "type": "INT",
+          "links": [
+            764
+          ]
+        }
+      ],
+      "title": "跳过帧数",
+      "properties": {
+        "cnr_id": "ComfyLiterals",
+        "ver": "bdddb08ca82d90d75d97b1d437a652e0284a32ac",
+        "Node name for S&R": "Int",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        "0"
+      ],
+      "color": "#008662",
+      "bgcolor": "#004935"
+    },
+    {
+      "id": 112,
+      "type": "VHS_LoadVideo",
+      "pos": [
+        4450,
+        4870
+      ],
+      "size": [
+        270,
+        310
+      ],
+      "flags": {},
+      "order": 57,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "批次管理",
+          "name": "meta_batch",
+          "shape": 7,
+          "type": "VHS_BatchManager",
+          "link": null
+        },
+        {
+          "label": "vae",
+          "name": "vae",
+          "shape": 7,
+          "type": "VAE",
+          "link": null
+        },
+        {
+          "label": "视频",
+          "name": "video",
+          "type": "COMBO",
+          "widget": {
+            "name": "video"
+          },
+          "link": null
+        },
+        {
+          "label": "强制帧率",
+          "name": "force_rate",
+          "type": "FLOAT",
+          "widget": {
+            "name": "force_rate"
+          },
+          "link": null
+        },
+        {
+          "label": "自定义宽度",
+          "name": "custom_width",
+          "type": "INT",
+          "widget": {
+            "name": "custom_width"
+          },
+          "link": null
+        },
+        {
+          "label": "自定义高度",
+          "name": "custom_height",
+          "type": "INT",
+          "widget": {
+            "name": "custom_height"
+          },
+          "link": null
+        },
+        {
+          "label": "帧数读取上限",
+          "name": "frame_load_cap",
+          "type": "INT",
+          "widget": {
+            "name": "frame_load_cap"
+          },
+          "link": 768
+        },
+        {
+          "label": "跳过前X帧",
+          "name": "skip_first_frames",
+          "type": "INT",
+          "widget": {
+            "name": "skip_first_frames"
+          },
+          "link": 764
+        },
+        {
+          "label": "间隔",
+          "name": "select_every_nth",
+          "type": "INT",
+          "widget": {
+            "name": "select_every_nth"
+          },
+          "link": null
+        },
+        {
+          "label": "格式",
+          "name": "format",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "图像",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            724
+          ]
+        },
+        {
+          "label": "帧计数",
+          "name": "frame_count",
+          "type": "INT",
+          "links": []
+        },
+        {
+          "label": "音频",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            107
+          ]
+        },
+        {
+          "label": "视频信息",
+          "name": "video_info",
+          "type": "VHS_VIDEOINFO",
+          "links": [
+            101
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-videohelpersuite",
+        "ver": "8e4d79471bf1952154768e8435a9300077b534fa",
+        "Node name for S&R": "VHS_LoadVideo",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "custom_height": true,
+            "custom_width": true
+          },
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {
+          "custom_height": true,
+          "custom_width": true
+        }
+      },
+      "widgets_values": {
+        "video": "雅娜yana🤘🏻_1igbl0zi8tx5q_#世界杯拉拉队已就位_#wakawaka舞蹈挑战_#wakawaka_你最喜欢.mp4",
+        "force_rate": 24,
+        "custom_width": 0,
+        "custom_height": 0,
+        "frame_load_cap": 0,
+        "skip_first_frames": 0,
+        "select_every_nth": 1,
+        "format": "AnimateDiff",
+        "videopreview": {
+          "paused": false,
+          "hidden": false,
+          "params": {
+            "custom_height": 0,
+            "filename": "雅娜yana🤘🏻_1igbl0zi8tx5q_#世界杯拉拉队已就位_#wakawaka舞蹈挑战_#wakawaka_你最喜欢.mp4",
+            "force_rate": 24,
+            "custom_width": 0,
+            "select_every_nth": 1,
+            "frame_load_cap": 0,
+            "format": "video/mp4",
+            "skip_first_frames": 0,
+            "type": "input"
+          },
+          "muted": false
+        }
+      },
+      "color": "#008662",
+      "bgcolor": "#004935"
+    },
+    {
+      "id": 113,
+      "type": "SetNode",
+      "pos": [
+        5430,
+        4630
+      ],
+      "size": [
+        210,
+        60
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 59,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "输入",
+          "name": "INT",
+          "type": "INT",
+          "link": 112
+        }
+      ],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "INT",
+          "type": "INT"
+        }
+      ],
+      "title": "Set_宽度",
+      "properties": {
+        "Node name for S&R": "SetNode",
+        "aux_id": "SetNode",
+        "previousName": "宽度",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "宽度"
+      ],
+      "color": "#1b4669",
+      "bgcolor": "#29699c"
+    },
+    {
+      "id": 114,
+      "type": "SetNode",
+      "pos": [
+        5700,
+        4630
+      ],
+      "size": [
+        210,
+        60
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 60,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "输入",
+          "name": "INT",
+          "type": "INT",
+          "link": 113
+        }
+      ],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "INT",
+          "type": "INT"
+        }
+      ],
+      "title": "Set_高度",
+      "properties": {
+        "Node name for S&R": "SetNode",
+        "aux_id": "SetNode",
+        "previousName": "高度",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "高度"
+      ],
+      "color": "#1b4669",
+      "bgcolor": "#29699c"
+    },
+    {
+      "id": 115,
+      "type": "INTConstant",
+      "pos": [
+        5380,
+        4610
+      ],
+      "size": [
+        210,
+        60
+      ],
+      "flags": {},
+      "order": 40,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "值",
+          "name": "value",
+          "type": "INT",
+          "widget": {
+            "name": "value"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "值",
+          "name": "value",
+          "type": "INT",
+          "links": [
+            112
+          ]
+        }
+      ],
+      "title": "宽",
+      "properties": {
+        "cnr_id": "comfyui-kjnodes",
+        "ver": "37659859825cea55940a58110525795ce5deb8be",
+        "Node name for S&R": "INTConstant",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        480
+      ],
+      "color": "#2d7592",
+      "bgcolor": "#49a3c7"
+    },
+    {
+      "id": 116,
+      "type": "INTConstant",
+      "pos": [
+        5650,
+        4610
+      ],
+      "size": [
+        210,
+        60
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 41,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "值",
+          "name": "value",
+          "type": "INT",
+          "widget": {
+            "name": "value"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "值",
+          "name": "value",
+          "type": "INT",
+          "links": [
+            113
+          ]
+        }
+      ],
+      "title": "高",
+      "properties": {
+        "cnr_id": "comfyui-kjnodes",
+        "ver": "37659859825cea55940a58110525795ce5deb8be",
+        "Node name for S&R": "INTConstant",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        832
+      ],
+      "color": "#2d7592",
+      "bgcolor": "#49a3c7"
+    },
+    {
+      "id": 117,
+      "type": "GetNode",
+      "pos": [
+        7360,
+        5230
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 11,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "FLOAT",
+          "type": "FLOAT",
+          "links": [
+            116
+          ]
+        }
+      ],
+      "title": "Get_帧率",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "帧率"
+      ],
+      "color": "#232",
+      "bgcolor": "#353"
+    },
+    {
+      "id": 118,
+      "type": "GetNode",
+      "pos": [
+        7350,
+        5010
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 28,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "AUDIO",
+          "type": "AUDIO",
+          "links": [
+            115
+          ]
+        }
+      ],
+      "title": "Get_输入音频",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "输入音频"
+      ],
+      "color": "#e10e4e",
+      "bgcolor": "#81082d"
+    },
+    {
+      "id": 119,
+      "type": "VHS_VideoCombine",
+      "pos": [
+        7570,
+        4910
+      ],
+      "size": [
+        720,
+        334
+      ],
+      "flags": {},
+      "order": 74,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "图像",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 798
+        },
+        {
+          "label": "音频",
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": 115
+        },
+        {
+          "label": "批次管理",
+          "name": "meta_batch",
+          "shape": 7,
+          "type": "VHS_BatchManager",
+          "link": null
+        },
+        {
+          "label": "vae",
+          "name": "vae",
+          "shape": 7,
+          "type": "VAE",
+          "link": null
+        },
+        {
+          "label": "帧率",
+          "name": "frame_rate",
+          "type": "FLOAT",
+          "widget": {
+            "name": "frame_rate"
+          },
+          "link": 116
+        },
+        {
+          "label": "循环次数",
+          "name": "loop_count",
+          "type": "INT",
+          "widget": {
+            "name": "loop_count"
+          },
+          "link": null
+        },
+        {
+          "label": "文件名前缀",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "label": "格式",
+          "name": "format",
+          "type": "COMBO",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "label": "Ping-Pong",
+          "name": "pingpong",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "pingpong"
+          },
+          "link": null
+        },
+        {
+          "label": "保存到输出文件夹",
+          "name": "save_output",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "save_output"
+          },
+          "link": null
+        },
+        {
+          "label": "保存元数据",
+          "name": "save_metadata",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "save_metadata"
+          },
+          "link": null
+        },
+        {
+          "label": "修剪音频",
+          "name": "trim_to_audio",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "trim_to_audio"
+          },
+          "link": null
+        },
+        {
+          "label": "pix_fmt",
+          "name": "pix_fmt",
+          "type": [
+            "yuv420p",
+            "yuv420p10le"
+          ],
+          "widget": {
+            "name": "pix_fmt"
+          },
+          "link": null
+        },
+        {
+          "label": "crf",
+          "name": "crf",
+          "type": "INT",
+          "widget": {
+            "name": "crf"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "文件名",
+          "name": "Filenames",
+          "type": "VHS_FILENAMES"
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-videohelpersuite",
+        "ver": "0edce8ef7ce173ac97a3ed3d6f4636029d1a4530",
+        "Node name for S&R": "VHS_VideoCombine",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "save_output": true,
+            "filename_prefix": true,
+            "loop_count": true,
+            "pix_fmt": true,
+            "save_metadata": true,
+            "crf": true,
+            "trim_to_audio": true,
+            "format": true,
+            "frame_rate": true,
+            "pingpong": true
+          },
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {
+          "frame_rate": true
+        }
+      },
+      "widgets_values": {
+        "frame_rate": 16,
+        "loop_count": 0,
+        "filename_prefix": "%date:yyyy-MM-dd%/%date:yyyyMMdd_hhmmss%_Wanimate",
+        "format": "video/h264-mp4",
+        "pix_fmt": "yuv420p",
+        "crf": 19,
+        "save_metadata": true,
+        "trim_to_audio": false,
+        "pingpong": false,
+        "save_output": false,
+        "videopreview": {
+          "paused": false,
+          "hidden": false,
+          "params": {
+            "score": "0",
+            "filename": "20260630_211354_Wanimate_00003-audio.mp4",
+            "cos_url": "https://rh-images-1252422369.cos.ap-beijing.myqcloud.com//e0b525dbb8a3e79426d3e918cf2af784/output/20260510_173213_Wanimate_00001_p84-audio_unpmy_1778406650.mp4",
+            "workflow": "20260630_211354_Wanimate_00003.png",
+            "fullpath": "F:\\Ai\\ComfyUI-aki-v1.7\\ComfyUI\\temp\\2026-06-30\\20260630_211354_Wanimate_00003-audio.mp4",
+            "format": "video/h264-mp4",
+            "subfolder": "2026-06-30",
+            "label": "Normal",
+            "type": "temp",
+            "frame_rate": 24
+          }
+        }
+      },
+      "color": "#e10e4e",
+      "bgcolor": "#81082d"
+    },
+    {
+      "id": 121,
+      "type": "GetNode",
+      "pos": [
+        6090,
+        4890
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 6,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "FLOAT",
+          "type": "FLOAT",
+          "links": [
+            302
+          ]
+        }
+      ],
+      "title": "Get_帧率",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "帧率"
+      ],
+      "color": "#04837e",
+      "bgcolor": "#024745"
+    },
+    {
+      "id": 129,
+      "type": "GetNode",
+      "pos": [
+        5430,
+        6410
+      ],
+      "size": [
+        210,
+        60
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 22,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "BOOLEAN",
+          "type": "BOOLEAN",
+          "links": [
+            782
+          ]
+        }
+      ],
+      "title": "Get_替换模式",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "kijai/ComfyUI-KJNodes",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "替换模式"
+      ]
+    },
+    {
+      "id": 131,
+      "type": "Label (rgthree)",
+      "pos": [
+        4210,
+        4380
+      ],
+      "size": [
+        422.2412109375,
+        50
+      ],
+      "flags": {
+        "allow_interaction": true
+      },
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "By:三层楼的小肥猴",
+      "properties": {
+        "fontSize": 50,
+        "fontFamily": "Arial",
+        "fontColor": "#ffffff",
+        "textAlign": "left",
+        "backgroundColor": "transparent",
+        "padding": 0,
+        "borderRadius": 0,
+        "angle": 0,
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.5.2"
+        },
+        "widget_ue_connectable": {}
+      },
+      "color": "#fff0",
+      "bgcolor": "#fff0"
+    },
+    {
+      "id": 132,
+      "type": "Label (rgthree)",
+      "pos": [
+        4660,
+        4380
+      ],
+      "size": [
+        903.2958984375,
+        50
+      ],
+      "flags": {
+        "allow_interaction": true
+      },
+      "order": 8,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "B站 :https://space.bilibili.com/389291683",
+      "properties": {
+        "fontSize": 50,
+        "fontFamily": "Arial",
+        "fontColor": "#ffffff",
+        "textAlign": "left",
+        "backgroundColor": "transparent",
+        "padding": 0,
+        "borderRadius": 0,
+        "angle": 0,
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.5.2"
+        },
+        "widget_ue_connectable": {}
+      },
+      "color": "#fff0",
+      "bgcolor": "#fff0"
+    },
+    {
+      "id": 133,
+      "type": "Label (rgthree)",
+      "pos": [
+        4850,
+        4250
+      ],
+      "size": [
+        2040,
+        80
+      ],
+      "flags": {
+        "allow_interaction": true
+      },
+      "order": 35,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "【多图参考】【多角色拼图参考】【电商带货】【剧情二创】",
+      "properties": {
+        "fontSize": 80,
+        "fontFamily": "Arial",
+        "fontColor": "#00ff00",
+        "textAlign": "left",
+        "backgroundColor": "transparent",
+        "padding": 0,
+        "borderRadius": 0,
+        "angle": 0,
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.5.2"
+        },
+        "widget_ue_connectable": {}
+      },
+      "color": "#fff0",
+      "bgcolor": "#fff0"
+    },
+    {
+      "id": 134,
+      "type": "Label (rgthree)",
+      "pos": [
+        5740,
+        4380
+      ],
+      "size": [
+        1786.5234375,
+        50
+      ],
+      "flags": {
+        "allow_interaction": true
+      },
+      "order": 36,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "交流分享入群加微信：fx-feihou  Q群：1091593367（请备注来意：加群、商务）",
+      "properties": {
+        "fontSize": 50,
+        "fontFamily": "Arial",
+        "fontColor": "#ffffff",
+        "textAlign": "left",
+        "backgroundColor": "transparent",
+        "padding": 0,
+        "borderRadius": 0,
+        "angle": 0,
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.5.2"
+        },
+        "widget_ue_connectable": {}
+      },
+      "color": "#fff0",
+      "bgcolor": "#fff0"
+    },
+    {
+      "id": 135,
+      "type": "Label (rgthree)",
+      "pos": [
+        3690,
+        4060
+      ],
+      "size": [
+        4371.533203125,
+        150
+      ],
+      "flags": {
+        "allow_interaction": true
+      },
+      "order": 45,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "【分段队列 Pro】Scail-2 动作迁移+人物替换 高阶Plus工作流 v1.5",
+      "properties": {
+        "fontSize": 150,
+        "fontFamily": "Arial",
+        "fontColor": "#ffff00",
+        "textAlign": "left",
+        "backgroundColor": "transparent",
+        "padding": 0,
+        "borderRadius": 0,
+        "angle": 0,
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.5.2"
+        },
+        "widget_ue_connectable": {}
+      },
+      "color": "#fff0",
+      "bgcolor": "#fff0"
+    },
+    {
+      "id": 140,
+      "type": "GetNode",
+      "pos": [
+        5430,
+        6170
+      ],
+      "size": [
+        230,
+        60
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 18,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            650
+          ]
+        }
+      ],
+      "title": "Get_reference_image_mask",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "kijai/ComfyUI-KJNodes",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "reference_image_mask"
+      ],
+      "color": "#2a363b",
+      "bgcolor": "#3f5159"
+    },
+    {
+      "id": 153,
+      "type": "GetNode",
+      "pos": [
+        7350,
+        4920
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 5,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            797
+          ]
+        }
+      ],
+      "title": "Get_视频输出",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.5.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "视频输出"
+      ],
+      "color": "#2a363b",
+      "bgcolor": "#3f5159"
+    },
+    {
+      "id": 197,
+      "type": "SCAIL2ColoredMaskV2",
+      "pos": [
+        6730,
+        4870
+      ],
+      "size": [
+        280,
+        200
+      ],
+      "flags": {},
+      "order": 75,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "driving_track_data",
+          "type": "SAM3_TRACK_DATA",
+          "link": 218
+        },
+        {
+          "name": "ref_track_data",
+          "shape": 7,
+          "type": "SAM3_TRACK_DATA",
+          "link": 219
+        },
+        {
+          "name": "prefix_track_data",
+          "shape": 7,
+          "type": "SAM3_TRACK_DATA",
+          "link": null
+        },
+        {
+          "name": "replacement_mode",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "replacement_mode"
+          },
+          "link": 757
+        }
+      ],
+      "outputs": [
+        {
+          "name": "pose_video_mask",
+          "type": "IMAGE",
+          "links": [
+            222,
+            257
+          ]
+        },
+        {
+          "name": "reference_image_mask",
+          "type": "IMAGE",
+          "links": [
+            220,
+            258
+          ]
+        },
+        {
+          "name": "prefix_image_mask",
+          "type": "IMAGE",
+          "links": []
+        }
+      ],
+      "properties": {
+        "aux_id": "FX-FeiHou/ComfyUI-FeiHou-Toolbox",
+        "ver": "5aff31569585f60dd06b83cc30ded19dc38b5213",
+        "Node name for S&R": "SCAIL2ColoredMaskV2",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        "",
+        "left_to_right",
+        "Multi Image Single Color",
+        false,
+        "auto"
+      ],
+      "color": "#04837e",
+      "bgcolor": "#024745"
+    },
+    {
+      "id": 198,
+      "type": "PreviewImage",
+      "pos": [
+        6730,
+        5140
+      ],
+      "size": [
+        280,
+        450
+      ],
+      "flags": {},
+      "order": 84,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 220
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null
+        }
+      ],
+      "title": "单图遮罩",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.24.0",
+        "Node name for S&R": "PreviewImage",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [],
+      "color": "#04837e",
+      "bgcolor": "#024745"
+    },
+    {
+      "id": 200,
+      "type": "VHS_VideoCombine",
+      "pos": [
+        7060,
+        4870
+      ],
+      "size": [
+        230,
+        334
+      ],
+      "flags": {},
+      "order": 82,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "图像",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 222
+        },
+        {
+          "label": "音频",
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": null
+        },
+        {
+          "label": "批次管理",
+          "name": "meta_batch",
+          "shape": 7,
+          "type": "VHS_BatchManager",
+          "link": null
+        },
+        {
+          "name": "vae",
+          "shape": 7,
+          "type": "VAE",
+          "link": null
+        },
+        {
+          "label": "帧率",
+          "name": "frame_rate",
+          "type": "FLOAT",
+          "widget": {
+            "name": "frame_rate"
+          },
+          "link": 302
+        },
+        {
+          "label": "循环次数",
+          "name": "loop_count",
+          "type": "INT",
+          "widget": {
+            "name": "loop_count"
+          },
+          "link": null
+        },
+        {
+          "label": "文件名前缀",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "label": "格式",
+          "name": "format",
+          "type": "COMBO",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "label": "Ping-Pong",
+          "name": "pingpong",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "pingpong"
+          },
+          "link": null
+        },
+        {
+          "label": "保存到输出文件夹",
+          "name": "save_output",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "save_output"
+          },
+          "link": null
+        },
+        {
+          "label": "保存元数据",
+          "name": "save_metadata",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "save_metadata"
+          },
+          "link": null
+        },
+        {
+          "label": "修剪音频",
+          "name": "trim_to_audio",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "trim_to_audio"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "文件名",
+          "name": "Filenames",
+          "type": "VHS_FILENAMES",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-videohelpersuite",
+        "ver": "4ee72c065db22c9d96c2427954dc69e7b908444b",
+        "Node name for S&R": "VHS_VideoCombine",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": {
+        "frame_rate": 30,
+        "loop_count": 0,
+        "filename_prefix": "Wan21_SCAIL2",
+        "format": "video/h264-mp4",
+        "pix_fmt": "yuv420p",
+        "crf": 19,
+        "save_metadata": true,
+        "trim_to_audio": false,
+        "pingpong": false,
+        "save_output": false,
+        "videopreview": {
+          "hidden": false,
+          "paused": false,
+          "params": {
+            "filename": "Wan21_SCAIL2_00005.mp4",
+            "subfolder": "",
+            "type": "temp",
+            "format": "video/h264-mp4",
+            "frame_rate": 24,
+            "workflow": "Wan21_SCAIL2_00005.png",
+            "fullpath": "F:\\Ai\\ComfyUI-aki-v1.7\\ComfyUI\\temp\\Wan21_SCAIL2_00005.mp4"
+          }
+        }
+      },
+      "color": "#04837e",
+      "bgcolor": "#024745"
+    },
+    {
+      "id": 204,
+      "type": "GetNode",
+      "pos": [
+        6090,
+        5420
+      ],
+      "size": [
+        210,
+        50
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 38,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "BOOLEAN",
+          "type": "BOOLEAN",
+          "links": [
+            757
+          ]
+        }
+      ],
+      "title": "Get_替换模式",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "kijai/ComfyUI-KJNodes",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "替换模式"
+      ]
+    },
+    {
+      "id": 251,
+      "type": "Label (rgthree)",
+      "pos": [
+        4610,
+        3930
+      ],
+      "size": [
+        2626.81640625,
+        60
+      ],
+      "flags": {
+        "allow_interaction": true
+      },
+      "order": 37,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "此工作流为高配版，仅适合24G以上显存，且有64G以上内存的电脑，低配参看下方模型区设置建议",
+      "properties": {
+        "fontSize": 60,
+        "fontFamily": "Arial",
+        "fontColor": "#ff0000",
+        "textAlign": "left",
+        "backgroundColor": "transparent",
+        "padding": 0,
+        "borderRadius": 0,
+        "angle": 0,
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.5.2"
+        },
+        "widget_ue_connectable": {}
+      },
+      "color": "#fff0",
+      "bgcolor": "#fff0"
+    },
+    {
+      "id": 253,
+      "type": "MarkdownNote",
+      "pos": [
+        3930,
+        6460
+      ],
+      "size": [
+        410,
+        210
+      ],
+      "flags": {},
+      "order": 47,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Markdown注释",
+      "properties": {
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "# 🔧 **设备优化设置**\n\n🖥️ **此版本为高配工作流，电脑运行吃力可按以下参数调整：**\n\n✨ 1. **WanAnimatePlus ModelLoader**：将模型更换为网盘里 **wan2.1_14B_SCAIL_2_nvfp4_comfy_V2.safetensors**\n\n🧠 2. **WanAnimatePlus BlockSwap**：**blocks to swap** 设置在 **10-40** 之间，数值越大内存占用越高、显存占用越低，按需自行调整。\n\n🚫 3. **WanAnimatePlus BlockSwap**：关闭 **use_non_blocking（使用非阻塞）**。\n\n📦 4. **lightx2v**：将 LoRA 替换为网盘内 **rank32** 版本。\n\n📐 5. **分辨率**：调低至 **576x1024、480x832** 等尺寸。\n\n🎞️ 6. **Load Video (Upload)**：帧率改为 **24 或 16**。\n"
+      ],
+      "color": "#e8005d",
+      "bgcolor": "#820034"
+    },
+    {
+      "id": 332,
+      "type": "GetNode",
+      "pos": [
+        6090,
+        5350
+      ],
+      "size": [
+        210,
+        50
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 44,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            557
+          ]
+        }
+      ],
+      "title": "Get_输入图像",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "kijai/ComfyUI-KJNodes",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "输入图像"
+      ],
+      "color": "#2a363b",
+      "bgcolor": "#3f5159"
+    },
+    {
+      "id": 347,
+      "type": "WanAnimatePlus SCAIL_2 Embeds",
+      "pos": [
+        5720,
+        5850
+      ],
+      "size": [
+        360,
+        580
+      ],
+      "flags": {},
+      "order": 55,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "vae",
+          "type": "WANVAE",
+          "link": 642
+        },
+        {
+          "name": "clip_embeds",
+          "shape": 7,
+          "type": "WANVIDIMAGE_CLIPEMBEDS",
+          "link": 643
+        },
+        {
+          "name": "ref_image",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 644
+        },
+        {
+          "name": "bg_image",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "pose_images",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 716
+        },
+        {
+          "name": "prefix_frames",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "prefix_mask",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "transition_video",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "pose_image_mask",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 649
+        },
+        {
+          "name": "reference_image_mask",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 650
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "widget": {
+            "name": "width"
+          },
+          "link": 651
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "widget": {
+            "name": "height"
+          },
+          "link": 652
+        },
+        {
+          "name": "num_frames",
+          "type": "INT",
+          "widget": {
+            "name": "num_frames"
+          },
+          "link": 653
+        },
+        {
+          "name": "frame_window_size",
+          "type": "INT",
+          "widget": {
+            "name": "frame_window_size"
+          },
+          "link": 791
+        },
+        {
+          "name": "preserve_main_ref_background",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "preserve_main_ref_background"
+          },
+          "link": 782
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image_embeds",
+          "type": "WANVIDIMAGE_EMBEDS",
+          "links": [
+            655
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "wuwukaka/ComfyUI-WanAnimatePlus",
+        "ver": "8868eedff5d2fa88feaf69b9f6b213dec0e3e140",
+        "Node name for S&R": "WanAnimatePlus SCAIL_2 Embeds",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        832,
+        480,
+        81,
+        81,
+        true,
+        1,
+        1,
+        0,
+        1,
+        "disabled",
+        "previous_matched_frame",
+        false,
+        false,
+        "disabled",
+        false
+      ],
+      "color": "#55372a",
+      "bgcolor": "#8c5a45"
+    },
+    {
+      "id": 350,
+      "type": "WanAnimatePlus ClipVisionEncode V2",
+      "pos": [
+        4560,
+        6190
+      ],
+      "size": [
+        300,
+        220
+      ],
+      "flags": {},
+      "order": 56,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip_vision",
+          "type": "CLIP_VISION",
+          "link": 657
+        },
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 773
+        },
+        {
+          "name": "negative_image",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image_embeds",
+          "type": "WANVIDIMAGE_CLIPEMBEDS",
+          "links": [
+            659
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "wuwukaka/ComfyUI-WanAnimatePlus",
+        "ver": "8868eedff5d2fa88feaf69b9f6b213dec0e3e140",
+        "Node name for S&R": "WanAnimatePlus ClipVisionEncode V2",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        1,
+        "center",
+        "batch",
+        true,
+        0,
+        0.5
+      ],
+      "color": "#6e6ea8",
+      "bgcolor": "#333355"
+    },
+    {
+      "id": 355,
+      "type": "GetNode",
+      "pos": [
+        6090,
+        5480
+      ],
+      "size": [
+        210,
+        50
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 20,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "*",
+          "type": "*",
+          "links": []
+        }
+      ],
+      "title": "Get_多图参考",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "kijai/ComfyUI-KJNodes",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "多图参考"
+      ]
+    },
+    {
+      "id": 379,
+      "type": "GetNode",
+      "pos": [
+        4400,
+        6430
+      ],
+      "size": [
+        210,
+        50
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 33,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            773
+          ]
+        }
+      ],
+      "title": "Get_输入图像",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "GetNode",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "输入图像"
+      ],
+      "color": "#2a363b",
+      "bgcolor": "#3f5159"
+    },
+    {
+      "id": 401,
+      "type": "GetNode",
+      "pos": [
+        5430,
+        6050
+      ],
+      "size": [
+        210,
+        60
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 32,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            716
+          ]
+        }
+      ],
+      "title": "Get_输入视频",
+      "properties": {
+        "Node name for S&R": "GetNode",
+        "aux_id": "kijai/ComfyUI-KJNodes",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "输入视频"
+      ],
+      "color": "#2a363b",
+      "bgcolor": "#3f5159"
+    },
+    {
+      "id": 440,
+      "type": "WanAnimatePlus ContextOptions",
+      "pos": [
+        4980,
+        6460
+      ],
+      "size": [
+        320,
+        210
+      ],
+      "flags": {},
+      "order": 43,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "reference_latent",
+          "shape": 7,
+          "type": "LATENT",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "context_options",
+          "type": "WANVIDCONTEXT",
+          "links": [
+            759
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "wuwukaka/ComfyUI-WanAnimatePlus",
+        "ver": "974d76c27e0a5d1444744c7b2dfe624d5fe00004",
+        "Node name for S&R": "WanAnimatePlus ContextOptions",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        "uniform_standard",
+        81,
+        4,
+        32,
+        false,
+        false,
+        "linear"
+      ],
+      "color": "#55372a",
+      "bgcolor": "#8c5a45"
+    },
+    {
+      "id": 462,
+      "type": "MarkdownNote",
+      "pos": [
+        5600,
+        5160
+      ],
+      "size": [
+        410,
+        300
+      ],
+      "flags": {},
+      "order": 51,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Model links",
+      "properties": {
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.1"
+        },
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "# 分段队列节点说明\n\n**分段数**:\n可按需要设置任意数量的分段\n\n**从第几段开始**：\n默认为1，即从头开始运行，续跑时会自动设置，一般不需要手动设置\n\n**执行**：\n高亮时节点生效，按分段队列规则生成视频，熄灭时，仅生成分段计划日志，工作流不执行\n\n**设置**：\n可设置选图弹框为系统自带浏览器，png图片如果设置了不保留，会在整个任务完成后自动删除。\n\n**设置节点ID**：\n需要正确设置4个关键节点的编号。如果节点没有显示ID编号- Comfyui设置——>画面——>节点ID标签——>全部显示\n\n**查看日志**：\n打开会弹出日志悬浮窗。\n\n# 必装节点\n\n**分段队列节点仓库**：\n[https://github.com/FX-FeiHou/Comfyui-Segment-Queue-Runner](https://github.com/FX-FeiHou/Comfyui-Segment-Queue-Runner)\n\n**WanAnimate Plus节点仓库**：\n[https://github.com/wuwukaka/ComfyUI-WanAnimatePlus](https://github.com/wuwukaka/ComfyUI-WanAnimatePlus)"
+      ],
+      "color": "#941494",
+      "bgcolor": "#800080"
+    },
+    {
+      "id": 463,
+      "type": "Note",
+      "pos": [
+        5630,
+        4980
+      ],
+      "size": [
+        240,
+        120
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 42,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "设置节点ID（备忘录）",
+      "properties": {
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "参考图 LoadImage ID：108\n参考视频 Load Video ID：112\n输出 VHS_VideoCombine ID：119\nWanAnimatePlus AnimateEmbeds ID：347"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 466,
+      "type": "PreviewImage",
+      "pos": [
+        4470,
+        5390
+      ],
+      "size": [
+        240,
+        250
+      ],
+      "flags": {},
+      "order": 73,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 781
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.26.2",
+        "Node name for S&R": "PreviewImage",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 467,
+      "type": "SetNode",
+      "pos": [
+        6080,
+        4640
+      ],
+      "size": [
+        210,
+        40
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 58,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "输入",
+          "name": "BOOLEAN",
+          "type": "BOOLEAN",
+          "link": 783
+        }
+      ],
+      "outputs": [
+        {
+          "label": "输出",
+          "name": "BOOLEAN",
+          "type": "BOOLEAN",
+          "links": null
+        }
+      ],
+      "title": "Set_替换模式",
+      "properties": {
+        "Node name for S&R": "SetNode",
+        "aux_id": "kijai/ComfyUI-KJNodes",
+        "previousName": "替换模式",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "替换模式"
+      ]
+    },
+    {
+      "id": 468,
+      "type": "PrimitiveBoolean",
+      "pos": [
+        6000,
+        4610
+      ],
+      "size": [
+        300,
+        60
+      ],
+      "flags": {},
+      "order": 39,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "BOOLEAN",
+          "type": "BOOLEAN",
+          "links": [
+            783
+          ]
+        }
+      ],
+      "title": "ture =  动作迁移  |   false = 人物替换",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.24.0",
+        "Node name for S&R": "PrimitiveBoolean",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        true
+      ],
+      "color": "#e100a9",
+      "bgcolor": "#7b005d"
+    },
+    {
+      "id": 483,
+      "type": "Fast Groups Bypasser (rgthree)",
+      "pos": [
+        3490,
+        6460
+      ],
+      "size": [
+        390,
+        90
+      ],
+      "flags": {},
+      "order": 48,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "label": "可选连接",
+          "name": "OPT_CONNECTION",
+          "type": "*",
+          "links": null
+        }
+      ],
+      "title": "LoRA切换",
+      "properties": {
+        "matchColors": "",
+        "matchTitle": "lora",
+        "showNav": false,
+        "showAllGraphs": true,
+        "sort": "position",
+        "customSortAlphabet": "",
+        "toggleRestriction": "always one",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "color": "#150821",
+      "bgcolor": "#7b2cbf"
+    },
+    {
+      "id": 484,
+      "type": "WanAnimatePlus LoraSelectMulti",
+      "pos": [
+        3480,
+        5780
+      ],
+      "size": [
+        400,
+        350
+      ],
+      "flags": {},
+      "order": 61,
+      "mode": 4,
+      "inputs": [
+        {
+          "name": "prev_lora",
+          "shape": 7,
+          "type": "WANVIDLORA",
+          "link": 794
+        },
+        {
+          "name": "blocks",
+          "shape": 7,
+          "type": "SELECTEDBLOCKS",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "lora",
+          "type": "WANVIDLORA",
+          "links": [
+            795
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "wuwukaka/ComfyUI-WanVideoWrapper",
+        "ver": "c3bb8e981e6ccfb5936e8d86ec7b41892a8d6b5e",
+        "Node name for S&R": "WanAnimatePlus LoraSelectMulti",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        "Wan-Enhance\\Scail-2_relighting-lora.safetensors",
+        0,
+        "Wan/wan2.1_i2v_lora_rank64_lightx2v_4step.safetensors",
+        1,
+        "Wan/wan2.1_SCAIL_2_DPO_lora_bf16.safetensors",
+        1,
+        "Wan/Wan2.2-I2V-Slop-Bounce-Low-i2v.safetensors",
+        0.6,
+        "none",
+        1,
+        false,
+        false
+      ],
+      "color": "#6e6ea8",
+      "bgcolor": "#333355"
+    },
+    {
+      "id": 485,
+      "type": "WanAnimatePlus LoraSelect",
+      "pos": [
+        3480,
+        6230
+      ],
+      "size": [
+        400,
+        150
+      ],
+      "flags": {},
+      "order": 49,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "prev_lora",
+          "shape": 7,
+          "type": "WANVIDLORA",
+          "link": null
+        },
+        {
+          "name": "blocks",
+          "shape": 7,
+          "type": "SELECTEDBLOCKS",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "lora",
+          "type": "WANVIDLORA",
+          "links": [
+            794
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "wuwukaka/ComfyUI-WanAnimatePlus",
+        "ver": "493abd3b03f6c24affe37aeadb3bae02b94eabd0",
+        "Node name for S&R": "WanAnimatePlus LoraSelect",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        "Wan/Scail-2_Remix_LoRA_non_Relighting_rank256.safetensors",
+        1,
+        false,
+        false
+      ],
+      "color": "#a5a5c9",
+      "bgcolor": "#333355"
+    },
+    {
+      "id": 486,
+      "type": "RAMCleanup",
+      "pos": [
+        7702.507508231996,
+        4617.516094458997
+      ],
+      "size": [
+        270,
+        130
+      ],
+      "flags": {},
+      "order": 63,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "anything",
+          "shape": 7,
+          "type": "*",
+          "link": 796
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "type": "*",
+          "links": [
+            798
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui_memory_cleanup",
+        "ver": "1.1.3",
+        "Node name for S&R": "RAMCleanup",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        true,
+        true,
+        true,
+        3
+      ]
+    },
+    {
+      "id": 487,
+      "type": "VRAMCleanup",
+      "pos": [
+        7404.2436677388,
+        4630.503082098378
+      ],
+      "size": [
+        270,
+        82
+      ],
+      "flags": {},
+      "order": 52,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "anything",
+          "shape": 7,
+          "type": "*",
+          "link": 797
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "type": "*",
+          "links": [
+            796
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui_memory_cleanup",
+        "ver": "1.1.3",
+        "Node name for S&R": "VRAMCleanup",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        true,
+        true
+      ]
+    },
+    {
+      "id": 488,
+      "type": "SegmentQueueRunner",
+      "pos": [
+        5107.977359356059,
+        4865.4148317340205
+      ],
+      "size": [
+        469.9347403396563,
+        762.7624602658889
+      ],
+      "flags": {},
+      "order": 80,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "帧率",
+          "type": "FLOAT",
+          "link": 799
+        },
+        {
+          "name": "总帧数",
+          "type": "INT",
+          "link": 800
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfyui-segment-queue-runner",
+        "ver": "1d7ccc9bfd7a3b83e9d1f7fbc326b38ff7024a65",
+        "Node name for S&R": "SegmentQueueRunner",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.8"
+        }
+      },
+      "widgets_values": [
+        2,
+        1,
+        false,
+        false,
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "true",
+        "61",
+        -1,
+        "",
+        "average",
+        "split21",
+        "",
+        "start_to_end",
+        "",
+        "-1",
+        "-1.0"
+      ]
+    }
+  ],
+  "links": [
+    [
+      33,
+      57,
+      0,
+      40,
+      0,
+      "WANVIDEOMODEL"
+    ],
+    [
+      35,
+      58,
+      0,
+      40,
+      2,
+      "WANVIDEOTEXTEMBEDS"
+    ],
+    [
+      39,
+      40,
+      0,
+      41,
+      0,
+      "SAMPLER_ARGS"
+    ],
+    [
+      40,
+      44,
+      0,
+      42,
+      0,
+      "*"
+    ],
+    [
+      41,
+      47,
+      0,
+      43,
+      0,
+      "WANVAE"
+    ],
+    [
+      42,
+      41,
+      0,
+      43,
+      1,
+      "LATENT"
+    ],
+    [
+      43,
+      43,
+      0,
+      44,
+      0,
+      "IMAGE"
+    ],
+    [
+      57,
+      62,
+      0,
+      61,
+      0,
+      "WANVIDEOMODEL"
+    ],
+    [
+      58,
+      69,
+      0,
+      62,
+      0,
+      "WANVIDEOMODEL"
+    ],
+    [
+      59,
+      67,
+      0,
+      62,
+      1,
+      "BLOCKSWAPARGS"
+    ],
+    [
+      61,
+      37,
+      0,
+      69,
+      0,
+      "WANVIDEOMODEL"
+    ],
+    [
+      63,
+      71,
+      0,
+      70,
+      0,
+      "WANVAE"
+    ],
+    [
+      73,
+      78,
+      1,
+      75,
+      0,
+      "CLIP"
+    ],
+    [
+      74,
+      76,
+      0,
+      79,
+      0,
+      "IMAGE"
+    ],
+    [
+      75,
+      78,
+      0,
+      79,
+      1,
+      "MODEL"
+    ],
+    [
+      76,
+      75,
+      0,
+      79,
+      3,
+      "CONDITIONING"
+    ],
+    [
+      79,
+      78,
+      0,
+      81,
+      1,
+      "MODEL"
+    ],
+    [
+      80,
+      75,
+      0,
+      81,
+      3,
+      "CONDITIONING"
+    ],
+    [
+      90,
+      108,
+      0,
+      89,
+      0,
+      "IMAGE"
+    ],
+    [
+      91,
+      87,
+      0,
+      89,
+      2,
+      "INT"
+    ],
+    [
+      92,
+      85,
+      0,
+      89,
+      3,
+      "INT"
+    ],
+    [
+      94,
+      98,
+      0,
+      90,
+      2,
+      "INT"
+    ],
+    [
+      95,
+      99,
+      0,
+      90,
+      3,
+      "INT"
+    ],
+    [
+      101,
+      112,
+      3,
+      101,
+      0,
+      "VHS_VIDEOINFO"
+    ],
+    [
+      102,
+      101,
+      1,
+      102,
+      0,
+      "INT"
+    ],
+    [
+      103,
+      90,
+      0,
+      103,
+      0,
+      "IMAGE"
+    ],
+    [
+      104,
+      101,
+      0,
+      104,
+      0,
+      "FLOAT"
+    ],
+    [
+      107,
+      112,
+      2,
+      107,
+      0,
+      "AUDIO"
+    ],
+    [
+      112,
+      115,
+      0,
+      113,
+      0,
+      "INT"
+    ],
+    [
+      113,
+      116,
+      0,
+      114,
+      0,
+      "INT"
+    ],
+    [
+      115,
+      118,
+      0,
+      119,
+      1,
+      "AUDIO"
+    ],
+    [
+      116,
+      117,
+      0,
+      119,
+      4,
+      "FLOAT"
+    ],
+    [
+      149,
+      89,
+      0,
+      88,
+      0,
+      "IMAGE"
+    ],
+    [
+      218,
+      79,
+      0,
+      197,
+      0,
+      "SAM3_TRACK_DATA"
+    ],
+    [
+      219,
+      81,
+      0,
+      197,
+      1,
+      "SAM3_TRACK_DATA"
+    ],
+    [
+      220,
+      197,
+      1,
+      198,
+      0,
+      "IMAGE"
+    ],
+    [
+      222,
+      197,
+      0,
+      200,
+      0,
+      "IMAGE"
+    ],
+    [
+      257,
+      197,
+      0,
+      80,
+      0,
+      "IMAGE"
+    ],
+    [
+      258,
+      197,
+      1,
+      84,
+      0,
+      "IMAGE"
+    ],
+    [
+      302,
+      121,
+      0,
+      200,
+      4,
+      "FLOAT"
+    ],
+    [
+      557,
+      332,
+      0,
+      81,
+      0,
+      "IMAGE"
+    ],
+    [
+      642,
+      47,
+      0,
+      347,
+      0,
+      "WANVAE"
+    ],
+    [
+      643,
+      48,
+      0,
+      347,
+      1,
+      "WANVIDIMAGE_CLIPEMBEDS"
+    ],
+    [
+      644,
+      49,
+      0,
+      347,
+      2,
+      "IMAGE"
+    ],
+    [
+      649,
+      51,
+      0,
+      347,
+      8,
+      "IMAGE"
+    ],
+    [
+      650,
+      140,
+      0,
+      347,
+      9,
+      "IMAGE"
+    ],
+    [
+      651,
+      53,
+      0,
+      347,
+      10,
+      "INT"
+    ],
+    [
+      652,
+      54,
+      0,
+      347,
+      11,
+      "INT"
+    ],
+    [
+      653,
+      55,
+      0,
+      347,
+      12,
+      "INT"
+    ],
+    [
+      655,
+      347,
+      0,
+      40,
+      1,
+      "WANVIDIMAGE_EMBEDS"
+    ],
+    [
+      656,
+      45,
+      0,
+      40,
+      17,
+      "INT"
+    ],
+    [
+      657,
+      68,
+      0,
+      350,
+      0,
+      "CLIP_VISION"
+    ],
+    [
+      659,
+      350,
+      0,
+      59,
+      0,
+      "WANVIDIMAGE_CLIPEMBEDS"
+    ],
+    [
+      716,
+      401,
+      0,
+      347,
+      4,
+      "IMAGE"
+    ],
+    [
+      724,
+      112,
+      0,
+      90,
+      0,
+      "IMAGE"
+    ],
+    [
+      757,
+      204,
+      0,
+      197,
+      3,
+      "BOOLEAN"
+    ],
+    [
+      759,
+      440,
+      0,
+      40,
+      5,
+      "WANVIDCONTEXT"
+    ],
+    [
+      764,
+      111,
+      0,
+      112,
+      7,
+      "INT"
+    ],
+    [
+      768,
+      110,
+      0,
+      112,
+      6,
+      "INT"
+    ],
+    [
+      773,
+      379,
+      0,
+      350,
+      1,
+      "IMAGE"
+    ],
+    [
+      781,
+      89,
+      0,
+      466,
+      0,
+      "IMAGE"
+    ],
+    [
+      782,
+      129,
+      0,
+      347,
+      14,
+      "BOOLEAN"
+    ],
+    [
+      783,
+      468,
+      0,
+      467,
+      0,
+      "BOOLEAN"
+    ],
+    [
+      791,
+      55,
+      0,
+      347,
+      13,
+      "INT"
+    ],
+    [
+      794,
+      485,
+      0,
+      484,
+      0,
+      "WANVIDLORA"
+    ],
+    [
+      795,
+      484,
+      0,
+      69,
+      1,
+      "WANVIDLORA"
+    ],
+    [
+      796,
+      487,
+      0,
+      486,
+      0,
+      "*"
+    ],
+    [
+      797,
+      153,
+      0,
+      487,
+      0,
+      "IMAGE"
+    ],
+    [
+      798,
+      486,
+      0,
+      119,
+      0,
+      "IMAGE"
+    ],
+    [
+      799,
+      101,
+      0,
+      488,
+      0,
+      "FLOAT"
+    ],
+    [
+      800,
+      101,
+      1,
+      488,
+      1,
+      "INT"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 5,
+      "title": "采样区",
+      "bounding": [
+        4910,
+        5660,
+        2400,
+        1040
+      ],
+      "color": "#ffb8bf",
+      "flags": {}
+    },
+    {
+      "id": 6,
+      "title": "动作迁移-嵌入处理",
+      "bounding": [
+        5400,
+        5720,
+        740,
+        960
+      ],
+      "color": "#ffb8bf",
+      "flags": {}
+    },
+    {
+      "id": 7,
+      "title": "模型加载区",
+      "bounding": [
+        3450,
+        5660,
+        1450,
+        1040
+      ],
+      "color": "#bb92ed",
+      "flags": {}
+    },
+    {
+      "id": 9,
+      "title": "单图载入",
+      "bounding": [
+        3450,
+        4790,
+        710,
+        860
+      ],
+      "color": "#8ea794",
+      "flags": {}
+    },
+    {
+      "id": 10,
+      "title": "视频载入",
+      "bounding": [
+        4170,
+        4790,
+        910,
+        860
+      ],
+      "color": "#8ec296",
+      "flags": {}
+    },
+    {
+      "id": 14,
+      "title": "预览区",
+      "bounding": [
+        7320,
+        4790,
+        1000,
+        1910
+      ],
+      "color": "#f693ce",
+      "flags": {}
+    },
+    {
+      "id": 15,
+      "title": "遮罩区",
+      "bounding": [
+        6040,
+        4790,
+        1270,
+        860
+      ],
+      "color": "#3d8b5e",
+      "flags": {}
+    },
+    {
+      "id": 19,
+      "title": "视频尺寸",
+      "bounding": [
+        5340,
+        4510,
+        550,
+        200
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 20,
+      "title": "快捷开关",
+      "bounding": [
+        5900,
+        4510,
+        520,
+        200
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 22,
+      "title": "视频遮罩",
+      "bounding": [
+        6420,
+        4870,
+        270,
+        250
+      ],
+      "color": "#4a7b4a",
+      "flags": {}
+    },
+    {
+      "id": 23,
+      "title": "参考图遮罩",
+      "bounding": [
+        6420,
+        5160,
+        270,
+        250
+      ],
+      "color": "#4a7b4a",
+      "flags": {}
+    },
+    {
+      "id": 30,
+      "title": "分段队列",
+      "bounding": [
+        5090,
+        4790,
+        940,
+        860
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 31,
+      "title": "Remix LoRA",
+      "bounding": [
+        3470,
+        6160,
+        420,
+        230
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 32,
+      "title": "官方LoRa组合",
+      "bounding": [
+        3470,
+        5710,
+        420,
+        430
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ue_links": [],
+    "ds": {
+      "scale": 0.8358498942268131,
+      "offset": [
+        -2971.619615312875,
+        -5854.5790671849945
+      ]
+    },
+    "links_added_by_ue": [],
+    "favoritedWidgets": {
+      "favorites": []
+    },
+    "frontendVersion": "1.45.21",
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true
+  },
+  "version": 0.4
+}

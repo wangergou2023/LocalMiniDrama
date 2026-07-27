@@ -744,6 +744,61 @@ input_reference = (图片文件，可选)</pre>
           <p v-else class="ep-tip">以上为系统推断的实际调用地址（可手动填写上方端点字段来覆盖）</p>
         </div>
 
+        <!-- ComfyUI 工作流选择 -->
+        <el-form-item v-if="showComfyWorkflow">
+          <template #label>
+            <span class="form-label-tip">工作流
+              <el-tooltip placement="top" popper-class="cfg-tip-popper">
+                <template #content>
+                  <div class="cfg-tip-content">
+                    选择 ComfyUI 工作流文件，系统自动注入提示词、尺寸、种子。<br>
+                    工作流中的模型、采样器参数以工作流文件内的设置为准。<br>
+                    留空则使用默认的 Z-Image Turbo 工作流。
+                  </div>
+                </template>
+                <el-icon class="tip-icon"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </span>
+          </template>
+          <el-select
+            v-model="form.workflow"
+            placeholder="选择工作流（留空使用默认）"
+            clearable
+            filterable
+            :loading="workflowLoading"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="wf in workflowList"
+              :key="wf.filename"
+              :label="wf.filename"
+              :value="wf.filename"
+            >
+              <div class="workflow-option">
+                <div class="workflow-option-left">
+                  <span class="workflow-option-name">{{ wf.filename }}</span>
+                  <span class="workflow-option-plugins" v-if="wf.requiredPlugins && wf.requiredPlugins.length">
+                    <el-tag
+                      v-for="p in wf.requiredPlugins"
+                      :key="p"
+                      size="small"
+                      :type="wf.requiredPlugins.length <= 3 ? 'info' : 'warning'"
+                      effect="plain"
+                    >{{ p }}</el-tag>
+                  </span>
+                </div>
+                <span class="workflow-option-tags">
+                  <el-tag v-if="wf.hasNunchaku" size="small" type="success" effect="plain">Nunchaku</el-tag>
+                  <el-tag v-if="wf.hasControlNet" size="small" type="warning" effect="plain">ControlNet</el-tag>
+                  <el-tag v-if="wf.hasSeedVR" size="small" type="danger" effect="plain">SeedVR</el-tag>
+                  <el-tag v-if="wf.hasLora" size="small" effect="plain">LoRA</el-tag>
+                </span>
+              </div>
+            </el-option>
+          </el-select>
+          <p class="field-tip">选定工作流后，模型加载由工作流 JSON 决定，上方「模型列表」「默认模型」可留空。</p>
+        </el-form-item>
+
         <template v-if="form.service_type !== 'jimeng2_character_auth'">
         <el-form-item>
           <template #label>
@@ -1193,8 +1248,12 @@ const form = ref({
   // TTS 专属字段
   voice_id: '',
   group_id: '',
+  // ComfyUI 工作流选择
+  workflow: '',
 })
 const presetModelPick = ref('')
+const workflowList = ref([])
+const workflowLoading = ref(false)
 
 const formModelList = computed(() => parseModelText(form.value.modelText))
 
@@ -1453,6 +1512,34 @@ const isDeepSeekOfficialForm = computed(() => (
   && isDeepSeekOfficial(form.value.provider, form.value.base_url)
 ))
 
+const isComfyUIForm = computed(() => {
+  const p = (form.value.provider || '').toLowerCase()
+  const api = (form.value.api_protocol || '').toLowerCase()
+  return (p === 'comfyui' || p === 'comfy' || api === 'comfyui')
+    && (form.value.service_type === 'image' || form.value.service_type === 'storyboard_image' || form.value.service_type === 'video')
+})
+
+const showComfyWorkflow = computed(() => isComfyUIForm.value && !vendorLock.value.enabled)
+
+async function fetchWorkflows() {
+  workflowLoading.value = true
+  try {
+    const type = form.value.service_type === 'video' ? 'video' : ''
+    const res = await aiAPI.fetchWorkflows(type)
+    workflowList.value = res.data || res || []
+  } catch (_) {
+    workflowList.value = []
+  } finally {
+    workflowLoading.value = false
+  }
+}
+
+watch(() => [form.value.provider, form.value.service_type, form.value.api_protocol], () => {
+  if (showComfyWorkflow.value && workflowList.value.length === 0) {
+    fetchWorkflows()
+  }
+})
+
 /** 当前服务类型下的预设厂商列表（编辑时若当前 provider 不在列表则补一项；末尾始终附一项自定义入口） */
 const availableProviderOptions = computed(() => {
   const st = form.value.service_type || 'text'
@@ -1633,8 +1720,14 @@ function onProviderChange(providerId) {
     return
   }
   form.value.base_url = getBaseUrlForProvider(providerId)
-  form.value.modelText = (p.models || []).join('\n')
-  form.value.default_model = (p.models && p.models[0]) || ''
+  // ComfyUI 图片类配置有工作流选择，模型列表留空即可
+  if (providerId === 'comfyui' && (st === 'image' || st === 'storyboard_image')) {
+    form.value.modelText = ''
+    form.value.default_model = ''
+  } else {
+    form.value.modelText = (p.models || []).join('\n')
+    form.value.default_model = (p.models && p.models[0]) || ''
+  }
   if (providerId === 'deepseek') {
     form.value.deepseek_thinking = 'disabled'
     form.value.deepseek_reasoning_effort = 'high'
@@ -1753,6 +1846,7 @@ function resetForm() {
     kling_access_key: '',
     kling_secret_key: '',
     kling_secret_key_base64: false,
+    workflow: '',
   }
   formRef.value?.resetFields?.()
 }
@@ -1773,6 +1867,7 @@ function openEdit(row) {
   let kling_access_key = ''
   let kling_secret_key = ''
   let kling_secret_key_base64 = false
+  let workflow = ''
   const deepseekSettings = resolveDeepSeekFormSettings(row)
   if (row.settings) {
     try {
@@ -1786,6 +1881,7 @@ function openEdit(row) {
         kling_secret_key = s.kling_secret_key || ''
         kling_secret_key_base64 = !!s.kling_secret_key_base64
       }
+      if (s.workflow) workflow = s.workflow
     } catch (_) {}
   }
   form.value = {
@@ -1808,6 +1904,7 @@ function openEdit(row) {
     kling_access_key,
     kling_secret_key,
     kling_secret_key_base64,
+    workflow,
   }
   dialogVisible.value = true
 }
@@ -1856,6 +1953,13 @@ async function submit() {
       } else {
         delete baseS.deepseek_reasoning_effort
       }
+      settings = Object.keys(baseS).length ? JSON.stringify(baseS) : null
+    }
+    // ComfyUI 工作流：合并到 settings
+    if (form.value.workflow) {
+      const prev = editingId.value ? list.value.find((r) => r.id === editingId.value) : null
+      const baseS = parseSettings(prev?.settings)
+      baseS.workflow = form.value.workflow
       settings = Object.keys(baseS).length ? JSON.stringify(baseS) : null
     }
     const payload = {
@@ -2645,5 +2749,33 @@ code {
 .gs-tip-note {
   color: #909399;
   font-size: 12px;
+}
+.workflow-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+.workflow-option-left {
+  flex: 1;
+  min-width: 0;
+}
+.workflow-option-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-option-plugins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-top: 2px;
+}
+.workflow-option-tags {
+  display: flex;
+  gap: 4px;
+  margin-left: 8px;
+  flex-shrink: 0;
 }
 </style>

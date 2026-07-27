@@ -461,7 +461,7 @@
  },
  "187": {
   "inputs": {
-   "unet_name": "ltx-2.3-22b-dev-UD-Q3_K_M.gguf"
+   "unet_name": "ltx-2.3-22b-dev-Q3_K_S.gguf"
   },
   "class_type": "UnetLoaderGGUF"
  }

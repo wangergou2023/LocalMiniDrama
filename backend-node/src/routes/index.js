@@ -21,6 +21,7 @@ const assetRoutes = require('./assets');
 const audioRoutes = require('./audio');
 const promptOverridesRoutes = require('./promptOverrides');
 const sceneModelMapRoutes = require('./sceneModelMap');
+const workflowRoutes = require('./workflows');
 
 function setupRouter(cfg, db, log) {
   const r = express.Router();
@@ -101,6 +102,9 @@ function setupRouter(cfg, db, log) {
   r.get('/ai-configs/:id', aiConfig.get);
   r.put('/ai-configs/:id', aiConfig.update);
   r.delete('/ai-configs/:id', aiConfig.delete);
+
+  // ---------- workflows ----------
+  r.get('/workflows', workflowRoutes.list);
 
   // ---------- generation (角色生成：AI + 入库 + 任务结果) ----------
   r.post('/generation/characters', (req, res) => {

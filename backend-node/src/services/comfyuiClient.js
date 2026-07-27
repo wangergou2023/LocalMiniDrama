@@ -8,14 +8,14 @@ const fs = require('fs');
 const path = require('path');
 
 const ZIMAGE_WORKFLOW = {
-  "1": {"inputs":{"unet_name":"z_image_turbo_bf16.safetensors","weight_dtype":"default"},"class_type":"UNETLoader"},
+  "1": {"inputs":{"unet_name":"z-image-turbo-Q4_K_M.gguf"},"class_type":"UnetLoaderGGUF"},
   "3": {"inputs":{"vae_name":"z_image_vae.safetensors"},"class_type":"VAELoader"},
   "4": {"inputs":{"model":["1",0],"positive":["5",0],"negative":["6",0],"latent_image":["7",0],"seed":42,"steps":9,"cfg":1,"sampler_name":"euler","scheduler":"simple","denoise":1},"class_type":"KSampler"},
   "6": {"inputs":{"conditioning":["5",0]},"class_type":"ConditioningZeroOut"},
   "7": {"inputs":{"width":720,"height":1280,"batch_size":1},"class_type":"EmptyLatentImage"},
   "8": {"inputs":{"samples":["4",0],"vae":["3",0]},"class_type":"VAEDecode"},
   "20": {"inputs":{"images":["8",0],"filename_prefix":"ComfyUI"},"class_type":"SaveImage"},
-  "2": {"inputs":{"clip_name":"qwen_3_4b.safetensors","type":"qwen_image","device":"default"},"class_type":"CLIPLoader"},
+  "2": {"inputs":{"clip_name":"Qwen3-4B-Q4_K_M.gguf","type":"qwen_image","device":"default"},"class_type":"CLIPLoaderGGUF"},
   "5": {"inputs":{"clip":["2",0],"text":""},"class_type":"CLIPTextEncode"}
 };
 
@@ -341,12 +341,83 @@ async function callComfyUIImageApi(config, log, opts) {
   const baseUrl = (config.base_url || 'http://127.0.0.1:8188').replace(/\/$/, '');
   const hasRefs = Array.isArray(reference_image_urls) && reference_image_urls.some(Boolean);
 
-  // 优先用上游解析好的模型名（default_model/请求指定），回退到配置模型列表拼接
+  // 解析 settings 中的 workflow 字段
+  let workflowFile = null;
+  if (config.settings) {
+    try {
+      const s = typeof config.settings === 'string' ? JSON.parse(config.settings) : config.settings;
+      if (s.workflow) workflowFile = s.workflow;
+    } catch (_) {}
+  }
+
+  // 优先用上游解析好的模型名
   const modelStr = (opts.model && String(opts.model).trim())
     || (Array.isArray(config.model) ? config.model.join(',') : (config.model || ''));
   const isZImage = modelStr.toLowerCase().includes('z-image');
-  // z-image 走纯文生图；其余（含 qwen、空、未知）一律走 Qwen-Edit
   const isQwenEdit = !isZImage;
+
+  // 如果是动态工作流模式
+  if (workflowFile) {
+    const { loadWorkflow, prepareWorkflow, extractImageFromResult } = require('./workflowEngine');
+
+    log.info('[ComfyUI/' + workflowFile + '] Starting generation (dynamic workflow)', {
+      baseUrl, size, hasRefs,
+      prompt: prompt ? prompt.slice(0, 80) : '',
+    });
+
+    // 准备参考图
+    let refFilenames = [];
+    const inputDir = path.join(process.env.HOME || '/home/wangergou', 'ComfyUI', 'input');
+    if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir, { recursive: true });
+    if (hasRefs) {
+      refFilenames = await prepareReferenceImages(reference_image_urls.filter(Boolean), inputDir, log, storage_local_path);
+      log.info('[ComfyUI/' + workflowFile + '] Prepared ' + refFilenames.length + ' reference images');
+    }
+
+    const wf = loadWorkflow(workflowFile);
+    const dims = parseSize(size);
+    const seed = Math.floor(Math.random() * 9007199254740991);
+    const { prompt: apiPrompt, outputPrefixes } = prepareWorkflow(wf, {
+      prompt: prompt || '',
+      width: dims.w,
+      height: dims.h,
+      seed,
+      refImages: refFilenames.length > 0 ? refFilenames : undefined,
+    });
+
+    const payload = { prompt: apiPrompt, client_id: 'localminidrama_' + Date.now() };
+    const nodeCount = Object.keys(apiPrompt).length;
+    log.info('[ComfyUI/' + workflowFile + '] 最终提交: 节点=' + nodeCount
+      + ', 尺寸=' + dims.w + 'x' + dims.h
+      + ', seed=' + seed
+      + '\n[ComfyUI] PROMPT 全文:\n' + (prompt || '(空)'));
+
+    // 提交
+    let submitResp;
+    try {
+      submitResp = await postJSON(baseUrl + '/prompt', payload, 30000);
+    } catch (e) {
+      throw new Error('ComfyUI submit failed: ' + e.message);
+    }
+    const promptId = submitResp.prompt_id;
+    if (!promptId) throw new Error('ComfyUI submit returned no prompt_id');
+    log.info('[ComfyUI] Submitted prompt_id=' + promptId);
+
+    const result = await waitForComfyJob(baseUrl, promptId, log, {
+      runningBudgetMs: 20 * 60 * 1000,
+      absoluteCapMs: 2 * 3600 * 1000,
+      tag: '',
+    });
+
+    const imageFilename = extractImageFromResult(result, outputPrefixes);
+    if (!imageFilename) throw new Error('ComfyUI completed but no image found');
+
+    var imageUrl = baseUrl + '/view?filename=' + imageFilename + '&type=output';
+    log.info('[ComfyUI/' + workflowFile + '] Done: ' + imageUrl);
+    return { image_url: imageUrl };
+  }
+
+  // --- 原逻辑：根据模型名选择 ZIMAGE_WORKFLOW 或 Qwen-Edit ---
   const workflowName = isQwenEdit ? 'Qwen-Edit-2511' : 'Z-Image Turbo';
 
   log.info('[ComfyUI/' + workflowName + '] Starting generation', {
@@ -370,7 +441,6 @@ async function callComfyUIImageApi(config, log, opts) {
   let workflow;
   let finalPrompt = prompt || '';
   if (isQwenEdit) {
-    // Qwen 用原始提示词（不要 imageClient 注入的英文 Image N 头），标签按下载成功的下标对齐
     const rawPrompt = (opts.raw_prompt && String(opts.raw_prompt).trim()) || (prompt || '');
     const srcIndices = refFilenames.srcIndices || refFilenames.map((_, i) => i);
     const alignedLabels = srcIndices.map((si) => (opts.reference_labels || [])[si] || '');
@@ -382,7 +452,6 @@ async function callComfyUIImageApi(config, log, opts) {
       + (/<sks>/i.test(rawPrompt) ? ' + 机位LoRA' : '') + ', 输出 ' + dims.w + 'x' + dims.h);
   } else {
     workflow = JSON.parse(JSON.stringify(ZIMAGE_WORKFLOW));
-    // Z-Image: 直接注入到 CLIPTextEncode 和 EmptyLatentImage
     workflow['5'].inputs.text = prompt || '';
     workflow['7'].inputs.width = dims.w;
     workflow['7'].inputs.height = dims.h;
@@ -437,14 +506,15 @@ async function callComfyUIVideoApi(config, log, opts) {
   const baseUrl = (config.base_url || "http://127.0.0.1:8188").replace(/\/$/, "");
 
   const fs = require("fs");
-  const wfPath = require("path").join(__dirname, "workflows", "ltx23-i2v-api.json");
-  const prompt_data = JSON.parse(fs.readFileSync(wfPath, "utf-8"));
+  const path = require("path");
 
-  // 每次生成随机种子（模板里是固化时捕获的固定值）
-  for (const node of Object.values(prompt_data)) {
-    if (node.class_type === "RandomNoise") {
-      node.inputs.noise_seed = Math.floor(Math.random() * 9007199254740991);
-    }
+  // 解析 settings 中的 workflow 字段
+  let workflowFile = null;
+  if (config.settings) {
+    try {
+      const s = typeof config.settings === 'string' ? JSON.parse(config.settings) : config.settings;
+      if (s.workflow) workflowFile = s.workflow;
+    } catch (_) {}
   }
 
   // fps=24, frames 8n+1
@@ -459,6 +529,98 @@ async function callComfyUIVideoApi(config, log, opts) {
   const vidW = Math.max(256, Math.round(Math.sqrt(totalPx * ratioVal) / 32) * 32);
   const vidH = Math.max(256, Math.round(Math.sqrt(totalPx / ratioVal) / 32) * 32);
 
+  // Prepare input image
+  const inputDir = path.join(require("os").homedir(), "ComfyUI", "input");
+  if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir, { recursive: true });
+  let imgName = "example.png";
+  if (image_url) {
+    const prepared = await prepareReferenceImages([image_url], inputDir, log, storage_local_path);
+    if (prepared.length > 0) imgName = prepared[0];
+    else log.warn("[ComfyUI/LTX] Failed to prepare input image: " + String(image_url).slice(0, 120));
+  }
+
+  // 动态工作流模式
+  if (workflowFile) {
+    const { loadWorkflow, prepareWorkflow, extractImageFromResult } = require('./workflowEngine');
+
+    log.info('[ComfyUI/LTX/' + workflowFile + '] Starting (dynamic)', { frames, size: vidW + 'x' + vidH });
+
+    const wf = loadWorkflow(workflowFile);
+    const seed = Math.floor(Math.random() * 9007199254740991);
+    const { prompt: apiPrompt } = prepareWorkflow(wf, {
+      prompt: prompt || '',
+      width: vidW,
+      height: vidH,
+      seed,
+      videoFrames: frames,
+      videoFps: fps,
+    });
+
+    // Video-specific injection
+    for (const [nid, node] of Object.entries(apiPrompt)) {
+      if (node.class_type === 'EmptyLTXVLatentVideo') {
+        node.inputs.length = frames;
+        node.inputs.width = vidW;
+        node.inputs.height = vidH;
+      }
+      if (node.class_type === 'RandomNoise') {
+        node.inputs.noise_seed = seed;
+      }
+      if (node.class_type === 'LoadImage' && node.inputs.image != null) {
+        node.inputs.image = imgName;
+      }
+      if (node.class_type === 'CLIPTextEncode' && !Array.isArray(node.inputs.text)) {
+        node.inputs.text = prompt || '';
+      }
+      if (node.class_type === 'LTXVImgToVideoInplace' && node.inputs.strength != null && node.inputs.strength < 0.95) {
+        node.inputs.strength = 0.8;
+      }
+    }
+
+    log.info("[ComfyUI/LTX/" + workflowFile + "] Submitting " + Object.keys(apiPrompt).length + " nodes");
+    const payload = JSON.stringify({ prompt: apiPrompt, client_id: "localminidrama_ltx_" + Date.now() });
+
+    let submitResp;
+    try {
+      submitResp = await postJSON(baseUrl + "/prompt", payload, 30000);
+    } catch (e) {
+      throw new Error("ComfyUI submit failed: " + e.message);
+    }
+    const promptId = submitResp.prompt_id;
+    if (!promptId) throw new Error("ComfyUI submit returned no prompt_id");
+    log.info("[ComfyUI/LTX] Submitted prompt_id=" + promptId);
+
+    const result = await waitForComfyJob(baseUrl, promptId, log, {
+      runningBudgetMs: 30 * 60 * 1000,
+      absoluteCapMs: 4 * 3600 * 1000,
+      tag: '/LTX',
+    });
+
+    let videoFilename = null;
+    const outs = result.outputs || {};
+    for (const key of Object.keys(outs)) {
+      const out = outs[key];
+      if (out.images && out.images.length > 0) { videoFilename = out.images[0].filename; break; }
+      if (out.gifs && out.gifs.length > 0) { videoFilename = out.gifs[0].filename; break; }
+      if (out.videos && out.videos.length > 0) { videoFilename = out.videos[0].filename; break; }
+    }
+    if (!videoFilename) throw new Error("ComfyUI completed but no video found");
+
+    const videoUrl = baseUrl + "/view?filename=" + videoFilename + "&type=output";
+    log.info("[ComfyUI/LTX/" + workflowFile + "] Done: " + videoUrl);
+    return { video_url: videoUrl };
+  }
+
+  // --- 原逻辑：硬编码工作流 ---
+  const wfPath = path.join(__dirname, "workflows", "ltx23-i2v-api.json");
+  const prompt_data = JSON.parse(fs.readFileSync(wfPath, "utf-8"));
+
+  for (const node of Object.values(prompt_data)) {
+    if (node.class_type === "RandomNoise") {
+      node.inputs.noise_seed = Math.floor(Math.random() * 9007199254740991);
+    }
+  }
+
   for (const [nid, node] of Object.entries(prompt_data)) {
     if (node.class_type === "PrimitiveInt" && parseInt(node.inputs.value) === 97) node.inputs.value = frames;
     if (node.class_type === "PrimitiveInt" && parseInt(node.inputs.value) === 24) node.inputs.value = fps;
@@ -468,26 +630,22 @@ async function callComfyUIVideoApi(config, log, opts) {
       node.inputs.width = vidW;
       node.inputs.height = vidH;
     }
-    // Increase I2V strength to better match reference image
     if (node.class_type === "LTXVImgToVideoInplace" && node.inputs.strength != null && node.inputs.strength < 0.95) {
       node.inputs.strength = 0.8;
     }
   }
   log.info("[ComfyUI/LTX] Duration: " + videoDuration + "s, frames: " + frames + ", fps: " + fps + ", size: " + vidW + "x" + vidH + " (aspect: " + ratio + ")");
 
-  // Set input image（支持 http(s) / data: / 本地绝对路径 / storage 相对路径）
-  const inputDir = require("path").join(require("os").homedir(), "ComfyUI", "input");
-  if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir, { recursive: true });
-  let imgName = "example.png";
+  let imgName2 = "example.png";
   if (image_url) {
     const prepared = await prepareReferenceImages([image_url], inputDir, log, storage_local_path);
-    if (prepared.length > 0) imgName = prepared[0];
+    if (prepared.length > 0) imgName2 = prepared[0];
     else log.warn("[ComfyUI/LTX] Failed to prepare input image: " + String(image_url).slice(0, 120));
   }
 
   for (const [nid, node] of Object.entries(prompt_data)) {
     if (node.class_type === "LoadImage") {
-      node.inputs.image = imgName;
+      node.inputs.image = imgName2;
     }
     if (node.class_type === "CLIPTextEncode") {
       // Inject prompt from LocalMiniDrama into the first CLIPTextEncode (positive prompt)
@@ -497,7 +655,7 @@ async function callComfyUIVideoApi(config, log, opts) {
     }
   }
 
-  log.info("[ComfyUI/LTX] Using image: " + imgName + " Submitting " + Object.keys(prompt_data).length + " nodes");
+  log.info("[ComfyUI/LTX] Using image: " + imgName2 + " Submitting " + Object.keys(prompt_data).length + " nodes");
   
   // Submit via REST API
   const https = require("https");

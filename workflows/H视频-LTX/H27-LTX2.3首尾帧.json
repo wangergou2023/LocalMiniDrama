@@ -81,7 +81,8 @@
           "name": "sampler_name",
           "type": "COMBO",
           "widget": {
-            "name": "sampler_name"
+            "name": "sampler_name",
+            "value": "euler_cfg_pp"
           }
         }
       ],
@@ -111,10 +112,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "euler_cfg_pp"
-      ]
+      }
     },
     {
       "id": 280,
@@ -166,10 +164,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "0.85, 0.7250, 0.4219, 0.0"
-      ]
+      }
     },
     {
       "id": 282,
@@ -239,10 +234,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        1
-      ]
+      }
     },
     {
       "id": 283,
@@ -429,7 +421,8 @@
           "name": "lora_name",
           "type": "COMBO",
           "widget": {
-            "name": "lora_name"
+            "name": "lora_name",
+            "value": "Ltx/ltx-2.3-22b-distilled-lora-384.safetensors"
           }
         },
         {
@@ -437,7 +430,8 @@
           "name": "strength_model",
           "type": "FLOAT",
           "widget": {
-            "name": "strength_model"
+            "name": "strength_model",
+            "value": 0.5
           }
         }
       ],
@@ -476,11 +470,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "Ltx/ltx-2.3-22b-distilled-lora-384.safetensors",
-        0.5
-      ]
+      }
     },
     {
       "id": 287,
@@ -565,7 +555,8 @@
           "name": "sampler_name",
           "type": "COMBO",
           "widget": {
-            "name": "sampler_name"
+            "name": "sampler_name",
+            "value": "euler_ancestral_cfg_pp"
           }
         }
       ],
@@ -595,10 +586,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "euler_ancestral_cfg_pp"
-      ]
+      }
     },
     {
       "id": 293,
@@ -969,10 +957,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        1
-      ]
+      }
     },
     {
       "id": 305,
@@ -1049,10 +1034,7 @@
           },
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        24
-      ]
+      }
     },
     {
       "id": 313,
@@ -1112,10 +1094,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "ltx-2.3-spatial-upscaler-x2-1.0.safetensors"
-      ]
+      }
     },
     {
       "id": 275,
@@ -1137,7 +1116,8 @@
           "name": "noise_seed",
           "type": "INT",
           "widget": {
-            "name": "noise_seed"
+            "name": "noise_seed",
+            "value": 85928168014182
           }
         }
       ],
@@ -1167,11 +1147,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        85928168014182,
-        "randomize"
-      ]
+      }
     },
     {
       "id": 274,
@@ -1193,7 +1169,8 @@
           "name": "noise_seed",
           "type": "INT",
           "widget": {
-            "name": "noise_seed"
+            "name": "noise_seed",
+            "value": 718985284040064
           }
         }
       ],
@@ -1223,11 +1200,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        718985284040064,
-        "randomize"
-      ]
+      }
     },
     {
       "id": 278,
@@ -1309,12 +1282,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "gemma_3_12B_it.safetensors",
-        "ltx-2.3-22b-dev.safetensors",
-        "default"
-      ]
+      }
     },
     {
       "id": 308,
@@ -1366,10 +1334,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
-      ]
+      }
     },
     {
       "id": 315,
@@ -1397,7 +1362,8 @@
           "name": "text",
           "type": "STRING",
           "widget": {
-            "name": "text"
+            "name": "text",
+            "value": "pc game, console game, video game, cartoon, childish, ugly, subtitles, captions, on-screen text, written text, letters, words, Chinese characters, English text, random text, garbled text, watermark, logo, title overlay, lower third text, UI text, interface text"
           }
         }
       ],
@@ -1428,9 +1394,6 @@
           "input_ue_unconnectable": {}
         }
       },
-      "widgets_values": [
-        "pc game, console game, video game, cartoon, childish, ugly, subtitles, captions, on-screen text, written text, letters, words, Chinese characters, English text, random text, garbled text, watermark, logo, title overlay, lower third text, UI text, interface text"
-      ],
       "color": "#323",
       "bgcolor": "#535"
     },
@@ -1500,10 +1463,7 @@
           },
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        24
-      ]
+      }
     },
     {
       "id": 306,
@@ -1733,13 +1693,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        768,
-        64,
-        2048,
-        4
-      ]
+      }
     },
     {
       "id": 350,
@@ -1806,15 +1760,6 @@
           "version": "7.8"
         }
       },
-      "widgets_values": [
-        "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q8_0.gguf",
-        "mmproj-Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-BF16.gguf",
-        "Qwen3.5",
-        8192,
-        -1,
-        0,
-        0
-      ],
       "color": "#232",
       "bgcolor": "#353"
     },
@@ -1965,21 +1910,6 @@
         },
         "aux_id": "lihaoyun6/ComfyUI-llama-cpp_vllm"
       },
-      "widgets_values": [
-        1024,
-        30,
-        0.9,
-        0.05,
-        1,
-        0.8,
-        1,
-        0,
-        1,
-        0,
-        0.1,
-        5,
-        0
-      ],
       "color": "#232",
       "bgcolor": "#353"
     },
@@ -2100,18 +2030,6 @@
           "version": "7.8"
         }
       },
-      "widgets_values": [
-        "Normal - Describe",
-        "",
-        "You are an expert Audio-Visual Prompt Engineer for the LTX-2 Unified Foundation Model. Your goal is to generate high-density, factual motion prompts that synchronize complex physical movements with realistic soundscapes.\n\nThe user will provide two frames and a brief idea. Your task is to bridge the temporal gap using the LTX-2 architecture's strengths.\n\n1. THE UNIFIED AUDIO-VISUAL RULE (New)\nLTX-2 is a joint model. You must describe Visual Motion and Audio Cues as a single, synchronized event.\n\nPhysical Sound Sync: If a character moves, describe the sound that movement creates (e.g., \"the rustle of fabric as the arm raises,\" \"the sharp click of the heels on the floor\").\n\nFoley & Ambience: Include environmental sounds that match the visual evolution (e.g., \"distant wind increases in volume as the camera pans toward the window\").\n\n2. FACTUAL NARRATION RULE (Paper-based Optimization)\nLTX-2 performs best with objective, factual descriptions rather than subjective adjectives.\n\nAvoid: \"Beautiful movement,\" \"dramatic transition,\" \"stunning lighting.\"\n\nUse: \"Linear acceleration,\" \"gradual weight shift,\" \"increasing luminosity,\" \"sub-frame lip synchronization.\"\n\n3. DIALOGUE & SPEECH SYNC (Critical)\nPreserve Dialogue: Keep the user's line exactly as written. No quotes, no translation.\n\nSpeech Mechanics: Describe the physical mechanics of speaking.\n\nExample: \"The speaker delivers the line [Line] with natural jaw movement and subtle throat muscle contraction, speaking in a [Tone/Language].\"\n\nTone Mapping: Assign a specific emotional tone to the voice to guide the audio stream's pitch and rhythm.\n\n4. CHARACTER & IDENTITY CLARITY\nGeneric IDs: Use generic labels (e.g., \"the person,\" \"the technician\"). NEVER use real names or celebrities.\n\nStability Focus: Emphasize the permanence of the character's identity across the transition to avoid \"morphing\" or \"flicker.\"\n\n5. TEMPORAL EVOLUTION STRUCTURE\nDescribe the scene in a logical, step-by-step temporal progression:\n\nInitial Inertia: The momentum or posture at Frame 1.\n\nThe Pivot Point: The core action or spoken line (Audio-Visual climax).\n\nPhysical-Audio Feedback: The sound of the action (e.g., steps, breaths, impacts).\n\nConvergence: The gradual settling into the posture of Frame 2.\n\n6. FORMATTING & STRENGTH CONSTRAINTS\nParagraph Format: One continuous, logically dense paragraph in English.\n\nWord Count: 110–160 words.\n\nTechnical Keywords (Mandatory): Always include: stable motion, cinematic motion blur, coherent audio-visual synchronization, temporal consistency, avoid flicker.\n\n7. PHYSICS & MOMENTUM (New)\nDescribe the weight and gravity of the scene.\n\nExample: \"The body leans forward, shifting the center of gravity before the speaker delivers the line...\"\n\nUser prompt:\n{user_prompt}",
-        "images",
-        24,
-        256,
-        499096694314318,
-        "randomize",
-        false,
-        false
-      ],
       "color": "#232",
       "bgcolor": "#353"
     },
@@ -2167,10 +2085,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "一个未来感科技演播室场景，背景屏幕缓慢流动着数据图形和光线。主持人站在画面中央，看向镜头并微微点头，说：“其实AI视频的进步速度，比很多人想象的都要快。” 镜头以平稳的推镜慢慢靠近人物，使用50mm电影镜头构图。人物在说话时轻微做出手势，身体自然移动。背景屏幕上的动态图形持续变化，环境光线在地面和墙面上缓慢移动，营造出科技感氛围。整体画面保持稳定运镜，环境动态自然流动，cinematic lighting，stable motion，coherent movement，natural motion blur，avoid flicker。"
-      ]
+      }
     },
     {
       "id": 351,
@@ -2219,11 +2134,7 @@
           "input_ue_unconnectable": {},
           "version": "7.8"
         }
-      },
-      "widgets_values": [
-        2,
-        null
-      ]
+      }
     },
     {
       "id": 304,
@@ -2287,9 +2198,6 @@
           "input_ue_unconnectable": {}
         }
       },
-      "widgets_values": [
-        ""
-      ],
       "color": "#232",
       "bgcolor": "#353"
     },
@@ -2371,10 +2279,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "a"
-      ]
+      }
     },
     {
       "id": 294,
@@ -2450,10 +2355,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "a/2"
-      ]
+      }
     },
     {
       "id": 292,
@@ -2529,10 +2431,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "a/2"
-      ]
+      }
     },
     {
       "id": 273,
@@ -2603,12 +2502,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "%date:yyyyMMdd%/image_",
-        "auto",
-        "auto"
-      ]
+      }
     },
     {
       "id": 344,
@@ -2681,10 +2575,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "a*b+1"
-      ]
+      }
     },
     {
       "id": 340,
@@ -2789,10 +2680,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "ltx-2.3-22b-dev.safetensors"
-      ]
+      }
     },
     {
       "id": 295,
@@ -2841,7 +2729,8 @@
           "name": "batch_size",
           "type": "INT",
           "widget": {
-            "name": "batch_size"
+            "name": "batch_size",
+            "value": 768
           }
         }
       ],
@@ -2875,13 +2764,7 @@
           },
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        768,
-        512,
-        97,
-        1
-      ]
+      }
     },
     {
       "id": 281,
@@ -2955,10 +2838,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "ltx-2.3-22b-dev.safetensors"
-      ]
+      }
     },
     {
       "id": 347,
@@ -3003,9 +2883,6 @@
           "version": "7.3"
         }
       },
-      "widgets_values": [
-        "The subject begins in a static, close-up state with white hair and pale skin, establishing a baseline of low-intensity ambient light. As the camera executes a rapid dolly-out, the subject initiates a radical morphing event: the white hair transforms into voluminous red locks, and the facial structure remains stable while the upper body undergoes a physical metamorphosis into ornate red-and-gold armor. This transformation occurs with coherent audio-visual synchronization, accompanied by the visual texture of shifting fabric and the implied sound of heavy metal clinking. The subject shifts their center of gravity to maintain a hovering posture, floating downward while tilting the head slightly. Upon landing, the body stabilizes in a high-contrast pose against a background of intensifying fiery particle effects. The subject delivers the line \"做好学AI的觉悟吧\" with natural jaw movement and subtle throat muscle contraction, speaking in a calm, authoritative tone. The scene concludes with stable motion and cinematic motion blur, ensuring temporal consistency and avoiding flicker."
-      ],
       "color": "#232",
       "bgcolor": "#353"
     },
@@ -3029,7 +2906,8 @@
           "name": "image",
           "type": "COMBO",
           "widget": {
-            "name": "image"
+            "name": "image",
+            "value": "pasted/image (19).png"
           }
         },
         {
@@ -3037,7 +2915,8 @@
           "name": "upload",
           "type": "IMAGEUPLOAD",
           "widget": {
-            "name": "upload"
+            "name": "upload",
+            "value": "image"
           }
         }
       ],
@@ -3072,11 +2951,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "pasted/image (19).png",
-        "image"
-      ]
+      }
     },
     {
       "id": 269,
@@ -3098,7 +2973,8 @@
           "name": "image",
           "type": "COMBO",
           "widget": {
-            "name": "image"
+            "name": "image",
+            "value": "pasted/image (15).png"
           }
         },
         {
@@ -3106,7 +2982,8 @@
           "name": "upload",
           "type": "IMAGEUPLOAD",
           "widget": {
-            "name": "upload"
+            "name": "upload",
+            "value": "image"
           }
         }
       ],
@@ -3141,11 +3018,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "pasted/image (15).png",
-        "image"
-      ]
+      }
     },
     {
       "id": 339,
@@ -3296,17 +3169,6 @@
           "input_ue_unconnectable": {}
         }
       },
-      "widgets_values": [
-        "original",
-        1,
-        1,
-        "crop",
-        "lanczos",
-        "16",
-        "longest",
-        720,
-        "#000000"
-      ],
       "color": "rgba(38, 73, 116, 0.7)"
     },
     {
@@ -3378,11 +3240,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        1,
-        false
-      ]
+      }
     },
     {
       "id": 289,
@@ -3441,10 +3299,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        18
-      ]
+      }
     },
     {
       "id": 335,
@@ -3502,10 +3357,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        18
-      ]
+      }
     },
     {
       "id": 345,
@@ -3652,17 +3504,6 @@
           "input_ue_unconnectable": {}
         }
       },
-      "widgets_values": [
-        "original",
-        1,
-        1,
-        "crop",
-        "lanczos",
-        "16",
-        "longest",
-        720,
-        "#000000"
-      ],
       "color": "rgba(38, 73, 116, 0.7)"
     },
     {
@@ -3779,14 +3620,7 @@
           "input_ue_unconnectable": {},
           "version": "7.8"
         }
-      },
-      "widgets_values": [
-        "2",
-        1,
-        1,
-        -1,
-        0
-      ]
+      }
     },
     {
       "id": 307,
@@ -3867,12 +3701,7 @@
           },
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        97,
-        25,
-        1
-      ]
+      }
     },
     {
       "id": 325,
@@ -3925,10 +3754,7 @@
           "widget_ue_connectable": {},
           "input_ue_unconnectable": {}
         }
-      },
-      "widgets_values": [
-        "男剑士从正面持剑戒备的姿态缓缓转身，背向镜头立于峡谷裂隙之间，手中破坏剑垂落身侧，剑刃轻触地面。原本锈蚀的废墟背景渐变为幽深的岩壁峡谷，漫天淡紫色魔晄粒子在暗调空间中如星尘般弥漫，将他的金发与肩甲镀上冷冽的光。他侧首回望，绿眸锐利如刃，说到：“算了，你AI玩的这么六，不杀你了，你走吧！。"
-      ]
+      }
     }
   ],
   "links": [

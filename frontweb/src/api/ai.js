@@ -32,5 +32,8 @@ export const aiAPI = {
   },
   bulkUpdateKey(apiKey) {
     return request.put('/ai-configs/bulk-update-key', { api_key: apiKey })
+  },
+  fetchWorkflows(type) {
+    return request.get('/workflows', { params: type ? { type } : {} })
   }
 }

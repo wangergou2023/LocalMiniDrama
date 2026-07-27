@@ -1721,7 +1721,7 @@ function onProviderChange(providerId) {
   }
   form.value.base_url = getBaseUrlForProvider(providerId)
   // ComfyUI 图片类配置有工作流选择，模型列表留空即可
-  if (providerId === 'comfyui' && (st === 'image' || st === 'storyboard_image')) {
+  if (providerId === 'comfyui' && (st === 'image' || st === 'storyboard_image' || st === 'video')) {
     form.value.modelText = ''
     form.value.default_model = ''
   } else {

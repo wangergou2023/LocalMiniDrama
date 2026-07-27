@@ -1921,87 +1921,6 @@
       }
     },
     {
-      "id": 199,
-      "type": "CheckpointLoaderSimple",
-      "pos": [
-        304.5005559988298,
-        2768.231228054221
-      ],
-      "size": [
-        410,
-        98
-      ],
-      "flags": {},
-      "order": 4,
-      "mode": 0,
-      "inputs": [
-        {
-          "localized_name": "Checkpoint名称",
-          "name": "ckpt_name",
-          "type": "COMBO",
-          "widget": {
-            "name": "ckpt_name"
-          },
-          "link": null
-        }
-      ],
-      "outputs": [
-        {
-          "label": "模型",
-          "localized_name": "模型",
-          "name": "MODEL",
-          "type": "MODEL",
-          "links": [
-            460,
-            463
-          ]
-        },
-        {
-          "label": "CLIP",
-          "localized_name": "CLIP",
-          "name": "CLIP",
-          "type": "CLIP",
-          "links": []
-        },
-        {
-          "label": "VAE",
-          "localized_name": "VAE",
-          "name": "VAE",
-          "type": "VAE",
-          "links": [
-            444,
-            452,
-            457,
-            476
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.3.56",
-        "Node name for S&R": "CheckpointLoaderSimple",
-        "ue_properties": {
-          "widget_ue_connectable": {},
-          "version": "7.5.2",
-          "input_ue_unconnectable": {}
-        },
-        "models": [
-          {
-            "name": "ltx-2.3-20b-dev.safetensors",
-            "url": "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-20b-dev.safetensors",
-            "directory": "checkpoints"
-          }
-        ],
-        "enableTabs": false,
-        "tabWidth": 65,
-        "tabXOffset": 10,
-        "hasSecondTab": false,
-        "secondTabText": "Send Back",
-        "secondTabOffset": 80,
-        "secondTabWidth": 65
-      }
-    },
-    {
       "id": 181,
       "type": "LTXVAudioVAELoader",
       "pos": [
@@ -3421,6 +3340,74 @@
         "secondTabWidth": 65
       },
       "widgets_values": []
+    },
+    {
+      "id": 232,
+      "type": "UnetLoaderGGUF",
+      "pos": [
+        304.5005559988298,
+        2768.231228054221
+      ],
+      "size": [
+        315,
+        58
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "unet_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "unet_name",
+            "value": "ltx-2.3-22b-dev-Q3_K_S.gguf"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [],
+          "slot_index": 0
+        }
+      ]
+    },
+    {
+      "id": 233,
+      "type": "VAELoader",
+      "pos": [
+        304.5005559988298,
+        2848.231228054221
+      ],
+      "size": [
+        315,
+        58
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "vae_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "vae_name",
+            "value": "LTX23_video_vae_bf16.safetensors"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [],
+          "slot_index": 0
+        }
+      ]
     }
   ],
   "links": [

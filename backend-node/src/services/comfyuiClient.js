@@ -578,7 +578,7 @@ async function callComfyUIVideoApi(config, log, opts) {
     }
 
     log.info("[ComfyUI/LTX/" + workflowFile + "] Submitting " + Object.keys(apiPrompt).length + " nodes");
-    const payload = JSON.stringify({ prompt: apiPrompt, client_id: "localminidrama_ltx_" + Date.now() });
+    const payload = { prompt: apiPrompt, client_id: "localminidrama_ltx_" + Date.now() };
 
     let submitResp;
     try {

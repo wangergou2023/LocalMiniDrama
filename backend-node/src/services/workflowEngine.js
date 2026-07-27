@@ -6,12 +6,12 @@ const path = require('path');
 
 const WORKFLOWS_DIR = path.join(__dirname, '..', '..', '..', 'workflows', 'C图像-Zimage');
 const WORKFLOWS_DIR_B = path.join(__dirname, '..', '..', '..', 'workflows', 'B图像-Qwen编辑');
-const WORKFLOWS_DIR_H = path.join(__dirname, '..', '..', '..', 'workflows', 'H视频-LTX');
+const WORKFLOWS_DIR_V = path.join(__dirname, '..', '..', '..', 'workflows', 'A视频-LTX');
 
 function listWorkflows(type) {
   const all = [];
   let dirs = [WORKFLOWS_DIR, WORKFLOWS_DIR_B];
-  if (type === 'video') dirs = [WORKFLOWS_DIR_H];
+  if (type === 'video') dirs = [WORKFLOWS_DIR_V];
   
   for (const dir of dirs) {
     if (!fs.existsSync(dir)) continue;
@@ -86,7 +86,7 @@ function findOutputPrefix(nodes) {
 }
 
 function loadWorkflow(filename) {
-  for (const dir of [WORKFLOWS_DIR, WORKFLOWS_DIR_B, WORKFLOWS_DIR_H]) {
+  for (const dir of [WORKFLOWS_DIR, WORKFLOWS_DIR_B, WORKFLOWS_DIR_V]) {
     const fp = path.join(dir, filename);
     if (fs.existsSync(fp)) {
       return JSON.parse(fs.readFileSync(fp, 'utf-8'));
@@ -333,4 +333,4 @@ function extractImageFromResult(result, outputPrefixes) {
   return null;
 }
 
-module.exports = { listWorkflows, loadWorkflow, prepareWorkflow, extractImageFromResult, WORKFLOWS_DIR, WORKFLOWS_DIR_H };
+module.exports = { listWorkflows, loadWorkflow, prepareWorkflow, extractImageFromResult, WORKFLOWS_DIR, WORKFLOWS_DIR_V };

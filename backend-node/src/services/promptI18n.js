@@ -916,6 +916,36 @@ Requirements:
   return base + jsonNote;
 }
 
+/**
+ * 企业宣传片：生成分镜解说词大纲
+ */
+function getPromoVideoSystemPrompt(cfg, segmentCount) {
+  const n = Number(segmentCount) > 1 ? Number(segmentCount) : 5;
+  const jsonNote = `\n\n**输出格式（必须严格遵守）**：\n返回一个 JSON 数组，包含 ${n} 个对象，每个对象格式如下：\n[\n  {\n    "segment": 1,\n    "title": "段落标题（5-10字）",\n    "narration": "本段解说词（150-200字，画外音风格，正式大气）",\n    "visual": "画面描述（英文，适合AI图片生成，描述具体场景/画面/构图）",\n    "duration": 10\n  }\n]\n**必须只返回纯 JSON 数组，不要任何 markdown 代码块、说明文字。直接以 [ 开头，以 ] 结尾。**`;
+  const _promoOverride = _overrideCache['promo_video_system'];
+  const base = _promoOverride || `你是一位专业的企业宣传片策划。你的任务是根据用户提供的公司/产品信息，策划一段${n}幕的企业宣传片。
+
+要求：
+1. 不是剧本，不是故事，是企业宣传片分镜大纲。
+2. 每段包含：解说词（画外音风格，正式大气，中文）+ 画面描述（英文，具体可执行，适合AI图片生成）。
+3. 结构清晰：开场引入→技术/产品展示→核心优势→应用场景→愿景收尾。
+4. 不需要角色、对话、情节。可以有车间/实验室/产品/数据可视化等画面。
+5. 解说词避免空洞口号，结合具体技术点或产品特性。`;
+  return base + jsonNote;
+}
+
+function buildPromoVideoUserPrompt(cfg, premise, style, type, segmentCount) {
+  const n = Number(segmentCount) > 1 ? Number(segmentCount) : 5;
+  let prompt = `请根据以下信息，策划一段${n}幕的企业宣传片：\n\n${premise}`;
+  if (style) {
+    const styleLabels = { tech: '科技/技术', corporate: '商务/企业' };
+    if (styleLabels[style]) prompt += `\n\n风格：${styleLabels[style]}`;
+  }
+  return prompt;
+}
+
+/**
+
 const STORY_STYLE_LABELS = {
   en: { modern: 'Modern', ancient: 'Period/Ancient', fantasy: 'Fantasy', daily: 'Slice of life' },
   zh: { modern: '现代', ancient: '古风', fantasy: '奇幻', daily: '日常' },
@@ -992,6 +1022,9 @@ function getDefaultPromptBody(key) {
     case 'last_frame_prompt':
       return '你是一个专业的电影分镜图像生成提示词专家。请根据提供的镜头信息，生成适合AI图像生成的提示词。\n\n重要：这是镜头的尾帧 - 一个静态画面，展示动作结束后的最终状态和结果。\n\n核心规则：\n1. 聚焦动作完成后的最终静态状态\n2. 展示动作的可见结果和后果\n3. 描述角色在动作完成后的最终姿态、位置和情绪表情\n4. 强调情绪余韵：释然/平静/悲伤/胜利/遗憾\n5. 如提供了角色外貌信息，必须将其融入提示词（仅使用固定身份特征：脸型、五官、发型、肤质、标记等，严禁添加或推断任何服装、衣着、服饰描述，服装由参考图决定）\n\n【电影语言规范（必须应用）】\n\n构图规则（收尾镜头）：\n- 通常用较宽的景别重建空间背景，或用紧镜头聚焦情绪收场\n- 留白构图：大面积空旷空间传递孤独/结束感\n- 呼应开场构图：收尾镜头可与首帧构图呼应，形成闭环\n\n光线设计（情绪余韵）：\n- 柔和暖光：事件解决后的温情/宽慰\n- 残留戏剧阴影：未解决的张力，悬念延续\n- 渐弱光线/冷调：失去/结束/遗憾的情绪\n- 色调整体偏暗或偏亮反映情绪归宿\n\n景深与氛围：\n- 情绪收场：浅景深，聚焦面部情绪细节\n- 结果展示：深景深，展示行动对环境/他人的影响';
 
+    case 'promo_video_system':
+      return '你是一位专业的企业宣传片策划。你的任务是根据用户提供的公司/产品信息，策划一段${n}幕的企业宣传片。\n\n要求：\n1. 不是剧本，不是故事，是企业宣传片分镜大纲。\n2. 每段包含：解说词（画外音风格，正式大气，中文）+ 画面描述（英文，具体可执行，适合AI图片生成）。\n3. 结构清晰：开场引入→技术/产品展示→核心优势→应用场景→愿景收尾。\n4. 不需要角色、对话、情节。可以有车间/实验室/产品/数据可视化等画面。\n5. 解说词避免空洞口号，结合具体技术点或产品特性。';
+
     default:
       return '';
   }
@@ -1003,6 +1036,7 @@ function getDefaultPromptBody(key) {
 function getLockedSuffix(key) {
   switch (key) {
     case 'story_expansion_system':
+    case 'promo_video_system':
       return null;
     case 'storyboard_system':
       return '\n\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n\n【重要提示】\n- 镜头数量必须与剧本中的独立动作数量匹配（不允许合并或减少）\n- 每个镜头必须有明确的动作和结果\n- 景别选择必须符合叙事节奏（不要连续使用同一景别）\n- 情绪强度必须准确反映剧本氛围变化\n- 【角色一致性】每个镜头的characters列表必须与该镜头action/dialogue中实际描写的人物严格一致，不得把（在场景中存在但本镜头动作未涉及）的角色列入';
@@ -1598,6 +1632,8 @@ module.exports = {
   getStoryboardNarrationExtraInstructions,
   getStoryExpansionSystemPrompt,
   buildStoryExpansionUserPrompt,
+  getPromoVideoSystemPrompt,
+  buildPromoVideoUserPrompt,
   getRolePolishPrompt,
   getRoleGenerateImagePrompt,
   getScenePolishPrompt,

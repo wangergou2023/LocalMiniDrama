@@ -37,7 +37,9 @@ function createApp() {
   );
 
   app.use((req, res, next) => {
-    log.info(req.method, req.path);
+    if (!req.path.startsWith('/api/v1/tasks/')) {
+      log.info(req.method, req.path);
+    }
     next();
   });
 

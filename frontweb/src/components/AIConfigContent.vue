@@ -2162,6 +2162,7 @@ async function importConfigs(event) {
     }
     let success = 0
     let failed = 0
+    const errors = []
     for (const cfg of configs) {
       try {
         const models = Array.isArray(cfg.model) ? cfg.model : (cfg.model ? [cfg.model] : [])
@@ -2181,11 +2182,18 @@ async function importConfigs(event) {
           settings: cfg.settings || null
         })
         success++
-      } catch (_) {
+      } catch (e) {
         failed++
+        const msg = e?.response?.data?.error || e?.message || String(e)
+        errors.push(msg)
+        console.error('[导入配置] 失败:', cfg.name || cfg.service_type, msg)
       }
     }
-    ElMessage.success(`导入完成：${success} 条成功${failed ? `，${failed} 条失败` : ''}`)
+    if (errors.length) {
+      ElMessage.warning(`导入完成：${success} 条成功，${failed} 条失败。错误：${errors[0]}`)
+    } else {
+      ElMessage.success(`导入完成：${success} 条成功`)
+    }
     await loadList()
   } catch (e) {
     ElMessage.error('导入失败：' + (e.message || '文件解析错误'))

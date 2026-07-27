@@ -10,6 +10,11 @@ const PROMPT_META = [
     description: '控制 AI 如何将故事梗概扩写成完整剧本',
   },
   {
+    key: 'promo_video_system',
+    label: '宣传片大纲提示词',
+    description: '控制 AI 如何根据公司/产品信息生成宣传片分镜大纲（解说词+画面描述）',
+  },
+  {
     key: 'storyboard_system',
     label: '分镜拆解提示词',
     description: '控制 AI 如何将剧本拆分成分镜头方案（输出格式要求已锁定）',

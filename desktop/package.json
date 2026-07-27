@@ -71,7 +71,7 @@
     ],
     "win": {
       "target": ["nsis", "portable"],
-      "icon": null,
+      "icon": "icon.ico",
       "signAndEditExecutable": false
     },
     "nsis": {

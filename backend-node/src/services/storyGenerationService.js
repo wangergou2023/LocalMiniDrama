@@ -16,8 +16,14 @@ async function generateStory(db, log, body) {
   const type = body.type || null;
   const episodeCount = Math.max(1, Math.floor(Number(body.episode_count) || 1));
 
-  const systemPrompt = promptI18n.getStoryExpansionSystemPrompt(cfg, episodeCount);
-  const userPrompt = promptI18n.buildStoryExpansionUserPrompt(cfg, premise, style, type, episodeCount);
+  const isPromo = type === 'promo';
+  const segmentCount = Math.max(3, episodeCount);
+  const systemPrompt = isPromo
+    ? promptI18n.getPromoVideoSystemPrompt(cfg, segmentCount)
+    : promptI18n.getStoryExpansionSystemPrompt(cfg, episodeCount);
+  const userPrompt = isPromo
+    ? promptI18n.buildPromoVideoUserPrompt(cfg, premise, style, type, segmentCount)
+    : promptI18n.buildStoryExpansionUserPrompt(cfg, premise, style, type, episodeCount);
 
   // 每集约 800 字（中文）≈ 1600 token，多留余量作为最低需求；
   // 不使用 max_tokens 硬上限，而是用 min_max_tokens 确保即使用户 AI 配置了小上限也能保证基本输出量。
@@ -66,11 +72,23 @@ async function generateStory(db, log, body) {
   }
 
   if (episodeList && episodeList.length > 0) {
-    const result = episodeList.map((ep, i) => ({
-      episode: Number(ep.episode ?? i + 1),
-      title: (ep.title || `第${Number(ep.episode ?? i + 1)}集`).trim(),
-      content: (ep.content || ep.script || ep.text || ep.body || '').trim(),
-    })).filter(ep => ep.content.length > 0);
+    const result = episodeList.map((ep, i) => {
+      const seg = Number(ep.segment ?? ep.episode ?? i + 1);
+      if (isPromo) {
+        return {
+          episode: seg,
+          title: (ep.title || `第${seg}幕`).trim(),
+          content: (ep.narration || ep.content || '').trim(),
+          image_prompt: (ep.visual || '').trim(),
+          duration: Number(ep.duration) || 10,
+        };
+      }
+      return {
+        episode: seg,
+        title: (ep.title || `第${seg}集`).trim(),
+        content: (ep.content || ep.script || ep.text || ep.body || '').trim(),
+      };
+    }).filter(ep => ep.content.length > 0);
 
     if (result.length > 0) {
       log && log.info && log.info('Story episodes parsed', { count: result.length });

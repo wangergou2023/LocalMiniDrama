@@ -587,13 +587,22 @@ async function generateCharacterFourViewImage(db, log, cfg, characterId, modelNa
     log.info('[四视图] Step1 完成，开始Step2生图', { character_id: characterId });
   }
 
+  // 根据项目 aspect_ratio 和 video_resolution 动态计算图片尺寸
+  const meta = dramaFull.metadata ? (typeof dramaFull.metadata === 'string' ? JSON.parse(dramaFull.metadata) : dramaFull.metadata) : {};
+  const ratio = meta.aspect_ratio || '16:9';
+  const res = meta.video_resolution || '1080p';
+  const base = String(res).includes('2160') ? 2160 : String(res).includes('1080') ? 1080 : 720;
+  let imageSize;
+  if (ratio === '9:16') imageSize = `${base}x${Math.round(base * 16 / 9 / 2) * 2}`;
+  else imageSize = `${Math.round(base * 16 / 9 / 2) * 2}x${base}`;
+
   const userNeg = imageClient.resolveAssetUserNegativeForApi(modelName, charRow.negative_prompt);
   const imageGen = imageClient.createAndGenerateImage(db, log, {
     drama_id: charRow.drama_id,
     character_id: charRow.id,
     prompt: imagePrompt,
     model: modelName || undefined,
-    size: '1792x1024',
+    size: imageSize,
     quality: 'standard',
     provider: 'openai',
     user_negative_prompt: userNeg || undefined,

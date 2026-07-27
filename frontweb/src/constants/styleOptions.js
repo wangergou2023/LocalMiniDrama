@@ -191,6 +191,35 @@ export const generationStyleOptions = [
         color: 'linear-gradient(135deg,#ffecd2,#fcb69f)', thumb: '/style-thumbs/dreamy.jpg' },
     ]
   },
+  {
+    label: '科技 / 商务',
+    options: [
+      { label: '科技蓝调', value: 'tech blue',
+        prompt:   '深色科技背景，蓝色渐变光效，极简线条与几何网格，未来感蓝色粒子流动，干净大面积留白适合文字叠加，高级企业宣传片质感，8K超清',
+        promptEn: 'dark tech background, blue gradient glow, minimal grid lines and geometric shapes, futuristic blue particles flowing, clean negative space for text overlay, premium corporate presentation aesthetic, ultra-detailed 8K',
+        color: 'linear-gradient(135deg,#0a0e27,#1a3a6e)', thumb: '' },
+      { label: '芯片微观', value: 'chip macro',
+        prompt:   '芯片晶圆微距特写，硅表面纳米级电路纹理，蓝紫色冷光沿导线流动，金属触点反射微光，电子显微镜质感，极简深色背景，8K超写实',
+        promptEn: 'extreme macro of silicon chip wafer, nanometer circuit patterns on silicon surface, electric blue and purple light flowing through traces, metallic contact pads reflecting subtle glow, electron microscope aesthetic, dark minimal background, photorealistic 8K',
+        color: 'linear-gradient(135deg,#1a0033,#4a0e8f)', thumb: '' },
+      { label: '深色商务', value: 'dark corporate',
+        prompt:   '纯黑背景配金色光束，简洁几何构图，高端企业品牌视觉，低调奢华质感，金属反光与光影交错，大气留白，商务宣传片级画质',
+        promptEn: 'pure black background with golden light beams, clean geometric composition, premium corporate brand visual, understated luxury, metallic reflections and chiaroscuro, generous negative space, cinematic commercial quality',
+        color: 'linear-gradient(135deg,#0d0d0d,#c9a84c)', thumb: '' },
+      { label: '极简白', value: 'clean white',
+        prompt:   '纯白极简背景，浅灰科技感纹理，微妙光晕渐变，干净无干扰构图，大面积留白适合标题文字，苹果发布会风格，4K高清',
+        promptEn: 'pure white minimalist background, subtle light gray tech texture, soft ethereal gradient, clean distraction-free composition, large negative space for title text, Apple keynote style, 4K high definition',
+        color: 'linear-gradient(135deg,#f5f5f5,#e0e0e0)', thumb: '' },
+      { label: '数据流动', value: 'data flow',
+        prompt:   '抽象数字化背景，蓝色数据流与光缆交错，二进制代码粒子效果，发光的电路板纹理，高速信息传输视觉化，科技公司品牌宣传风格，8K',
+        promptEn: 'abstract digital background, blue data streams intersecting with fiber optic cables, binary code particle effects, glowing circuit board textures, high-speed information transfer visualization, tech company brand style, 8K',
+        color: 'linear-gradient(135deg,#051024,#0d47a1)', thumb: '' },
+      { label: '光刻紫', value: 'litho purple',
+        prompt:   '半导体光刻工艺美学，紫外光束穿透掩模版，晶圆表面光刻胶感光纹理，超净车间黄色安全灯光氛围，精密工业科技感，纳米级细节，8K',
+        promptEn: 'semiconductor lithography aesthetic, UV laser beams passing through photomask, photoresist texture on wafer surface, amber cleanroom safety lighting atmosphere, precision industrial tech vibe, nanometer-scale detail, 8K',
+        color: 'linear-gradient(135deg,#2d004b,#7b2d8e)', thumb: '' },
+    ]
+  },
 ]
 
 /**

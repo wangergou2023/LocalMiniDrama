@@ -202,18 +202,23 @@
                 />
                 <div class="row gap" style="margin-top: 10px; flex-wrap: wrap;">
                   <el-select v-model="storyStyle" placeholder="故事风格" clearable style="width: 120px" @change="() => saveProjectSettings(false)">
-                    <el-option label="现代" value="modern" />
-                    <el-option label="古风" value="ancient" />
-                    <el-option label="奇幻" value="fantasy" />
-                    <el-option label="日常" value="daily" />
+                    <template v-if="storyType === 'promo'">
+                      <el-option label="科技" value="tech" />
+                      <el-option label="商务" value="corporate" />
+                    </template>
+                    <template v-else>
+                      <el-option label="现代" value="modern" />
+                      <el-option label="古风" value="ancient" />
+                      <el-option label="奇幻" value="fantasy" />
+                      <el-option label="日常" value="daily" />
+                    </template>
                   </el-select>
                   <el-select v-model="storyType" placeholder="剧本类型" clearable style="width: 120px" @change="() => saveProjectSettings(false)">
-                    <el-option label="剧情" value="drama" />
-                    <el-option label="喜剧" value="comedy" />
-                    <el-option label="冒险" value="adventure" />
+                    <el-option label="短剧" value="drama" />
+                    <el-option label="宣传片" value="promo" />
                   </el-select>
                   <div style="display:flex;align-items:center;gap:6px;font-size:13px">
-                    <span>集数</span>
+                    <span>{{ storyType === 'promo' ? '幕数' : '集数' }}</span>
                     <el-input-number
                       v-model="storyEpisodeCount"
                       :min="1"
@@ -982,6 +987,22 @@
             <span class="sb-ctrl-num">{{ i + 1 }}</span>
             <span class="sb-ctrl-title">{{ sb.title || '未命名分镜' }}</span>
             <el-tag v-if="sb.movement" size="small" effect="plain" type="info" class="sb-movement-tag">{{ getMovementLabel(sb.movement) }}</el-tag>
+            <el-dropdown v-if="storyType === 'promo'" trigger="click" style="margin-right:4px" @command="(cmd) => onApplyChipTemplate(sb, cmd)">
+              <el-button size="small" plain class="sb-ctrl-btn">📋 模板</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <template v-for="cat in chipPromoTemplates" :key="cat.category">
+                    <el-dropdown-item disabled style="font-weight:700; color:#6b7280; font-size:11px">{{ cat.category }}</el-dropdown-item>
+                    <el-dropdown-item
+                      v-for="tpl in cat.templates"
+                      :key="tpl.label"
+                      :command="{ ...tpl, category: cat.category }"
+                    >{{ tpl.label }}</el-dropdown-item>
+                    <el-dropdown-item divided v-if="cat !== chipPromoTemplates[chipPromoTemplates.length-1]" disabled />
+                  </template>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
             <el-button size="small" plain class="sb-ctrl-btn sb-ctrl-config-btn" @click="onOpenVideoParamsDialog(sb)">⚙ 分镜配置</el-button>
             <el-button
               size="small"
@@ -2639,6 +2660,7 @@ import {
   stylePromptMetadataForSave,
   backfillDramaStylePromptMetadataIfNeeded,
 } from '@/constants/styleOptions'
+import { chipPromoTemplates } from '@/constants/chipPromoTemplates'
 import { useNavigation } from '@/composables/filmCreate/useNavigation'
 import { runGenerateStoryFromPremise } from '@/composables/useStoryGeneration'
 import { useCharacters } from '@/composables/filmCreate/useCharacters'
@@ -2674,6 +2696,11 @@ const storyInput = ref('')
 const storyStyle = ref('')
 const storyType = ref('')
 const storyEpisodeCount = ref(1)
+// 切换类型时自动调整集数/幕数，并清空风格
+watch(storyType, (val) => {
+  storyStyle.value = '' // 切换类型时清空风格，避免跨类残留
+  if (val === 'promo' && storyEpisodeCount.value < 5) storyEpisodeCount.value = 5
+})
 const storyGenerating = ref(false)
 /** 剧本工作台：create 创作 | select 选择预览 */
 const scriptWorkbenchMode = ref('create')
@@ -4853,9 +4880,10 @@ async function saveScriptToBackend(content) {
     list.map((e, i) => ({
       episode_number: i + 1,
       title: (e.title && String(e.title).trim()) || '第' + (i + 1) + '集',
-      script_content: e.script_content ?? '',
-      description: null,
-      duration: 0,
+      script_content: e.script_content ?? e.content ?? '',
+      description: e.description ?? e.image_prompt ?? null,
+      image_prompt: e.image_prompt ?? null,
+      duration: e.duration ?? 0,
     }))
 
   let dramaId = store.dramaId
@@ -4875,7 +4903,7 @@ async function saveScriptToBackend(content) {
     store.setDrama(drama)
     dramaId = drama.id
     savedCurrentEpisodeNumber.value = 1
-    const first = parsed.episodes[0] || { title: '', script_content: trimmed }
+    const first = parsed.episodes[0] || { title: '', script_content: trimmed, image_prompt: null }
     const episodes = multiFromMarkers
       ? toPayload(parsed.episodes)
       : [
@@ -4883,6 +4911,9 @@ async function saveScriptToBackend(content) {
             episode_number: 1,
             title: scriptTitle.value || first.title || '第1集',
             script_content: first.script_content || trimmed,
+            description: first.description ?? first.image_prompt ?? null,
+            image_prompt: first.image_prompt ?? null,
+            duration: 0,
           },
         ]
     await dramaAPI.saveEpisodes(dramaId, episodes)
@@ -6805,6 +6836,20 @@ async function onDeleteSingleStoryboard(id){
       ElMessage.error(e.message || '删除失败')
     }
   }
+}
+
+// 芯片宣传片：将模板 prompt 填入当前分镜
+async function onApplyChipTemplate(sb, tpl) {
+  try {
+    await ElMessageBox.confirm(
+      `将分镜 #${sb.storyboard_number ?? sb.id} 的图片提示词替换为「${tpl.label}」？`,
+      '应用模板',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'info' }
+    )
+    await dramaAPI.saveStoryboard(sb.id, { image_prompt: tpl.prompt })
+    sb.image_prompt = tpl.prompt
+    ElMessage.success(`已应用模板「${tpl.label}」`)
+  } catch (_) { /* 取消 */ }
 }
 
 async function onInsertStoryboardBefore(sb) {

@@ -366,17 +366,26 @@ async function generateSceneFourViewImage(db, log, cfg, sceneId, modelName, styl
     log.info('[场景四视图] Step1 完成，开始Step2生图', { scene_id: sceneId });
   }
 
+  // 根据剧集设定的画面比例和分辨率计算图片尺寸
+  const meta = dramaFull.metadata ? (typeof dramaFull.metadata === 'string' ? JSON.parse(dramaFull.metadata) : dramaFull.metadata) : {};
+  const ratio = meta.aspect_ratio || '16:9';
+  const res = meta.video_resolution || '1080p';
+  const base = String(res).includes('2160') ? 2160 : String(res).includes('1080') ? 1080 : 720;
+  let imageSize;
+  if (ratio === '9:16') imageSize = `${base}x${Math.round(base * 16 / 9 / 2) * 2}`;
+  else imageSize = `${Math.round(base * 16 / 9 / 2) * 2}x${base}`;
+
   const imageGen = imageClient.createAndGenerateImage(db, log, {
     drama_id: sceneRow.drama_id,
     scene_id: sceneId,
     prompt: imagePrompt,
     model: modelName || undefined,
-    size: '1792x1024',
+    size: imageSize,
     quality: 'standard',
     provider: 'openai',
   });
 
-  log.info('[场景四视图] Step2 图片生成任务已提交', { scene_id: sceneId, image_gen_id: imageGen?.id });
+  log.info('[场景四视图] Step2 图片生成任务已提交', { scene_id: sceneId, image_gen_id: imageGen?.id, size: imageSize });
 
   return { ok: true, image_generation: imageGen };
 }
@@ -443,17 +452,26 @@ async function generateSceneSingleImage(db, log, cfg, sceneId, modelName, style)
     log.info('[场景单图] Step1 完成，开始Step2生图', { scene_id: sceneId });
   }
 
+  // 根据剧集设定的画面比例和分辨率计算图片尺寸
+  const meta = dramaFull.metadata ? (typeof dramaFull.metadata === 'string' ? JSON.parse(dramaFull.metadata) : dramaFull.metadata) : {};
+  const ratio = meta.aspect_ratio || '16:9';
+  const res = meta.video_resolution || '1080p';
+  const base = String(res).includes('2160') ? 2160 : String(res).includes('1080') ? 1080 : 720;
+  let imageSize;
+  if (ratio === '9:16') imageSize = `${base}x${Math.round(base * 16 / 9 / 2) * 2}`;
+  else imageSize = `${Math.round(base * 16 / 9 / 2) * 2}x${base}`;
+
   const imageGen = imageClient.createAndGenerateImage(db, log, {
     drama_id: sceneRow.drama_id,
     scene_id: sceneId,
     prompt: imagePrompt,
     model: modelName || undefined,
-    size: '1792x1024',
+    size: imageSize,
     quality: 'standard',
     provider: 'openai',
   });
 
-  log.info('[场景单图] Step2 图片生成任务已提交', { scene_id: sceneId, image_gen_id: imageGen?.id });
+  log.info('[场景单图] Step2 图片生成任务已提交', { scene_id: sceneId, image_gen_id: imageGen?.id, size: imageSize });
 
   return { ok: true, image_generation: imageGen };
 }

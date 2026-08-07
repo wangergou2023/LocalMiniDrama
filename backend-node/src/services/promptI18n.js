@@ -944,8 +944,6 @@ function buildPromoVideoUserPrompt(cfg, premise, style, type, segmentCount) {
   return prompt;
 }
 
-/**
-
 const STORY_STYLE_LABELS = {
   en: { modern: 'Modern', ancient: 'Period/Ancient', fantasy: 'Fantasy', daily: 'Slice of life' },
   zh: { modern: '现代', ancient: '古风', fantasy: '奇幻', daily: '日常' },

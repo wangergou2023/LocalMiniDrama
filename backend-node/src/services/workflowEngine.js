@@ -204,10 +204,28 @@ function bypassEmptyLoras(prompt, workflow, linkMap) {
  * @param {object} params - { prompt, width, height, seed, batchSize }
  * @returns {{ prompt: object, outputPrefixes: string[] }} - API 格式的 prompt 对象
  */
+function isApiFormat(wf) {
+  // API 格式：顶层是 { "1": {...}, "2": {...}, ... }，没有 nodes/links 字段
+  if (!wf || typeof wf !== 'object' || Array.isArray(wf)) return false;
+  return !wf.nodes && !wf.links;
+}
+
 function prepareWorkflow(workflow, params) {
   const { prompt: promptText, width, height, seed, batchSize = 1, refImages, videoFrames, videoFps } = params;
-  const linkMap = buildLinkMap(workflow);
-  const prompt = workflowToApiFormat(workflow, linkMap);
+
+  let prompt;
+  if (isApiFormat(workflow)) {
+    // 已是 API 格式，深拷贝后直接注入参数
+    prompt = {};
+    for (const [nid, node] of Object.entries(workflow)) {
+      if (node && typeof node === 'object' && node.class_type) {
+        prompt[nid] = { class_type: node.class_type, inputs: JSON.parse(JSON.stringify(node.inputs || {})) };
+      }
+    }
+  } else {
+    const linkMap = buildLinkMap(workflow);
+    prompt = workflowToApiFormat(workflow, linkMap);
+  }
 
   // 删除纯显示节点（不影响出图）
   const skipTypes = new Set(['MarkdownNote', 'Note', 'Note Plus (mtb)', 'Label (rgthree)', 'Reroute', 'ShowText|pysssss']);
@@ -220,29 +238,27 @@ function prepareWorkflow(workflow, params) {
   const outputPrefixes = [];
 
   // 绕过无效的 LoRA 节点
-  bypassEmptyLoras(prompt, workflow, linkMap);
+  if (workflow.nodes) {
+    bypassEmptyLoras(prompt, workflow, buildLinkMap(workflow));
+  }
 
   // 注入参考图到 LoadImage 节点
   let refIdx = 0;
   if (refImages && refImages.length > 0) {
-    for (const node of workflow.nodes || []) {
-      const nid = String(node.id);
-      const apiInputs = prompt[nid]?.inputs;
-      if (!apiInputs) continue;
-      if (node.type === 'LoadImage') {
+    for (const [nid, node] of Object.entries(prompt)) {
+      if (node.class_type === 'LoadImage') {
         if (refIdx < refImages.length) {
-          apiInputs.image = refImages[refIdx];
+          node.inputs.image = refImages[refIdx];
           refIdx++;
         }
       }
     }
   }
 
-  for (const node of workflow.nodes || []) {
-    const nid = String(node.id);
-    const apiInputs = prompt[nid]?.inputs;
+  for (const [nid, node] of Object.entries(prompt)) {
+    const apiInputs = node.inputs;
     if (!apiInputs) continue;
-    const classType = node.type;
+    const classType = node.class_type;
 
     // CLIPTextEncode / TextEncodeQwenImageEditPlus: 注入 prompt（跳过已链接的 text 输入）
     if ((classType === 'CLIPTextEncode' || classType === 'TextEncodeQwenImageEditPlus') && promptText !== undefined) {

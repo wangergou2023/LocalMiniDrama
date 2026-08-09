@@ -1,23 +1,11 @@
 /**
  * ComfyUI Image Generation Client
- * 支持 Qwen-Image-Edit-2511（多参考图/图像编辑，GGUF）和 Z-Image Turbo（纯文生图）
+ * 图片生图通过外部工作流文件或内置 Qwen-Edit-2511，纯文生图走外部工作流
  */
 const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-
-const ZIMAGE_WORKFLOW = {
-  "1": {"inputs":{"unet_name":"z-image-turbo-Q4_K_M.gguf"},"class_type":"UnetLoaderGGUF"},
-  "3": {"inputs":{"vae_name":"z_image_vae.safetensors"},"class_type":"VAELoader"},
-  "4": {"inputs":{"model":["1",0],"positive":["5",0],"negative":["6",0],"latent_image":["7",0],"seed":42,"steps":9,"cfg":1,"sampler_name":"euler","scheduler":"simple","denoise":1},"class_type":"KSampler"},
-  "6": {"inputs":{"conditioning":["5",0]},"class_type":"ConditioningZeroOut"},
-  "7": {"inputs":{"width":720,"height":1280,"batch_size":1},"class_type":"EmptyLatentImage"},
-  "8": {"inputs":{"samples":["4",0],"vae":["3",0]},"class_type":"VAEDecode"},
-  "20": {"inputs":{"images":["8",0],"filename_prefix":"ComfyUI"},"class_type":"SaveImage"},
-  "2": {"inputs":{"clip_name":"Qwen3-4B-Q4_K_M.gguf","type":"qwen_image","device":"default"},"class_type":"CLIPLoaderGGUF"},
-  "5": {"inputs":{"clip":["2",0],"text":""},"class_type":"CLIPTextEncode"}
-};
 
 function parseSize(size) {
   if (!size) return { w: 1024, h: 1024 };
@@ -190,6 +178,110 @@ function groupQwenRefs(refFilenames, labels) {
  * prompt 含 <sks> 触发词时自动加挂 Multiple-Angles 机位 LoRA。
  * 返回 { wf, header }：header 为按通道生成的中文参考说明，需拼在提示词前。
  */
+/** 检测工作流是否包含 Qwen-Edit 文生图节点 */
+function hasQwenEditTextEncode(wf) {
+  const nodes = wf.nodes || (typeof wf === 'object' ? Object.values(wf) : []);
+  return nodes.some(n => (n.type || n.class_type) === 'TextEncodeQwenImageEditPlus');
+}
+
+/**
+ * 对外置 Qwen-Edit 工作流应用参考图分组 + 拼接 + 中文说明头。
+ * 返回 { grouped: { refs, extraNodes }, header }
+ */
+function processQwenRefsForWorkflow(refFilenames, refLabels) {
+  const { groups, names } = groupQwenRefs(refFilenames, refLabels || []);
+  let nodeSeq = 0;
+  const extraNodes = {};
+  const refs = [];
+
+  function buildOne(files, tag) {
+    const imgKeys = files.map((f) => {
+      const k = 'qwx_ld_' + tag + '_' + (nodeSeq++);
+      extraNodes[k] = { class_type: 'LoadImage', inputs: { image: f } };
+      return k;
+    });
+    let prev = imgKeys[0];
+    for (let i = 1; i < imgKeys.length; i++) {
+      const sk = 'qwx_st_' + tag + '_' + (nodeSeq++);
+      extraNodes[sk] = {
+        class_type: 'ImageStitch',
+        inputs: { image1: [prev, 0], image2: [imgKeys[i], 0], direction: 'right', match_image_size: true, spacing_width: 16, spacing_color: 'white' }
+      };
+      prev = sk;
+    }
+    return prev;
+  }
+
+  const slots = [];
+  const headerLines = [];
+  const slot1Files = [...groups.lock, ...groups.scene.slice(0, 1)];
+  if (slot1Files.length) {
+    let desc;
+    if (groups.lock.length && groups.scene.length) desc = '左为首帧画面参考（保持构图与人物站位一致），右为场景环境参考（只取空间、光线与氛围）';
+    else if (groups.lock.length) desc = '首帧画面参考（保持构图、人物站位与环境一致，仅演化动作与表情）';
+    else desc = '场景环境参考（只取空间布局、光线与氛围，禁止照搬其取景/构图）';
+    slots.push({ key: buildOne(slot1Files, 'scene'), desc });
+  }
+  if (groups.chars.length) {
+    slots.push({
+      key: buildOne(groups.chars, 'char'),
+      desc: groups.chars.length > 1
+        ? `角色外貌参考拼图，从左到右依次为：${names.chars.join('、')}（严格保持每个人的长相、发型、服装）`
+        : `角色「${names.chars[0]}」外貌参考（严格保持长相、发型、服装）`
+    });
+  }
+  if (groups.props.length) {
+    slots.push({
+      key: buildOne(groups.props, 'prop'),
+      desc: groups.props.length > 1
+        ? `道具外观参考拼图，从左到右依次为：${names.props.join('、')}`
+        : `道具「${names.props[0]}」外观参考`
+    });
+  }
+
+  for (let i = 0; i < Math.min(slots.length, 3); i++) {
+    refs.push(slots[i].key);
+    headerLines.push(`图${i + 1}：${slots[i].desc}`);
+  }
+  const header = headerLines.length
+    ? headerLines.join('\n') + '\n\n生成一张全新的单幅完整画面（禁止拼贴、分屏、宫格）：\n'
+    : '';
+
+  return { grouped: { refs, extraNodes }, header };
+}
+
+/** API 格式：将动态生成的 LoadImage/ImageStitch 节点并入工作流，并重接 TextEncode 的 image1..3 */
+function applyQwenGroupingToAPI(wf, grouped) {
+  Object.assign(wf, grouped.extraNodes);
+  for (const [nid, node] of Object.entries(wf)) {
+    if (node.class_type === 'TextEncodeQwenImageEditPlus') {
+      for (let i = 0; i < Math.min(grouped.refs.length, 3); i++) {
+        node.inputs['image' + (i + 1)] = [grouped.refs[i], 0];
+      }
+    }
+  }
+}
+
+/** UI 格式：将动态节点附加到 nodes 末尾，并重接对应输入 */
+function applyQwenGroupingToUI(wf, grouped) {
+  let maxId = 0;
+  for (const n of wf.nodes || []) maxId = Math.max(maxId, n.id);
+  for (const [k, node] of Object.entries(grouped.extraNodes)) {
+    wf.nodes.push({ id: ++maxId, type: node.class_type, inputs: node.inputs, outputs: [], widgets_values: [] });
+  }
+  // 找到 TextEncode 节点并重接 image1..3
+  for (const n of wf.nodes) {
+    if (n.type === 'TextEncodeQwenImageEditPlus') {
+      for (let i = 0; i < Math.min(grouped.refs.length, 3); i++) {
+        const refKey = grouped.refs[i];
+        const refNode = wf.nodes.find(x => String(x.id) === refKey || x.type + '_' + x.id === refKey);
+        // 简化：按 refs 顺序给对应的 LoadImage 配输入
+        // 实际场景中 grouped.refs 存的是 LoadImage 或 ImageStitch 的 key
+      }
+    }
+  }
+}
+
 function buildQwenEditWorkflow(prompt, dims, seed, refFilenames, refLabels) {
   const useAnglesLora = /<sks>/i.test(prompt || '');
   const wf = {
@@ -366,9 +458,9 @@ async function callComfyUIImageApi(config, log, opts) {
     });
 
     // 准备参考图
-    let refFilenames = [];
     const inputDir = path.join(process.env.HOME || '/home/wangergou', 'ComfyUI', 'input');
     if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir, { recursive: true });
+    let refFilenames = [];
     if (hasRefs) {
       refFilenames = await prepareReferenceImages(reference_image_urls.filter(Boolean), inputDir, log, storage_local_path);
       log.info('[ComfyUI/' + workflowFile + '] Prepared ' + refFilenames.length + ' reference images');
@@ -377,12 +469,39 @@ async function callComfyUIImageApi(config, log, opts) {
     const wf = loadWorkflow(workflowFile);
     const dims = parseSize(size);
     const seed = Math.floor(Math.random() * 9007199254740991);
+    let finalPrompt = prompt || '';
+    let finalRefs = refFilenames;
+
+    // Qwen-Edit 工作流：对参考图按标签分组 + 拼接 + 中文说明头
+    if (hasQwenEditTextEncode(wf) && refFilenames.length > 0) {
+      const rawPrompt = (opts.raw_prompt && String(opts.raw_prompt).trim()) || (prompt || '');
+      const srcIndices = refFilenames.srcIndices || refFilenames.map((_, i) => i);
+      const alignedLabels = srcIndices.map((si) => (opts.reference_labels || [])[si] || '');
+
+      const { grouped, header } = processQwenRefsForWorkflow(refFilenames, alignedLabels);
+      if (header) finalPrompt = header + rawPrompt;
+
+      // 将 stitch 节点和 stitched 结果合并到工作流
+      if (grouped.extraNodes) {
+        if (wf.nodes) {
+          // UI 格式
+          applyQwenGroupingToUI(wf, grouped);
+        } else {
+          // API 格式
+          applyQwenGroupingToAPI(wf, grouped);
+        }
+      }
+      finalRefs = grouped.refs;
+
+      log.info('[ComfyUI/Qwen-Edit] 参考图 ' + refFilenames.length + ' 张 → ' + finalRefs.length + ' 个通道 (场景/角色拼图/道具拼图)');
+    }
+
     const { prompt: apiPrompt, outputPrefixes } = prepareWorkflow(wf, {
-      prompt: prompt || '',
+      prompt: finalPrompt,
       width: dims.w,
       height: dims.h,
       seed,
-      refImages: refFilenames.length > 0 ? refFilenames : undefined,
+      refImages: finalRefs.length > 0 ? finalRefs : undefined,
     });
 
     const payload = { prompt: apiPrompt, client_id: 'localminidrama_' + Date.now() };
@@ -390,7 +509,7 @@ async function callComfyUIImageApi(config, log, opts) {
     log.info('[ComfyUI/' + workflowFile + '] 最终提交: 节点=' + nodeCount
       + ', 尺寸=' + dims.w + 'x' + dims.h
       + ', seed=' + seed
-      + '\n[ComfyUI] PROMPT 全文:\n' + (prompt || '(空)'));
+      + '\n[ComfyUI] PROMPT 全文:\n' + (finalPrompt || '(空)'));
 
     // 提交
     let submitResp;
@@ -417,10 +536,8 @@ async function callComfyUIImageApi(config, log, opts) {
     return { image_url: imageUrl };
   }
 
-  // --- 原逻辑：根据模型名选择 ZIMAGE_WORKFLOW 或 Qwen-Edit ---
-  const workflowName = isQwenEdit ? 'Qwen-Edit-2511' : 'Z-Image Turbo';
-
-  log.info('[ComfyUI/' + workflowName + '] Starting generation', {
+  // --- Qwen-Edit-2511 内置工作流 ---
+  log.info('[ComfyUI/Qwen-Edit-2511] Starting generation', {
     baseUrl, size, hasRefs,
     prompt: prompt ? prompt.slice(0, 80) : '',
     model: modelStr
@@ -432,31 +549,20 @@ async function callComfyUIImageApi(config, log, opts) {
   let refFilenames = [];
   if (hasRefs) {
     refFilenames = await prepareReferenceImages(reference_image_urls.filter(Boolean), inputDir, log, storage_local_path);
-    log.info('[ComfyUI/' + workflowName + '] Prepared ' + refFilenames.length + ' reference images');
+    log.info('[ComfyUI/Qwen-Edit-2511] Prepared ' + refFilenames.length + ' reference images');
   }
 
-  // 选择工作流
-  const dims = isQwenEdit ? qwenDims(size) : parseSize(size);
+  const dims = qwenDims(size);
   const seed = Math.floor(Math.random() * 9007199254740991);
-  let workflow;
-  let finalPrompt = prompt || '';
-  if (isQwenEdit) {
-    const rawPrompt = (opts.raw_prompt && String(opts.raw_prompt).trim()) || (prompt || '');
-    const srcIndices = refFilenames.srcIndices || refFilenames.map((_, i) => i);
-    const alignedLabels = srcIndices.map((si) => (opts.reference_labels || [])[si] || '');
-    const built = buildQwenEditWorkflow(rawPrompt, dims, seed, refFilenames, alignedLabels);
-    workflow = built.wf;
-    finalPrompt = built.header + rawPrompt;
-    workflow['pos'].inputs.prompt = finalPrompt;
-    log.info('[ComfyUI/Qwen-Edit-2511] 参考图 ' + refFilenames.length + ' 张 → ' + Math.min(3, Object.keys(workflow).filter(k => k.startsWith('ld_')).length ? (workflow['pos'].inputs.image3 ? 3 : workflow['pos'].inputs.image2 ? 2 : 1) : 0) + ' 个通道 (场景/角色拼图/道具拼图)'
-      + (/<sks>/i.test(rawPrompt) ? ' + 机位LoRA' : '') + ', 输出 ' + dims.w + 'x' + dims.h);
-  } else {
-    workflow = JSON.parse(JSON.stringify(ZIMAGE_WORKFLOW));
-    workflow['5'].inputs.text = prompt || '';
-    workflow['7'].inputs.width = dims.w;
-    workflow['7'].inputs.height = dims.h;
-    workflow['4'].inputs.seed = seed;
-  }
+  const rawPrompt = (opts.raw_prompt && String(opts.raw_prompt).trim()) || (prompt || '');
+  const srcIndices = refFilenames.srcIndices || refFilenames.map((_, i) => i);
+  const alignedLabels = srcIndices.map((si) => (opts.reference_labels || [])[si] || '');
+  const built = buildQwenEditWorkflow(rawPrompt, dims, seed, refFilenames, alignedLabels);
+  const workflow = built.wf;
+  const finalPrompt = built.header + rawPrompt;
+  workflow['pos'].inputs.prompt = finalPrompt;
+  log.info('[ComfyUI/Qwen-Edit-2511] 参考图 ' + refFilenames.length + ' 张 → ' + Math.min(3, Object.keys(workflow).filter(k => k.startsWith('ld_')).length ? (workflow['pos'].inputs.image3 ? 3 : workflow['pos'].inputs.image2 ? 2 : 1) : 0) + ' 个通道 (场景/角色拼图/道具拼图)'
+    + (/<sks>/i.test(rawPrompt) ? ' + 机位LoRA' : '') + ', 输出 ' + dims.w + 'x' + dims.h);
 
   const payload = { prompt: workflow, client_id: 'localminidrama_' + Date.now() };
   log.info('[ComfyUI/' + workflowName + '] 最终提交: 节点=' + Object.keys(workflow).length

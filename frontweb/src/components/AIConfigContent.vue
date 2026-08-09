@@ -753,7 +753,7 @@ input_reference = (图片文件，可选)</pre>
                   <div class="cfg-tip-content">
                     选择 ComfyUI 工作流文件，系统自动注入提示词、尺寸、种子。<br>
                     工作流中的模型、采样器参数以工作流文件内的设置为准。<br>
-                    留空则使用默认的 Z-Image Turbo 工作流。
+                    留空则使用内置 Qwen-Edit-2511 工作流。
                   </div>
                 </template>
                 <el-icon class="tip-icon"><QuestionFilled /></el-icon>
@@ -1363,7 +1363,7 @@ const providerConfigs = {
     { id: 'agnes', name: 'Agnes AI', models: ['agnes-2.0-flash'] }
   ],
   image: [
-    { id: 'comfyui', name: 'ComfyUI', models: ['qwen-image-edit-2511', 'Z-Image Turbo'] },
+    { id: 'comfyui', name: 'ComfyUI', models: ['qwen-image-edit-2511'] },
     { id: 'volcengine', name: '火山引擎', models: ['doubao-seedream-4-5-251128', 'doubao-seedream-4-0-250828'] },
     { id: 'kling', name: '可灵 Kling', models: ['kling-image', 'kling-omni-image'] },
     { id: 'nano_banana', name: 'NanoBanana', models: ['nano-banana-2', 'nano-banana-pro', 'nano-banana'] },
@@ -1375,7 +1375,7 @@ const providerConfigs = {
     { id: 'agnes', name: 'Agnes AI', models: ['agnes-image-2.1-flash', 'agnes-image-2.0-flash'] }
   ],
   storyboard_image: [
-    { id: 'comfyui', name: 'ComfyUI', models: ['qwen-image-edit-2511', 'Z-Image Turbo'] },
+    { id: 'comfyui', name: 'ComfyUI', models: ['qwen-image-edit-2511'] },
     { id: 'dashscope', name: '通义万象', models: ['wan2.6-image', 'qwen-image-edit-plus-2026-01-09', 'qwen-image-edit-plus', 'qwen-image-edit-max'] },
     { id: 'volcengine', name: '火山引擎', models: ['doubao-seedream-4-5-251128', 'doubao-seedream-4-0-250828'] },
     { id: 'kling', name: '可灵 Kling', models: ['kling-image', 'kling-omni-image'] },

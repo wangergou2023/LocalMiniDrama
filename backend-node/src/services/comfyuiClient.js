@@ -236,6 +236,11 @@ function applyQwenGroupingToAPI(wf, grouped) {
   Object.assign(wf, grouped.extraNodes);
   for (const [nid, node] of Object.entries(wf)) {
     if (node.class_type === 'TextEncodeQwenImageEditPlus') {
+      // 跳过负向提示词（没有 image 输入或全部为 null）
+      if (!node.inputs.image1 && !node.inputs.image2 && !node.inputs.image3) continue;
+      delete node.inputs.image1;
+      delete node.inputs.image2;
+      delete node.inputs.image3;
       for (let i = 0; i < Math.min(grouped.refs.length, 3); i++) {
         node.inputs['image' + (i + 1)] = [grouped.refs[i], 0];
       }

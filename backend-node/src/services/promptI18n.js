@@ -1160,7 +1160,12 @@ function getScenePolishPrompt(cfg) {
 function getSceneGenerateImagePrompt() {
   return `Scene environment reference sheet — image only, no text reply.
 
-ONE image: 2×2 grid. TL=establishing wide (full space, boundaries, context). TR=main activity zone medium shot (floor, key furnishings). BL=signature environmental detail close-up. BR=alternate angle view (same place, same lighting/time/weather, different camera angle such as elevated/low/high/oblique).
+CRITICAL LAYOUT: ONE single image containing EXACTLY 4 panels arranged in 2 rows × 2 columns (2×2 grid). 严令：只输出2×2四宫格，禁止3×2六宫格、禁止1×4横排、禁止2×3竖排、禁止3×3九宫格。必须正好4个面板，不多不少。
+
+TL (top-left) = establishing wide shot (full space, boundaries, context).
+TR (top-right) = main activity zone medium shot (floor, key furnishings).
+BL (bottom-left) = signature environmental detail close-up.
+BR (bottom-right) = alternate angle view (same place, same lighting/time/weather, different camera angle).
 
 No people: no characters, silhouettes, human shadows. No text/labels/watermarks/location lettering. Same architecture, terrain, ground materials, and key props across all panels; same light, time, and weather; only focal length and camera angle may change. Unified palette and depth; high detail. Follow ART STYLE / 画风 block at the start of the user message if present.`;
 }

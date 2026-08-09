@@ -752,8 +752,7 @@ input_reference = (图片文件，可选)</pre>
                 <template #content>
                   <div class="cfg-tip-content">
                     选择 ComfyUI 工作流文件，系统自动注入提示词、尺寸、种子。<br>
-                    工作流中的模型、采样器参数以工作流文件内的设置为准。<br>
-                    留空则使用内置 Qwen-Edit-2511 工作流。
+                    工作流中的模型、采样器参数以工作流文件内的设置为准。
                   </div>
                 </template>
                 <el-icon class="tip-icon"><QuestionFilled /></el-icon>

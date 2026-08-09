@@ -1377,17 +1377,28 @@ async function processImageGeneration(db, log, imageGenId) {
       }
     }
 
-    // 有场景/道具参考图时，末尾追加简短标注（避免 prompt 里文字描述与参考图冲突）
-    if (reference_context_note && finalPrompt) {
-      const hasScene = /scene background/i.test(reference_context_note);
-      const hasProp = /prop\/object/i.test(reference_context_note);
-      const notes = [];
-      if (hasScene) notes.push('场景环境严格按照参考图1');
-      if (hasProp) notes.push('道具外观严格按照参考图3');
-      if (notes.length) {
-        const tail = '。【重要】' + notes.join('，') + '，禁止在生成的图片中添加或修改参考图中未出现的场景/道具细节。';
-        if (!finalPrompt.includes('严格按照参考图')) finalPrompt = finalPrompt.trimEnd() + tail;
-      }
+    // 身体附着道具注入：把 "XX的电子表" 这样的道具引用塞进对应角色的括号里
+    if (isFrameIdentityLock && finalPrompt && reference_context_note) {
+      try {
+        const propRefs = reference_context_note.split('\n').filter(l => /prop\/object appearance ref/i.test(l));
+        for (const pr of propRefs) {
+          const m = pr.match(/for\s+"([^"]+)"/i);
+          if (!m) continue;
+          const propOwner = m[1];
+          const parts = propOwner.split('的');
+          const charName = parts[0].trim();
+          const propName = parts.slice(1).join('的').trim() || propOwner;
+          if (charName.length < 2) continue;
+          // 角色没在 prompt 里出现则跳过
+          if (!finalPrompt.includes(charName + '（见参考图2')) continue;
+          // 已有道具引用则跳过
+          if (finalPrompt.includes(charName + '（见参考图2') && finalPrompt.includes('见参考图3')) continue;
+          finalPrompt = finalPrompt.replace(
+            new RegExp(charName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '（见参考图2[^）]*）', 'g'),
+            charName + '（见参考图2，见参考图3）'
+          );
+        }
+      } catch (_) {}
     }
     if (isFrameIdentityLock) {
       log.info('[图生] 首尾帧/关键帧：启用身份锁定负面提示词', {

@@ -36,19 +36,21 @@ function parseNamesFromAnchorLines(anchorLines) {
 }
 
 function isReferenceAppearanceParen(inner) {
-  const t = String(inner || '').trim();
-  if (/见参考图2的角色形象/.test(t)) return true; // 已是新占位符，跳过
-  return false; // 其他都需替换（含旧的「参考图中的人物形象」）
+  return false; // 每次替换都规范化到新格式
 }
 
-/** 将允许出场角色的括号外貌描写统一为「见参考图2的角色形象」 */
+/** 将允许出场角色的括号外貌描写统一为「见参考图2左/中/右」 */
 function normalizeAllowedCharacterAppearance(text, allowedNames) {
   const hits = [];
+  const posLabels = ['左', '中', '右'];
   let out = String(text || '');
-  for (const name of allowedNames || []) {
+  for (let i = 0; i < (allowedNames || []).length; i++) {
+    const name = allowedNames[i];
     if (!name) continue;
     const esc = escapeRegExp(name);
-    const repl = `${name}（见参考图2的角色形象）`;
+    const pos = allowedNames.length <= 3 ? (posLabels[i] || '') : '';
+    const posSuffix = pos ? '参考图2' + pos : '参考图2';
+    const repl = `${name}（见${posSuffix}）`;
     out = out.replace(new RegExp(`${esc}（([^）]*)）`, 'g'), (match, inner) => {
       if (isReferenceAppearanceParen(inner)) return match;
       hits.push({ name, removed_appearance: inner.slice(0, 120) });

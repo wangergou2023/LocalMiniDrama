@@ -467,7 +467,30 @@ async function generateSingleFrame(db, log, cfg, sb, scene, characterNames, mode
       frame_kind: frameKind,
     });
     log.info('[帧提示词] PARSED RESULT prompt:\n' + cleanedPrompt);
-    return { ...parsed, prompt: cleanedPrompt };
+
+    // 身体道具注入：从分镜关联的道具中提取角色→道具映射，注入角色括号
+    let finalPrompt = cleanedPrompt;
+    try {
+      const propLinks = db.prepare('SELECT prop_id FROM storyboard_props WHERE storyboard_id = ?').all(sb.id);
+      for (const pl of propLinks) {
+        const prop = db.prepare('SELECT name FROM props WHERE id = ? AND deleted_at IS NULL').get(pl.prop_id);
+        if (!prop?.name) continue;
+        const parts = prop.name.split('的');
+        const charName = parts[0].trim();
+        const propName = parts.slice(1).join('的').trim() || prop.name;
+        if (charName.length < 2) continue; // 单字不是角色名
+        if (!finalPrompt.includes(charName + '（见参考图2')) continue;
+        if (finalPrompt.includes(charName + '（见参考图2') && finalPrompt.includes('见参考图3')) continue;
+        finalPrompt = finalPrompt.replace(
+          new RegExp(charName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '（见参考图2[^）]*）', 'g'),
+          charName + '（见参考图2，见参考图3）'
+        );
+      }
+    } catch (e) {
+      log.warn('[帧提示词] 道具注入失败（继续）', { error: e.message });
+    }
+
+    return { ...parsed, prompt: finalPrompt };
   }
   const fallback = buildFallbackPrompt(cfg, scene, frameKind);
   log.warn('[帧提示词] JSON 解析失败，使用 FALLBACK prompt:\n' + fallback);

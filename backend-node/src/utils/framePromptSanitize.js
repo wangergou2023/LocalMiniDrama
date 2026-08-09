@@ -37,29 +37,31 @@ function parseNamesFromAnchorLines(anchorLines) {
 
 function isReferenceAppearanceParen(inner) {
   const t = String(inner || '').trim();
-  return /参考图|reference\s*image/i.test(t);
+  if (/见参考图2的角色形象/.test(t)) return true; // 已是新占位符，跳过
+  return false; // 其他都需替换（含旧的「参考图中的人物形象」）
 }
 
-/** 将允许出场角色的括号外貌描写统一为「参考图中的人物形象」 */
+/** 将允许出场角色的括号外貌描写统一为「见参考图2的角色形象」 */
 function normalizeAllowedCharacterAppearance(text, allowedNames) {
   const hits = [];
   let out = String(text || '');
   for (const name of allowedNames || []) {
     if (!name) continue;
     const esc = escapeRegExp(name);
+    const repl = `${name}（见参考图2的角色形象）`;
     out = out.replace(new RegExp(`${esc}（([^）]*)）`, 'g'), (match, inner) => {
       if (isReferenceAppearanceParen(inner)) return match;
       hits.push({ name, removed_appearance: inner.slice(0, 120) });
-      return `${name}（参考图中的人物形象）`;
+      return repl;
     });
     out = out.replace(new RegExp(`${esc}\\(([^)]*)\\)`, 'g'), (match, inner) => {
       if (isReferenceAppearanceParen(inner)) return match;
       hits.push({ name, removed_appearance: inner.slice(0, 120) });
-      return `${name}（参考图中的人物形象）`;
+      return repl;
     });
     out = out.replace(
       new RegExp(`${esc}\\s*\\(\\s*use appearance from reference image\\s*\\)`, 'gi'),
-      `${name}（参考图中的人物形象）`
+      repl
     );
   }
   return { text: out, hits };

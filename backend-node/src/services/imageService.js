@@ -1376,6 +1376,19 @@ async function processImageGeneration(db, log, imageGenId) {
         log.warn('[图生] 首尾帧 prompt 清洗跳过', { id: imageGenId, error: sanitizeErr.message });
       }
     }
+
+    // 有场景/道具参考图时，末尾追加简短标注（避免 prompt 里文字描述与参考图冲突）
+    if (reference_context_note && finalPrompt) {
+      const hasScene = /scene background/i.test(reference_context_note);
+      const hasProp = /prop\/object/i.test(reference_context_note);
+      const notes = [];
+      if (hasScene) notes.push('场景环境严格按照参考图1');
+      if (hasProp) notes.push('道具外观严格按照参考图3');
+      if (notes.length) {
+        const tail = '。【重要】' + notes.join('，') + '，禁止在生成的图片中添加或修改参考图中未出现的场景/道具细节。';
+        if (!finalPrompt.includes('严格按照参考图')) finalPrompt = finalPrompt.trimEnd() + tail;
+      }
+    }
     if (isFrameIdentityLock) {
       log.info('[图生] 首尾帧/关键帧：启用身份锁定负面提示词', {
         id: imageGenId,

@@ -419,9 +419,25 @@ function saveFramePrompt(db, log, storyboardId, frameType, prompt, description, 
 }
 
 async function generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, frameKind, sanitizeOpts = {}) {
-  const context = buildStoryboardContext(cfg, sb, scene, characterNames);
+  let context = buildStoryboardContext(cfg, sb, scene, characterNames);
   const allowedCharNames = parseNamesFromAnchorLines(characterNames);
   const allDramaNames = sanitizeOpts.allDramaNames || allowedCharNames;
+
+  // 检测本分镜可用的参考图，通知 AI 避免脑补不存在的参考图编号
+  try {
+    const hasScene = !!(scene?.local_path || scene?.image_url || scene?.image_url);
+    const hasChars = allowedCharNames.length > 0;
+    const propCount = db.prepare('SELECT COUNT(*) as c FROM storyboard_props WHERE storyboard_id = ?').get(sb.id)?.c || 0;
+    const refsAvailable = [];
+    if (hasScene) refsAvailable.push('图1=场景（见参考图1）');
+    if (hasChars) refsAvailable.push('图2=角色（见参考图2左/右）');
+    if (propCount > 0) refsAvailable.push('图3=道具（见参考图3）');
+    const refNote = refsAvailable.length
+      ? `【可用参考图】仅以下图片存在：${refsAvailable.join('；')}。严禁使用不在此列表中的参考图编号（如无道具则不得写「见参考图3」）。`
+      : `【可用参考图】本分镜无任何参考图，prompt 中严禁出现「见参考图1/2/3」等标记。`;
+    context = context + '\n\n' + refNote;
+  } catch (_) {}
+
   const systemKey = frameKind === 'first' ? 'getFirstFramePrompt' : frameKind === 'key' ? 'getKeyFramePrompt' : 'getLastFramePrompt';
   const userKey = frameKind === 'first' ? 'frame_info' : frameKind === 'key' ? 'key_frame_info' : 'last_frame_info';
   const systemPrompt = promptI18n[systemKey](cfg);

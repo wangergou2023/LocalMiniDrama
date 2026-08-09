@@ -1394,8 +1394,8 @@ async function processImageGeneration(db, log, imageGenId) {
           // 已有道具引用则跳过
           if (finalPrompt.includes(charName + '（见参考图2') && finalPrompt.includes('见参考图3')) continue;
           finalPrompt = finalPrompt.replace(
-            new RegExp(charName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '（见参考图2[^）]*）', 'g'),
-            charName + '（见参考图2，见参考图3）'
+            new RegExp(charName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '（见参考图2([^）]*)）', 'g'),
+            charName + '（见参考图2$1，见参考图3）'
           );
         }
       } catch (_) {}

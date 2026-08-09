@@ -42,13 +42,15 @@ function isReferenceAppearanceParen(inner) {
 /** 将允许出场角色的括号外貌描写统一为「见参考图2左/中/右」 */
 function normalizeAllowedCharacterAppearance(text, allowedNames) {
   const hits = [];
-  const posLabels = ['左', '中', '右'];
   let out = String(text || '');
-  for (let i = 0; i < (allowedNames || []).length; i++) {
+  const n = (allowedNames || []).length;
+  for (let i = 0; i < n; i++) {
     const name = allowedNames[i];
     if (!name) continue;
     const esc = escapeRegExp(name);
-    const pos = allowedNames.length <= 3 ? (posLabels[i] || '') : '';
+    let pos = '';
+    if (n === 2) pos = ['左', '右'][i];
+    else if (n === 3) pos = ['左', '中', '右'][i];
     const posSuffix = pos ? '参考图2' + pos : '参考图2';
     const repl = `${name}（见${posSuffix}）`;
     out = out.replace(new RegExp(`${esc}（([^）]*)）`, 'g'), (match, inner) => {

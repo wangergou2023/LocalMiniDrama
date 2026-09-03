@@ -1,10 +1,12 @@
 <template>
   <div class="app">
     <router-view />
+    <AiDirectorBar />
   </div>
 </template>
 
 <script setup lang="ts">
+import AiDirectorBar from '@/components/AiDirectorBar.vue'
 </script>
 
 <style>

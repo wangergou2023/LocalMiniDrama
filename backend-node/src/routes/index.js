@@ -22,6 +22,7 @@ const audioRoutes = require('./audio');
 const promptOverridesRoutes = require('./promptOverrides');
 const sceneModelMapRoutes = require('./sceneModelMap');
 const workflowRoutes = require('./workflows');
+const agentService = require('../services/agentService');
 
 function setupRouter(cfg, db, log) {
   const r = express.Router();
@@ -251,6 +252,10 @@ function setupRouter(cfg, db, log) {
   r.post('/images/upload', images.upload);
   r.get('/images/:id', images.get);
   r.delete('/images/:id', images.delete);
+
+  // ---------- AI 导演助手 ----------
+  r.post('/agent/chat', (req, res) => agentService.chat(db, log, cfg, req, res));
+  r.post('/agent/qc', (req, res) => agentService.qc(db, log, cfg, req, res));
 
   // ---------- videos ----------
   r.get('/videos', videos.list);

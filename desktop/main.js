@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu } = require('electron');
+const { app, BrowserWindow, Menu, clipboard, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -175,6 +175,64 @@ function findFreePort(preferredPort) {
   });
 }
 
+/**
+ * 右键菜单：Menu.setApplicationMenu(null) 后 Electron 不弹任何默认右键菜单，
+ * 需自行实现。这里提供：图片/视频「另存为 + 复制链接」、链接复制、输入框编辑、文本复制。
+ */
+function installContextMenu(win) {
+  // 下载前弹「另存为」对话框，默认落在系统下载目录
+  win.webContents.session.on('will-download', (_e, item) => {
+    let name = '';
+    try {
+      name = decodeURIComponent(item.getURL().split('/').pop() || '');
+    } catch (_) {}
+    const safe = String(name).replace(/[\\/:*?"<>|]/g, '_').slice(-120) || 'download';
+    const downloads = app.getPath('downloads');
+    dialog
+      .showSaveDialog(win, { defaultPath: path.join(downloads, safe) })
+      .then((r) => {
+        if (r.canceled || !r.filePath) item.cancel();
+        else item.setSavePath(r.filePath);
+      })
+      .catch(() => item.cancel());
+  });
+
+  win.webContents.on('context-menu', (_e, params) => {
+    const menu = [];
+    const isImage = params.mediaType === 'image' && !!params.srcURL;
+    const isVideo = params.mediaType === 'video' && !!params.srcURL;
+
+    if (isImage || isVideo) {
+      const kind = isImage ? '图片' : '视频';
+      menu.push({
+        label: `${kind}另存为…`,
+        click: () => win.webContents.downloadURL(params.srcURL),
+      });
+      menu.push({
+        label: `复制${kind}链接`,
+        click: () => clipboard.writeText(params.srcURL),
+      });
+    } else if (params.linkURL) {
+      menu.push({ label: '复制链接', click: () => clipboard.writeText(params.linkURL) });
+    }
+
+    if (params.isEditable) {
+      if (menu.length) menu.push({ type: 'separator' });
+      menu.push({ label: '剪切', role: 'cut', enabled: params.editFlags.canCut });
+      menu.push({ label: '复制', role: 'copy', enabled: params.editFlags.canCopy });
+      menu.push({ label: '粘贴', role: 'paste', enabled: params.editFlags.canPaste });
+      menu.push({ label: '全选', role: 'selectAll' });
+    } else if (params.selectionText && params.selectionText.trim()) {
+      if (menu.length) menu.push({ type: 'separator' });
+      menu.push({ label: '复制', role: 'copy' });
+    }
+
+    if (menu.length) {
+      Menu.buildFromTemplate(menu).popup({ window: win });
+    }
+  });
+}
+
 function createWindow(port) {
   Menu.setApplicationMenu(null);
   const win = new BrowserWindow({
@@ -183,6 +241,7 @@ function createWindow(port) {
     webPreferences: { nodeIntegration: false, contextIsolation: true },
     show: false,
   });
+  installContextMenu(win);
   win.once('ready-to-show', () => {
     win.show();
     writeMainLog('window ready-to-show');

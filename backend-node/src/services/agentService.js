@@ -25,7 +25,7 @@ async function callTool(db, log, name, args) {
         return { ok: true, data: rows.map(r => ({ ...r, has_image: !!db.prepare("SELECT id FROM image_generations WHERE storyboard_id=? AND status='completed' AND deleted_at IS NULL").get(r.id) })) };
       }
       case 'generate_storyboard_image': {
-        const sb = db.prepare("SELECT id, episode_id, drama_id FROM storyboards WHERE id=?").get(Number(a.storyboard_id));
+        const sb = db.prepare("SELECT sb.id, sb.episode_id, ep.drama_id FROM storyboards sb JOIN episodes ep ON ep.id = sb.episode_id WHERE sb.id=?").get(Number(a.storyboard_id));
         if (!sb) return { ok: false, error: '分镜不存在' };
         const ig = imageService.create(db, log, { drama_id: sb.drama_id, storyboard_id: sb.id, prompt: (db.prepare('SELECT image_prompt FROM storyboards WHERE id=?').get(sb.id) || {}).image_prompt || 'cinematic scene', provider: 'openai' });
         return { ok: true, data: { image_generation_id: ig.id, task_id: ig.task_id, status: ig.status } };
@@ -34,7 +34,7 @@ async function callTool(db, log, name, args) {
         const ids = db.prepare(`SELECT id FROM storyboards WHERE episode_id=? AND deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM image_generations ig WHERE ig.storyboard_id=storyboards.id AND ig.status='completed' AND ig.deleted_at IS NULL)`).all(Number(a.episode_id));
         let submitted = 0;
         for (const r of ids) {
-          const sbd = db.prepare('SELECT drama_id FROM storyboards WHERE id=?').get(r.id);
+          const sbd = db.prepare('SELECT ep.drama_id FROM storyboards sb JOIN episodes ep ON ep.id = sb.episode_id WHERE sb.id=?').get(r.id);
           try { imageService.create(db, log, { drama_id: sbd?.drama_id, storyboard_id: r.id, prompt: (db.prepare('SELECT image_prompt FROM storyboards WHERE id=?').get(r.id) || {}).image_prompt || 'cinematic scene', provider: 'openai' }); submitted++; } catch (e) { log.warn('gen_all skip', { id: r.id, e: e.message }); }
         }
         return { ok: true, data: { need: ids.length, submitted } };

@@ -1367,7 +1367,7 @@ function rebuildVideoPromptForStoryboard(db, log, storyboardId) {
   function loadCharactersForStoryboardPrompt(db, sbId, names) {
     if (!names || names.length === 0) return [];
     const placeholders = names.map(() => "?").join(",");
-    return db.prepare("SELECT * FROM characters WHERE drama_id = (SELECT drama_id FROM storyboards WHERE id = ?) AND name IN (" + placeholders + ") AND deleted_at IS NULL").all(sbId, ...names);
+    return db.prepare("SELECT * FROM characters WHERE drama_id = (SELECT ep.drama_id FROM storyboards sb JOIN episodes ep ON ep.id = sb.episode_id WHERE sb.id = ?) AND name IN (" + placeholders + ") AND deleted_at IS NULL").all(sbId, ...names);
   }
   const charRows = loadCharactersForStoryboardPrompt(db, sbId, charNames);
   function buildCharacterAppearanceText(db, sbId, names) { return ""; }

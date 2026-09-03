@@ -20,6 +20,14 @@ const { app, config } = createApp();
 const port = Number(process.env.PORT) || config.server?.port || 5679;
 const host = config.server?.host || '0.0.0.0';
 
+// 全局兜底:任何未捕获的异步错误只记录,不让整个服务退出(避免单个请求/工具调用把进程带走)
+process.on('unhandledRejection', (reason) => {
+  try { logger.error('unhandledRejection', { reason: reason instanceof Error ? reason.stack : String(reason) }); } catch (_) {}
+});
+process.on('uncaughtException', (err) => {
+  try { logger.error('uncaughtException', { error: err && err.stack ? err.stack : String(err) }); } catch (_) {}
+});
+
 const server = app.listen(port, host, () => {
   logger.info('Server starting', { port, host });
   logger.info('Frontend:  http://localhost:' + port);

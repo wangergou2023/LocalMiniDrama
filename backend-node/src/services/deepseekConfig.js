@@ -16,9 +16,21 @@ function parseSettings(settings) {
   }
 }
 
+function hasDeepSeekSettings(config = {}) {
+  // 用户在配置 settings 里显式声明 thinking / reasoning 相关选项时，
+  // 无论 provider / base_url 指向哪家（含公司内部中转网关、第三方中转站），都按 DeepSeek 语义应用。
+  const s = parseSettings(config.settings);
+  if (!s || typeof s !== 'object') return false;
+  if (s.deepseek && typeof s.deepseek === 'object') return true;
+  const keys = ['deepseek_thinking', 'thinking', 'deepseek_reasoning_effort', 'reasoning_effort'];
+  return keys.some((k) => s[k] !== undefined && s[k] !== null && s[k] !== '');
+}
+
 function isDeepSeekOfficialConfig(config = {}) {
   const provider = String(config.provider || '').trim().toLowerCase();
   if (provider === 'deepseek') return true;
+  // 非官方网关：仅当配置显式声明 deepseek 语义选项时才接管（避免给普通中转站强加参数）
+  if (hasDeepSeekSettings(config)) return true;
 
   const rawBase = String(config.base_url || '').trim();
   if (!rawBase) return false;
@@ -77,6 +89,10 @@ function applyDeepSeekChatOptions(config, body) {
   if (!isDeepSeekOfficialConfig(config)) return body;
 
   const opts = resolveDeepSeekOptions(config, body?.model);
+  // 仅对 deepseek 系模型附加 thinking/reasoning 参数；同一配置里混用 gpt 等其他模型时保持原样，
+  // 避免向不认该参数的模型发送多余字段（第三方中转站会 400）。
+  if (!/^deepseek[-_:]?/i.test(String(body?.model || '').trim())) return body;
+
   const next = {
     ...body,
     model: opts.model || body.model,

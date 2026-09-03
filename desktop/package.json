@@ -1,6 +1,6 @@
 {
   "name": "localminidrama-desktop",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "description": "LocalMiniDrama 本地桌面客户端",
   "main": "main.js",
   "author": "LocalMiniDrama",
@@ -56,21 +56,30 @@
       {
         "from": "frontweb-dist",
         "to": "frontweb/dist",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "../example_drama",
         "to": "example_drama",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "../backend-node/tools/ffmpeg",
         "to": "ffmpeg",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
-      "target": ["nsis", "portable"],
+      "target": [
+        "nsis",
+        "portable"
+      ],
       "icon": "icon.ico",
       "signAndEditExecutable": false
     },
@@ -78,5 +87,11 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     }
+  },
+  "allowScripts": {
+    "electron@28.3.3": true,
+    "better-sqlite3@11.10.0": true,
+    "protobufjs@7.2.5": true,
+    "sharp@0.34.5": true
   }
 }

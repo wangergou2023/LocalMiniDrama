@@ -333,6 +333,7 @@
             <el-option label="Vidu 视频" value="vidu" />
             <el-option label="可灵 Omni-Video（官方 api-beijing / ffir 中转，O1 全能）" value="kling_omni" />
             <el-option label="xAI Grok Imagine（官方 prompt + aspect_ratio，/v1/videos/generations）" value="xai" />
+            <el-option label="MiniMax H3（官方 V2：/v2/video_generation，模型 MiniMax-H3）" value="minimax_h3" />
             <el-option label="NanoBanana" value="nano_banana" />
           </el-select>
         </el-form-item>
@@ -1392,6 +1393,7 @@ const providerConfigs = {
     { id: 'vidu', name: 'Vidu', models: ['viduq2', 'viduq2-pro', 'viduq2-turbo', 'viduq3-pro'] },
     { id: 'volces', name: '火山引擎', models: ['doubao-seedance-2-0-260128', 'doubao-seedance-2-0-fast-260128', 'doubao-seedance-1-5-pro-251215', 'doubao-seedance-1-0-lite-i2v-250428', 'doubao-seedance-1-0-lite-t2v-250428', 'doubao-seedance-1-0-pro-250528', 'doubao-seedance-1-0-pro-fast-251015'] },
     // { id: 'chatfire', name: 'Chatfire', models: ['doubao-seedance-1-5-pro-251215', 'doubao-seedance-1-0-lite-i2v-250428', 'doubao-seedance-1-0-lite-t2v-250428', 'doubao-seedance-1-0-pro-250528', 'doubao-seedance-1-0-pro-fast-251015', 'sora-2', 'sora-2-pro'] },
+    { id: 'minimax_h3', name: 'MiniMax H3', models: ['MiniMax-H3'] },
     { id: 'minimax', name: 'MiniMax 海螺', models: ['MiniMax-Hailuo-2.3', 'MiniMax-Hailuo-2.3-Fast', 'MiniMax-Hailuo-02'] },
     { id: 'gemini', name: 'Google Gemini (Veo)', models: ['veo-3.1-generate-preview', 'veo-3.0-generate-preview', 'veo-3.0-fast-generate-preview'] },
     { id: 'dashscope', name: '通义万相', models: ['wan2.6-r2v-flash', 'wan2.6-t2v', 'wan2.2-kf2v-flash', 'wan2.6-i2v-flash', 'wanx2.1-vace-plus'] },
@@ -1439,6 +1441,7 @@ const providerProtocolMap = {
   xai: 'xai',
   grok: 'xai',
   minimax: 'openai',
+  minimax_h3: 'minimax_h3',
   openai: 'openai',
   chatfire: 'openai',
   qwen: 'openai',
@@ -1453,6 +1456,7 @@ function getBaseUrlForProvider(provider) {
   if (!provider) return ''
   const p = String(provider).toLowerCase()
   if (p === 'gemini' || p === 'google') return 'https://generativelanguage.googleapis.com'
+  if (p === 'minimax_h3') return 'https://api.minimaxi.com'
   if (p === 'minimax') return 'https://api.minimaxi.com/v1'
   if (p === 'volces' || p === 'volcengine') return 'https://ark.cn-beijing.volces.com/api/v3'
   if (p === 'openai') return 'https://api.openai.com/v1'
@@ -1632,6 +1636,8 @@ const endpointPreviewInfo = computed(() => {
       submitPath = '/v1/videos'
     } else if (proto === 'agnes' || p === 'agnes') {
       submitPath = '/videos'
+    } else if (proto === 'minimax_h3' || p === 'minimax_h3') {
+      submitPath = '/v2/video_generation'
     } else if (proto === 'xai') {
       submitPath = '/v1/videos/generations'
     } else if (proto === 'veo3') {
@@ -1669,6 +1675,8 @@ const endpointPreviewInfo = computed(() => {
       queryPath = '/v1/videos/{taskId}'
     } else if (proto === 'agnes' || p === 'agnes') {
       queryPath = '/videos/{taskId}'
+    } else if (proto === 'minimax_h3' || p === 'minimax_h3') {
+      queryPath = '/v2/query/video_generation/{taskId}'
     } else if (proto === 'xai') {
       queryPath = '/v1/videos/{taskId}'
     } else if (proto === 'veo3') {
@@ -1750,6 +1758,16 @@ function onProviderChange(providerId) {
     form.value.api_protocol = 'agnes'
     form.value.endpoint = '/videos'
     form.value.query_endpoint = '/videos/{taskId}'
+  }
+  if (st === 'video' && providerId === 'minimax_h3') {
+    form.value.api_protocol = 'minimax_h3'
+    form.value.endpoint = '/v2/video_generation'
+    form.value.query_endpoint = '/v2/query/video_generation/{taskId}'
+  }
+  if (st === 'video' && providerId === 'minimax') {
+    form.value.api_protocol = 'openai'
+    form.value.endpoint = '/video_generation'
+    form.value.query_endpoint = '/query/video_generation?task_id={taskId}'
   }
   if (!editingId.value) {
     form.value.name = (p.name || providerId) + ' ' + serviceTypeLabel(st)

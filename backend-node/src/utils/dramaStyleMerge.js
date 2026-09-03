@@ -65,6 +65,8 @@ function mergeCfgStyleWithDrama(cfg, dramaRow) {
       base.default_style_zh = preset.zh;
       base.default_style_en = preset.en;
       base.default_style = preset.en || preset.zh;
+    } else if (legacy === 'custom') {
+      // 有 style=custom 但无 metadata 描述：勿把短标识当画风注入
     } else {
       // 自定义整段文案：双语槽位都写入，避免下游只读到「半句 key」
       base.default_style_zh = legacy;
@@ -80,13 +82,13 @@ function mergeCfgStyleWithDrama(cfg, dramaRow) {
  */
 function resolvedStreamStyleFromDrama(styleParam, dramaRow) {
   const s = (styleParam && String(styleParam).trim()) || '';
-  if (s) {
+  if (s && s !== 'custom') {
     const p = resolveStylePreset(s);
     return p ? (p.en || p.zh) : s;
   }
   const { zh, en, legacy } = styleFieldsFromDramaRow(dramaRow);
   if (en || zh) return en || zh;
-  if (legacy) {
+  if (legacy && legacy !== 'custom') {
     const p = resolveStylePreset(legacy);
     return p ? (p.en || p.zh) : legacy;
   }

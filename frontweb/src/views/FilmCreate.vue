@@ -380,6 +380,7 @@
           </el-select>
           <StylePickerButton
             v-model="generationStyle"
+            v-model:custom-prompt="customStylePrompt"
             :options="generationStyleOptions"
             @change="() => saveProjectSettings(true)"
           />
@@ -1475,7 +1476,18 @@
                   class="sb-video-error"
                   :title="getSbVideoError(sb.id) || '视频地址无效'"
                 >
-                  {{ getSbVideoError(sb.id) || '视频地址无效，请重新生成' }}
+                  <span>{{ getSbVideoError(sb.id) || '视频地址无效，请重新生成' }}</span>
+                  <el-button
+                    v-if="getSbResumableFailedVideo(sb.id)"
+                    type="warning"
+                    link
+                    size="small"
+                    class="sb-resume-poll-btn"
+                    :loading="isSbVideoGenerating(sb.id)"
+                    @click="onResumeSbVideoPoll(sb)"
+                  >
+                    继续查询
+                  </el-button>
                 </div>
                 <span v-if="isSbVideoGenerating(sb.id)" class="sb-video-regenerating-overlay">
                   <el-icon class="is-loading"><Loading /></el-icon>
@@ -1489,7 +1501,18 @@
                 </span>
                 <template v-else>
                   <div v-if="getSbVideoError(sb.id)" class="sb-video-error">
-                    {{ getSbVideoError(sb.id) }}
+                    <span>{{ getSbVideoError(sb.id) }}</span>
+                    <el-button
+                      v-if="getSbResumableFailedVideo(sb.id)"
+                      type="warning"
+                      link
+                      size="small"
+                      class="sb-resume-poll-btn"
+                      :loading="isSbVideoGenerating(sb.id)"
+                      @click="onResumeSbVideoPoll(sb)"
+                    >
+                      继续查询
+                    </el-button>
                   </div>
                   <el-button
                     type="primary"
@@ -2656,6 +2679,7 @@ import {
   getStylePromptZh,
   stylePromptMetadataForSave,
   backfillDramaStylePromptMetadataIfNeeded,
+  CUSTOM_STYLE_VALUE,
 } from '@/constants/styleOptions'
 import { chipPromoTemplates } from '@/constants/chipPromoTemplates'
 import { useNavigation } from '@/composables/filmCreate/useNavigation'
@@ -2736,6 +2760,7 @@ const isStoryGenRunning = computed(() => {
   )
 })
 const generationStyle = ref('')
+const customStylePrompt = ref('')
 const projectAspectRatio = ref('16:9')
 const videoClipDuration = ref(5)
 
@@ -2771,10 +2796,15 @@ function _findStyleOption(val) {
 }
 
 /** 传给图像/视频 AI 用的英文 prompt（效果最好）；
- *  找不到 promptEn 时降级到 prompt，再降级到原始值 */
+ *  找不到 promptEn 时降级到 prompt，再降级到原始值；
+ *  custom 时返回用户填写的自定义描述，避免把字面量 "custom" 写入提示词 */
 function getSelectedStylePrompt() {
   const val = (generationStyle.value || '').toString().trim()
   if (!val) return undefined
+  if (val === CUSTOM_STYLE_VALUE) {
+    const text = (customStylePrompt.value || '').toString().trim()
+    return text || undefined
+  }
   const opt = _findStyleOption(val)
   if (opt) return opt.promptEn || opt.prompt || val
   return val
@@ -2784,13 +2814,17 @@ function getSelectedStylePrompt() {
 function getSelectedStylePromptZh() {
   const val = (generationStyle.value || '').toString().trim()
   if (!val) return undefined
+  if (val === CUSTOM_STYLE_VALUE) {
+    const text = (customStylePrompt.value || '').toString().trim()
+    return text || undefined
+  }
   const opt = _findStyleOption(val)
   if (opt) return opt.prompt || opt.promptEn || val
   return val
 }
 
 function projectStylePromptMetadata() {
-  return stylePromptMetadataForSave(generationStyle.value)
+  return stylePromptMetadataForSave(generationStyle.value, customStylePrompt.value)
 }
 
 const scriptContent = computed({
@@ -3812,6 +3846,13 @@ function getSbVideoError(storyboardId) {
   return failed[0].error_msg
 }
 
+/** 可「继续查询」的失败记录：有上游 task 且后端标记 can_resume_poll */
+function getSbResumableFailedVideo(storyboardId) {
+  const list = sbVideos.value[storyboardId]
+  if (!Array.isArray(list) || list.length === 0) return null
+  return list.find((i) => i.status === 'failed' && i.can_resume_poll) || null
+}
+
 async function loadStoryboardMedia() {
   const boards = store.storyboards || []
   if (boards.length === 0) {
@@ -4585,6 +4626,11 @@ async function loadDrama() {
     storyStyle.value = (d.metadata && d.metadata.story_style) ? d.metadata.story_style : ''
     storyType.value = d.genre || ''
     generationStyle.value = d.style || ''
+    if ((d.style || '') === CUSTOM_STYLE_VALUE) {
+      customStylePrompt.value = (d.metadata?.style_prompt_zh || d.metadata?.style_prompt_en || '').toString()
+    } else {
+      customStylePrompt.value = ''
+    }
     projectAspectRatio.value = (d.metadata && d.metadata.aspect_ratio) ? d.metadata.aspect_ratio : '16:9'
     storeVideoResolution.value = (d.metadata && d.metadata.video_resolution) ? d.metadata.video_resolution : '720p'
     videoClipDuration.value = (d.metadata && d.metadata.video_clip_duration) ? Number(d.metadata.video_clip_duration) : 5
@@ -5017,6 +5063,7 @@ async function onGenerateStory() {
     storyEpisodeCount: storyEpisodeCount.value,
     scriptTitle: scriptTitle.value,
     generationStyle: generationStyle.value,
+    customStylePrompt: customStylePrompt.value,
     projectAspectRatio: projectAspectRatio.value,
     store,
     router,
@@ -6633,6 +6680,41 @@ async function onGenerateSbVideo(sb) {
   }
 }
 
+/** 失败后继续查询上游任务（复用 provider_task_id，不重新提交） */
+async function onResumeSbVideoPoll(sb) {
+  if (!sb?.id || isSbVideoGenerating(sb.id)) return
+  const failed = getSbResumableFailedVideo(sb.id)
+  if (!failed?.id) {
+    ElMessage.warning('当前失败记录无法继续查询，请重新生成')
+    return
+  }
+  generatingSbVideoIds.add(sb.id)
+  const meta = buildSbGenMeta(sb, GEN_RESOURCE.SB_VIDEO, '继续查询')
+  genStore.markRunning(meta)
+  sbVideoErrors.value[sb.id] = ''
+  try {
+    const res = await videosAPI.resumePoll(failed.id)
+    const taskId = res?.task_id
+    if (!taskId) {
+      throw new Error('未返回任务 ID')
+    }
+    const pollRes = await pollTask(taskId, () => loadSingleStoryboardMedia(sb.id), meta)
+    if (pollRes?.status === 'failed') {
+      sbVideoErrors.value[sb.id] = pollRes.error || '继续查询失败'
+    } else if (pollRes?.status === 'completed') {
+      sbVideoErrors.value[sb.id] = ''
+      ElMessage.success('视频查询完成')
+    }
+  } catch (e) {
+    sbVideoErrors.value[sb.id] = e.message || '继续查询失败'
+    ElMessage.error(e.message || '继续查询失败')
+  } finally {
+    generatingSbVideoIds.delete(sb.id)
+    genStore.markDone(meta)
+    await loadSingleStoryboardMedia(sb.id)
+  }
+}
+
 /** 尾帧衔接：提取当前视频最后一帧，设为下一个分镜的首帧 */
 async function onLinkTailFrameToNext(sb) {
   if (!dramaId.value || !sb?.id) return
@@ -8134,6 +8216,7 @@ function applyRouteToStore() {
     scriptLanguage.value = 'zh'
     scriptStoryboardStyle.value = ''
     generationStyle.value = ''
+    customStylePrompt.value = ''
   }
 }
 
@@ -10269,6 +10352,13 @@ html.light .sb-video-placeholder {
   border-radius: 4px;
   text-align: left;
   width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.sb-resume-poll-btn {
+  flex-shrink: 0;
 }
 .sb-video-player {
   width: 100%;

@@ -39,49 +39,13 @@
             </el-col>
             <el-col :span="12">
               <el-form-item label="图片/视频风格">
-                <el-select v-model="infoForm.style" placeholder="选择全剧统一风格" clearable style="width: 100%" @change="saveInfo">
-                  <el-option-group label="写实 / 影视">
-                    <el-option label="写实" value="realistic" />
-                    <el-option label="电影感" value="cinematic" />
-                    <el-option label="纪录片" value="documentary" />
-                    <el-option label="黑色电影" value="noir" />
-                    <el-option label="复古胶片" value="retro film" />
-                    <el-option label="恐怖" value="horror" />
-                  </el-option-group>
-                  <el-option-group label="动漫 / 卡通">
-                    <el-option label="日本动漫" value="anime style" />
-                    <el-option label="欧美漫画" value="comic style" />
-                    <el-option label="卡通" value="cartoon" />
-                  </el-option-group>
-                  <el-option-group label="中国风格">
-                    <el-option label="国画水墨" value="ink wash" />
-                    <el-option label="中国风" value="chinese style" />
-                    <el-option label="古装" value="historical" />
-                    <el-option label="武侠" value="wuxia" />
-                  </el-option-group>
-                  <el-option-group label="绘画艺术">
-                    <el-option label="水彩" value="watercolor" />
-                    <el-option label="油画" value="oil painting" />
-                    <el-option label="素描" value="sketch" />
-                    <el-option label="版画" value="woodblock print" />
-                    <el-option label="印象派" value="impressionist" />
-                  </el-option-group>
-                  <el-option-group label="幻想 / 科幻">
-                    <el-option label="奇幻" value="fantasy" />
-                    <el-option label="暗黑奇幻" value="dark fantasy" />
-                    <el-option label="科幻" value="sci-fi" />
-                    <el-option label="赛博朋克" value="cyberpunk" />
-                    <el-option label="蒸汽朋克" value="steampunk" />
-                    <el-option label="末世废土" value="post-apocalyptic" />
-                  </el-option-group>
-                  <el-option-group label="数字 / 现代">
-                    <el-option label="3D 渲染" value="3d render" />
-                    <el-option label="像素风" value="pixel art" />
-                    <el-option label="低多边形" value="low poly" />
-                    <el-option label="极简" value="minimalist" />
-                    <el-option label="唯美梦幻" value="dreamy" />
-                  </el-option-group>
-                </el-select>
+                <StylePickerButton
+                  v-model="infoForm.style"
+                  v-model:custom-prompt="infoForm.customStylePrompt"
+                  :options="generationStyleOptions"
+                  placeholder="选择全剧统一风格"
+                  @change="saveInfo"
+                />
               </el-form-item>
             </el-col>
             <el-col :span="12">
@@ -570,6 +534,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, VideoPlay, Plus, Delete, Sunny, Moon, PictureFilled, Grid } from '@element-plus/icons-vue'
 import EpisodeBatchImportDialog from '@/components/EpisodeBatchImportDialog.vue'
+import StylePickerButton from '@/components/StylePickerButton.vue'
 import { useTheme } from '@/composables/useTheme'
 import { dramaAPI } from '@/api/drama'
 import { characterLibraryAPI } from '@/api/characterLibrary'
@@ -581,7 +546,12 @@ import { taskAPI } from '@/api/task'
 import { characterAPI } from '@/api/characters'
 import { sceneAPI } from '@/api/scenes'
 import { propAPI } from '@/api/props'
-import { stylePromptMetadataForSave, backfillDramaStylePromptMetadataIfNeeded } from '@/constants/styleOptions'
+import {
+  generationStyleOptions,
+  stylePromptMetadataForSave,
+  backfillDramaStylePromptMetadataIfNeeded,
+  CUSTOM_STYLE_VALUE,
+} from '@/constants/styleOptions'
 
 const route = useRoute()
 const { isDark, toggle: toggleTheme } = useTheme()
@@ -887,7 +857,7 @@ const nextEpisodeNumber = computed(() => (
     : 1
 ))
 
-const infoForm = reactive({ title: '', description: '', genre: '', style: '', aspect_ratio: '16:9', video_resolution: '720p' })
+const infoForm = reactive({ title: '', description: '', genre: '', style: '', customStylePrompt: '', aspect_ratio: '16:9', video_resolution: '720p' })
 
 function assetImageUrl(item) {
   if (!item) return ''
@@ -912,6 +882,11 @@ async function loadDrama() {
     infoForm.description = d.description || ''
     infoForm.genre = d.genre || ''
     infoForm.style = d.style || ''
+    if (infoForm.style === CUSTOM_STYLE_VALUE) {
+      infoForm.customStylePrompt = (d.metadata?.style_prompt_zh || d.metadata?.style_prompt_en || '').toString()
+    } else {
+      infoForm.customStylePrompt = ''
+    }
     infoForm.aspect_ratio = d.metadata?.aspect_ratio || '16:9'
     infoForm.video_resolution = d.metadata?.video_resolution || '720p'
   } catch (e) {
@@ -923,6 +898,10 @@ async function loadDrama() {
 
 let infoSaveTimer = null
 function saveInfo() {
+  if (infoForm.style === CUSTOM_STYLE_VALUE && !(infoForm.customStylePrompt || '').trim()) {
+    ElMessage.warning('请填写画风描述')
+    return
+  }
   if (infoSaveTimer) clearTimeout(infoSaveTimer)
   infoSaveTimer = setTimeout(async () => {
     try {
@@ -931,7 +910,7 @@ function saveInfo() {
         genre: infoForm.genre || undefined,
         style: infoForm.style || undefined,
         metadata: {
-          ...stylePromptMetadataForSave(infoForm.style),
+          ...stylePromptMetadataForSave(infoForm.style, infoForm.customStylePrompt),
           aspect_ratio: infoForm.aspect_ratio || '16:9',
           video_resolution: infoForm.video_resolution || '720p',
         },

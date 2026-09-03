@@ -96,6 +96,20 @@ function routes(db, log) {
         response.internalError(res, err.message);
       }
     },
+    /** 失败后复用 provider_task_id 继续轮询上游，避免浪费已提交任务 */
+    resumePoll: (req, res) => {
+      try {
+        const result = videoService.resumeFailedVideoPoll(db, log, req.params.id);
+        if (!result.ok) {
+          if (result.status === 404) return response.notFound(res, result.error);
+          return response.badRequest(res, result.error);
+        }
+        response.success(res, result.item);
+      } catch (err) {
+        log.error('videos resumePoll', { error: err.message });
+        response.internalError(res, err.message);
+      }
+    },
     fromImage: (req, res) => {
       try {
         const task = taskService.createTask(db, log, 'video_generation', req.params.image_gen_id);

@@ -33,23 +33,39 @@ function inferVideoProtocol(provider) {
   if (p === 'jimeng_ai_api') return 'jimeng_ai_api';
   if (p === 'xai' || p === 'grok') return 'xai';
   if (p === 'agnes') return 'agnes';
+  if (p === 'minimax_h3') return 'minimax_h3';
   return 'openai';
+}
+
+/** 官方模型 ID：MiniMax-H3（Video Generation V2） */
+function isMinimaxH3Model(name) {
+  const m = String(name || '').trim().toLowerCase();
+  return m === 'minimax-h3' || m === 'minimax_h3' || /^minimax[-_]?h3\b/.test(m);
 }
 
 /**
  * 显式 api_protocol 优先；未配置时推断。
  * Grok / xAI 官方为 prompt + aspect_ratio + GET /v1/videos/{request_id}，与中转站用的 ratio + content 不同。
+ * MiniMax-H3 走 V2（/v2/video_generation），与旧海螺 V1 不同。
  */
 function resolveVideoProtocol(config, modelHint) {
   const provider = (config.provider || '').toLowerCase();
   const explicit = String(config.api_protocol || '').trim();
   let protocol = explicit.toLowerCase() || inferVideoProtocol(provider);
   const baseLower = String(config.base_url || '').toLowerCase();
-  const modelLower = String(modelHint || '').toLowerCase();
+  const modelCand =
+    modelHint ||
+    config.default_model ||
+    (Array.isArray(config.model) ? config.model[0] : config.model) ||
+    '';
+  const modelLower = String(modelCand || '').toLowerCase();
   if (!explicit && protocol === 'openai') {
     if (/api\.x\.ai(\/|$)/.test(baseLower)) protocol = 'xai';
     else if (/grok-imagine|grok.*video/.test(modelLower)) protocol = 'xai';
-    else if (p === 'agnes' || /agnes-video|apihub\.agnes-ai\.com/i.test(baseLower)) protocol = 'agnes';
+    else if (provider === 'agnes' || /agnes-video|apihub\.agnes-ai\.com/i.test(baseLower)) protocol = 'agnes';
+  }
+  if ((!explicit || protocol === 'openai') && (provider === 'minimax_h3' || isMinimaxH3Model(modelCand))) {
+    protocol = 'minimax_h3';
   }
   return protocol;
 }
@@ -944,6 +960,83 @@ function buildVideoUrl(config, options = {}) {
   return base + ep;
 }
 
+/**
+ * Agnes / new-api 渠道根地址（与 new-api agnes.apiOrigin 一致）：
+ * 配置里常带 .../v1 或 .../v1/videos，需剥掉后再拼 /v1/videos/{task_id}。
+ */
+function getAgnesApiRoot(baseUrl) {
+  let base = String(baseUrl || 'https://apihub.agnes-ai.com').replace(/\/$/, '');
+  for (const suf of ['/v1/videos', '/v1']) {
+    if (base.length >= suf.length && base.slice(-suf.length).toLowerCase() === suf) {
+      base = base.slice(0, -suf.length).replace(/\/$/, '');
+    }
+  }
+  return base || 'https://apihub.agnes-ai.com';
+}
+
+/** 内置/历史默认查询路径：由代码统一按 new-api 拼装，忽略配置里的旧值 */
+function isAgnesBuiltinQueryEndpoint(ep) {
+  const s = String(ep || '').trim();
+  if (!s) return true;
+  return (
+    /^\/?(v1\/)?videos\/\{(taskId|task_id|id|videoId|video_id)\}\/?$/i.test(s) ||
+    /^\/?agnesapi(\?|$)/i.test(s)
+  );
+}
+
+/**
+ * Agnes 结果查询（对齐 new-api TaskAdaptor.FetchTask）：
+ * GET {origin}/v1/videos/{task_id}
+ */
+function buildAgnesPollUrl(config, pollId) {
+  const root = getAgnesApiRoot(config.base_url);
+  const id = String(pollId || '').trim();
+  const cfgEp = String(config.query_endpoint || '').trim();
+
+  if (cfgEp && !isAgnesBuiltinQueryEndpoint(cfgEp)) {
+    const base = (config.base_url || '').replace(/\/$/, '');
+    let ep = cfgEp;
+    ep = String(ep)
+      .replace(/\{videoId\}/gi, encodeURIComponent(id))
+      .replace(/\{video_id\}/gi, encodeURIComponent(id))
+      .replace(/\{taskId\}/gi, encodeURIComponent(id))
+      .replace(/\{task_id\}/gi, encodeURIComponent(id))
+      .replace(/\{id\}/gi, encodeURIComponent(id));
+    if (!ep.startsWith('/')) ep = '/' + ep;
+    return base + ep;
+  }
+
+  return `${root}/v1/videos/${encodeURIComponent(id)}`;
+}
+
+/**
+ * 对齐 new-api：extractVideoURL + taskcommon.ExtractVideoURLFromJSON，
+ * 并兼容当前 Agnes 完成态把直链放在 metadata.url（实测 2026-07）。
+ */
+function extractAgnesVideoUrl(data) {
+  if (!data || typeof data !== 'object') return null;
+  const nested = (obj, key) =>
+    obj && typeof obj === 'object' && !Array.isArray(obj) ? obj[key] : null;
+  const candidates = [
+    data.video_url,
+    nested(data.content, 'video_url'),
+    nested(data.data, 'video_url'),
+    nested(data.data, 'url'),
+    // 当前官方完成态：metadata.url 才是 MP4 直链
+    nested(data.metadata, 'url'),
+    nested(data.metadata, 'video_url'),
+    nested(data.metadata, 'result_url'),
+    data.remixed_from_video_id,
+    nested(data.data, 'remixed_from_video_id'),
+    data.url,
+  ];
+  for (const c of candidates) {
+    const u = coerceHttpVideoUrl(c);
+    if (u) return u;
+  }
+  return pickProxyVideoUrl(data);
+}
+
 function buildQueryUrl(config, taskId) {
   const p = (config.provider || '').toLowerCase();
   const proto = resolveVideoProtocol(config);
@@ -951,6 +1044,8 @@ function buildQueryUrl(config, taskId) {
   const isVolc = p === 'volces' || p === 'volcengine' || p === 'volc';
   const isSora = proto === 'sora';
   if (isVolc) return getVolcVideoBase(config) + VOLC_VIDEO_QUERY_PATH + '/' + encodeURIComponent(taskId);
+  if (proto === 'agnes') return buildAgnesPollUrl(config, taskId);
+  if (proto === 'minimax_h3') return buildMinimaxH3PollUrl(config, taskId);
   const base = (config.base_url || '').replace(/\/$/, '');
   let defaultEp;
   if (isSora) defaultEp = '/v1/videos/{taskId}';
@@ -958,7 +1053,6 @@ function buildQueryUrl(config, taskId) {
   else if (proto === 'veo3') defaultEp = '/v1/video/query?id={taskId}';
   else if (isDashScope) defaultEp = '/api/v1/tasks/{taskId}';
   else if (proto === 'volcengine_omni') defaultEp = '/v1/videos/generations/async/{taskId}';
-  else if (proto === 'agnes') defaultEp = '/videos/{taskId}';
   else defaultEp = '/video/task/{taskId}';
   let ep = config.query_endpoint || defaultEp;
   ep = String(ep).replace(/\{taskId\}/gi, encodeURIComponent(taskId)).replace(/\{task_id\}/gi, encodeURIComponent(taskId)).replace(/\{id\}/gi, encodeURIComponent(taskId));
@@ -1151,12 +1245,22 @@ function pickProxyVideoUrl(data) {
   }
   let u = videoUrlFromRecord(data);
   if (u) return u;
+  // 中转站 / Seedance 完成态常见：直链在 metadata.url（非顶层 video_url）
+  const meta = data.metadata;
+  if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
+    u = videoUrlFromRecord(meta);
+    if (u) return u;
+  }
   const d = data.data;
   if (d && typeof d === 'object' && !Array.isArray(d)) {
     const nestedList = pickVideoUrlFromItemList(d.item_list);
     if (nestedList) return nestedList;
     u = videoUrlFromRecord(d);
     if (u) return u;
+    if (d.metadata && typeof d.metadata === 'object' && !Array.isArray(d.metadata)) {
+      u = videoUrlFromRecord(d.metadata);
+      if (u) return u;
+    }
     if (d.video && typeof d.video === 'object') {
       const dv =
         videoUrlFromArkVideoNode(d.video) ||
@@ -2520,7 +2624,7 @@ async function callAgnesVideoApi(db, config, log, opts) {
     return { error: 'Agnes 响应解析失败: ' + e.message + ' | raw: ' + raw.slice(0, 200) };
   }
 
-  const directUrl = pickProxyVideoUrl(data);
+  const directUrl = extractAgnesVideoUrl(data);
   if (directUrl) {
     log.info('[Agnes] 直接返回 video_url', { video_url: directUrl, video_gen_id });
     return { video_url: directUrl };
@@ -3341,6 +3445,211 @@ function resolveVolcClassicImage(rawUrl, files_base_url, storage_local_path, log
   return u;
 }
 
+/** MiniMax 国内/海外根域名：去掉末尾 /v1 /v2，便于拼 V2 路径 */
+function getMinimaxApiRoot(baseUrl) {
+  let root = String(baseUrl || 'https://api.minimaxi.com').trim().replace(/\/$/, '');
+  for (const suf of ['/v2', '/v1']) {
+    if (root.toLowerCase().endsWith(suf)) {
+      root = root.slice(0, -suf.length).replace(/\/$/, '');
+      break;
+    }
+  }
+  return root || 'https://api.minimaxi.com';
+}
+
+function normalizeMinimaxH3Duration(duration) {
+  const n = Math.round(Number(duration));
+  const safe = Number.isFinite(n) && n > 0 ? n : 5;
+  return Math.min(15, Math.max(4, safe));
+}
+
+function normalizeMinimaxH3Resolution(resolution) {
+  const s = String(resolution || '').trim().toLowerCase();
+  if (!s) return '768P';
+  if (s === '2k' || s.includes('2k') || s.includes('1080') || s === '1080p') return '2K';
+  if (s.includes('768') || s === '768p') return '768P';
+  return '768P';
+}
+
+function buildMinimaxH3CreateUrl(config) {
+  const root = getMinimaxApiRoot(config.base_url);
+  let ep = (config.endpoint || '/v2/video_generation').toString().trim();
+  if (!ep.startsWith('/')) ep = '/' + ep;
+  // 用户若误配旧海螺 /video_generation，在 H3 协议下纠正为 V2
+  if (/^\/video_generation\/?$/i.test(ep) || /^\/v1\/video_generation\/?$/i.test(ep)) {
+    ep = '/v2/video_generation';
+  }
+  return root + ep;
+}
+
+function buildMinimaxH3PollUrl(config, taskId) {
+  const root = getMinimaxApiRoot(config.base_url);
+  const id = String(taskId || '').trim();
+  let ep = (config.query_endpoint || '/v2/query/video_generation/{taskId}').toString().trim();
+  if (!ep.startsWith('/')) ep = '/' + ep;
+  if (/query\/video_generation\?task_id=/i.test(ep) || /^\/v1\/query\//i.test(ep)) {
+    ep = '/v2/query/video_generation/{taskId}';
+  }
+  ep = ep
+    .replace(/\{taskId\}/gi, encodeURIComponent(id))
+    .replace(/\{task_id\}/gi, encodeURIComponent(id))
+    .replace(/\{id\}/gi, encodeURIComponent(id));
+  // 兼容仅写目录的配置：/v2/query/video_generation → 追加 /{taskId}
+  if (/\/v2\/query\/video_generation\/?$/i.test(ep) && id) {
+    ep = ep.replace(/\/?$/, '/') + encodeURIComponent(id);
+  }
+  return root + ep;
+}
+
+function extractMinimaxH3VideoUrl(data) {
+  if (!data || typeof data !== 'object') return null;
+  const task = data.task && typeof data.task === 'object' ? data.task : data;
+  const content = task.content && typeof task.content === 'object' ? task.content : null;
+  return (
+    coerceHttpVideoUrl(content?.url) ||
+    coerceHttpVideoUrl(task.video_url) ||
+    coerceHttpVideoUrl(task.url) ||
+    pickProxyVideoUrl(data) ||
+    null
+  );
+}
+
+function extractMinimaxH3TaskStatus(data) {
+  if (!data || typeof data !== 'object') return '';
+  const task = data.task && typeof data.task === 'object' ? data.task : data;
+  const s = task.status || task.state || data.status;
+  return s != null ? String(s).trim().toLowerCase() : '';
+}
+
+/**
+ * MiniMax-H3：POST /v2/video_generation（content[] 多模态），轮询 GET /v2/query/video_generation/{task_id}
+ * @returns {Promise<{ task_id?: string, video_url?: string, error?: string }>}
+ */
+async function callMinimaxH3VideoApi(config, log, opts) {
+  const {
+    prompt,
+    model,
+    duration,
+    aspect_ratio,
+    resolution,
+    image_url,
+    first_frame_url,
+    last_frame_url,
+    reference_urls,
+    files_base_url,
+    storage_local_path,
+    video_gen_id,
+  } = opts || {};
+  const url = buildMinimaxH3CreateUrl(config);
+  const finalModel = isMinimaxH3Model(model) ? 'MiniMax-H3' : model || 'MiniMax-H3';
+  const dur = normalizeMinimaxH3Duration(duration);
+  const res = normalizeMinimaxH3Resolution(resolution);
+  const ratio = normalizeAspectRatioForApi(aspect_ratio) || String(aspect_ratio || '16:9').trim() || '16:9';
+
+  const content = [{ type: 'text', text: String(prompt || '').trim() || 'cinematic scene' }];
+
+  const rawFirst = (first_frame_url || image_url || '').toString().trim();
+  const rawLast = (last_frame_url || '').toString().trim();
+  const firstForApi = resolveVolcClassicImage(
+    rawFirst,
+    files_base_url,
+    storage_local_path,
+    log,
+    video_gen_id,
+    'first_frame'
+  );
+  let lastForApi = null;
+  if (rawLast) {
+    lastForApi = resolveVolcClassicImage(rawLast, files_base_url, storage_local_path, log, video_gen_id, 'last_frame');
+  }
+  if (firstForApi && lastForApi && firstForApi === lastForApi) lastForApi = null;
+
+  const refs = Array.isArray(reference_urls) ? reference_urls.filter(Boolean).map(String) : [];
+  const useFirstLast = !!(firstForApi || lastForApi);
+
+  if (useFirstLast) {
+    if (firstForApi) {
+      content.push({ type: 'image_url', image_url: { url: firstForApi }, role: 'first_frame' });
+    }
+    if (lastForApi) {
+      content.push({ type: 'image_url', image_url: { url: lastForApi }, role: 'last_frame' });
+    }
+  } else if (refs.length) {
+    for (let i = 0; i < Math.min(refs.length, 9); i++) {
+      const refUrl = resolveVolcClassicImage(
+        refs[i],
+        files_base_url,
+        storage_local_path,
+        log,
+        video_gen_id,
+        `reference_${i}`
+      );
+      if (refUrl) {
+        content.push({ type: 'image_url', image_url: { url: refUrl }, role: 'reference_image' });
+      }
+    }
+  }
+
+  const body = {
+    model: finalModel,
+    content,
+    duration: dur,
+    resolution: res,
+  };
+  // 文生视频 ratio 必填且不能 adaptive；有图时官方示例可省略或 adaptive
+  if (!useFirstLast && !refs.length) {
+    body.ratio = ratio === 'adaptive' ? '16:9' : ratio;
+  } else if (useFirstLast) {
+    body.ratio = 'adaptive';
+  }
+
+  logVideoPostRequest(log, 'MiniMaxH3', url, body, video_gen_id, {
+    model: finalModel,
+    has_first_frame: !!firstForApi,
+    has_last_frame: !!lastForApi,
+    reference_count: useFirstLast ? 0 : Math.min(refs.length, 9),
+  });
+
+  const resHttp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer ' + (config.api_key || ''),
+    },
+    body: JSON.stringify(body),
+  });
+  const raw = await resHttp.text();
+  log.info('[MiniMaxH3] raw response', { video_gen_id, status: resHttp.status, raw: raw.slice(0, 1000) });
+  if (!resHttp.ok) {
+    let errMsg = 'MiniMax H3 请求失败: ' + resHttp.status;
+    try {
+      const errJson = JSON.parse(raw);
+      const msg = errJson.error?.message || errJson.message || errJson.base_resp?.status_msg;
+      if (msg) errMsg += ' - ' + (typeof msg === 'string' ? msg : JSON.stringify(msg).slice(0, 200));
+    } catch (_) {
+      if (raw) errMsg += ' - ' + raw.slice(0, 200);
+    }
+    return { error: errMsg };
+  }
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (e) {
+    return { error: 'MiniMax H3 响应非 JSON: ' + e.message };
+  }
+  const taskId = data.task_id || data.task?.id || data.id || data.data?.task_id;
+  const directUrl = extractMinimaxH3VideoUrl(data);
+  if (directUrl) {
+    log.info('[MiniMaxH3] 直接返回 video_url', { video_gen_id, video_url: directUrl });
+    return { video_url: directUrl };
+  }
+  if (taskId) {
+    log.info('[MiniMaxH3] 返回 task_id', { video_gen_id, task_id: taskId });
+    return { task_id: String(taskId), status: 'processing' };
+  }
+  return { error: 'MiniMax H3 未返回 task_id: ' + JSON.stringify(data).slice(0, 300) };
+}
+
 /**
  * ?????? API?ChatFire/?? ? ?????
  * @returns {Promise<{ task_id?: string, video_url?: string, error?: string }>}
@@ -3600,6 +3909,24 @@ async function callVideoApi(db, log, opts) {
     });
   }
 
+  // MiniMax H3 Video Generation V2
+  if (protocol === 'minimax_h3') {
+    return callMinimaxH3VideoApi(config, log, {
+      prompt,
+      model,
+      duration: opts.duration,
+      aspect_ratio,
+      resolution: opts.resolution,
+      image_url: opts.image_url,
+      first_frame_url: opts.first_frame_url,
+      last_frame_url: opts.last_frame_url,
+      reference_urls: opts.reference_urls,
+      files_base_url: opts.files_base_url,
+      storage_local_path: opts.storage_local_path,
+      video_gen_id: opts.video_gen_id,
+    });
+  }
+
   const url = buildVideoUrl(config);
   const dur = duration ? Number(duration) : 5;
   const ratio = aspect_ratio || '16:9';
@@ -3756,6 +4083,7 @@ async function pollVideoTask(db, log, videoGenId, taskId, config, maxAttempts = 
   const isVidu = protocol === 'vidu';
   const isSora = protocol === 'sora';
   const isAgnes = protocol === 'agnes';
+  const isMinimaxH3 = protocol === 'minimax_h3';
   const isKling = protocol === 'kling';
   const isKlingOmni = protocol === 'kling_omni' || (typeof taskId === 'string' && taskId.startsWith('omni:'));
   const isVeo3 = protocol === 'veo3';
@@ -3776,8 +4104,12 @@ async function pollVideoTask(db, log, videoGenId, taskId, config, maxAttempts = 
     log.warn('[poll] Jimeng AI API 不应进入轮询', { video_gen_id: videoGenId, task_id: taskId });
     return { error: 'Jimeng AI API 为同步返回视频地址，不应进入轮询' };
   }
-  const queryUrl = () => buildQueryUrl(config, taskId);
-  log.info('[poll] ????', { video_gen_id: videoGenId, task_id: taskId, protocol, poll_url: queryUrl() });
+  let pollTaskId = taskId;
+  /** Agnes：completed 后 remixed_from_video_id / metadata.url 偶发迟到，对齐 new-api 继续多查几轮 */
+  let agnesCompletedWithoutUrl = 0;
+  const AGNES_COMPLETED_URL_GRACE = 12;
+  const queryUrl = () => buildQueryUrl(config, pollTaskId);
+  log.info('[poll] 开始', { video_gen_id: videoGenId, task_id: pollTaskId, protocol, poll_url: queryUrl() });
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     await new Promise((r) => setTimeout(r, intervalMs));
     try {
@@ -3960,20 +4292,74 @@ async function pollVideoTask(db, log, videoGenId, taskId, config, maxAttempts = 
 
       if (isAgnes) {
         const status = extractPollTaskStatus(data);
-        log.info('[Agnes poll] 状态', { video_gen_id: videoGenId, attempt, status, progress: data.progress, id: data.id });
+        log.info('[Agnes poll] 状态', {
+          video_gen_id: videoGenId,
+          attempt,
+          status,
+          progress: data.progress,
+          id: data.id,
+          poll_id: pollTaskId,
+          poll_url: queryUrl(),
+        });
         if (isPollTaskFailed(status)) {
           const msg = extractPollFailureMessage(data) || 'Agnes 视频任务失败';
           log.warn('[Agnes poll] 任务失败', { video_gen_id: videoGenId, msg, data: JSON.stringify(data).slice(0, 300) });
           return { error: String(msg).slice(0, 500) };
         }
-        const videoUrl = pickProxyVideoUrl(data);
+        // 对齐 new-api ParseTaskResult / ExtractVideoURLFromJSON（含 metadata.url、remixed_from_video_id）
+        const videoUrl = extractAgnesVideoUrl(data);
         if (videoUrl && isPlausibleHttpVideoUrl(videoUrl)) {
           log.info('[Agnes poll] 完成', { video_gen_id: videoGenId, video_url: videoUrl });
           return { video_url: videoUrl };
         }
         if (status === 'succeeded' || status === 'completed' || status === 'done') {
-          log.warn('[Agnes poll] 标记完成但未返回 video_url', { video_gen_id: videoGenId, data: JSON.stringify(data).slice(0, 500) });
-          return { error: 'Agnes 任务完成但未返回视频地址: ' + JSON.stringify(data).slice(0, 300) };
+          agnesCompletedWithoutUrl += 1;
+          log.warn('[Agnes poll] completed 但尚未返回视频直链，继续等待', {
+            video_gen_id: videoGenId,
+            miss: agnesCompletedWithoutUrl,
+            grace: AGNES_COMPLETED_URL_GRACE,
+            data: JSON.stringify(data).slice(0, 500),
+          });
+          if (agnesCompletedWithoutUrl >= AGNES_COMPLETED_URL_GRACE) {
+            return {
+              error: 'Agnes 任务完成但未返回视频地址: ' + JSON.stringify(data).slice(0, 300),
+            };
+          }
+        }
+        continue;
+      }
+
+      if (isMinimaxH3) {
+        const status = extractMinimaxH3TaskStatus(data);
+        const videoUrl = extractMinimaxH3VideoUrl(data);
+        const taskObj = data.task && typeof data.task === 'object' ? data.task : data;
+        log.info('[MiniMaxH3 poll] 状态', {
+          video_gen_id: videoGenId,
+          attempt,
+          status,
+          has_url: !!videoUrl,
+          id: taskObj.id || taskId,
+        });
+        if (status === 'failed' || status === 'cancelled' || status === 'canceled' || status === 'error') {
+          const err = taskObj.error;
+          const msg =
+            (err && (err.message || err.code)) ||
+            extractPollFailureMessage(data) ||
+            status ||
+            'MiniMax H3 任务失败';
+          log.warn('[MiniMaxH3 poll] 任务失败', { video_gen_id: videoGenId, msg });
+          return { error: String(msg).slice(0, 500) };
+        }
+        if (videoUrl && isPlausibleHttpVideoUrl(videoUrl)) {
+          log.info('[MiniMaxH3 poll] 完成', { video_gen_id: videoGenId, video_url: videoUrl });
+          return { video_url: videoUrl };
+        }
+        if (status === 'succeeded' || status === 'completed' || status === 'success' || status === 'done') {
+          log.warn('[MiniMaxH3 poll] 成功但无视频地址', {
+            video_gen_id: videoGenId,
+            data: JSON.stringify(data).slice(0, 500),
+          });
+          return { error: 'MiniMax H3 任务完成但未返回视频地址' };
         }
         continue;
       }
@@ -4077,8 +4463,17 @@ module.exports = {
   normalizeAspectRatioForApi,
   isPlausibleHttpVideoUrl,
   pickProxyVideoUrl,
+  extractAgnesVideoUrl,
+  buildAgnesPollUrl,
+  getAgnesApiRoot,
   buildAgnesVideoImagePayload,
   formatVideoPostBodyForLog,
   isSeedance2FamilyModel,
   normalizeVolcengineDuration,
+  isMinimaxH3Model,
+  getMinimaxApiRoot,
+  buildMinimaxH3PollUrl,
+  extractMinimaxH3VideoUrl,
+  normalizeMinimaxH3Duration,
+  normalizeMinimaxH3Resolution,
 };

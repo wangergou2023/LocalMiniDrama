@@ -1,3 +1,6 @@
+/** 自定义画风：dramas.style 固定短标识，完整描述写在 metadata.style_prompt_* */
+export const CUSTOM_STYLE_VALUE = 'custom'
+
 /** 影像风格选项 - 静态配置数据 */
 export const generationStyleOptions = [
   {
@@ -243,6 +246,8 @@ export function findStyleOption(val) {
 export function getStylePromptEn(val) {
   const v = (val || '').toString().trim()
   if (!v) return undefined
+  // 无第二参数时无法拿到用户描述；勿把短标识 custom 当提示词
+  if (v === CUSTOM_STYLE_VALUE) return undefined
   const opt = findStyleOption(v)
   if (opt) return opt.promptEn || opt.prompt || v
   return v
@@ -256,6 +261,7 @@ export function getStylePromptEn(val) {
 export function getStylePromptZh(val) {
   const v = (val || '').toString().trim()
   if (!v) return undefined
+  if (v === CUSTOM_STYLE_VALUE) return undefined
   const opt = findStyleOption(v)
   if (opt) return opt.prompt || opt.promptEn || v
   return v
@@ -264,16 +270,30 @@ export function getStylePromptZh(val) {
 /**
  * 保存剧集 metadata 时用：与后端约定字段 style_prompt_zh / style_prompt_en。
  * 未选风格时返回空串，写入后可覆盖旧 metadata 中的画风字段。
+ * 自定义画风（custom）时第二参数为用户描述，zh/en 写入同一文本。
  */
-export function stylePromptMetadataForSave(styleValue) {
+export function stylePromptMetadataForSave(styleValue, customPrompt) {
   const v = (styleValue || '').toString().trim()
   if (!v) return { style_prompt_zh: '', style_prompt_en: '' }
+  if (v === CUSTOM_STYLE_VALUE) {
+    const text = (customPrompt != null ? String(customPrompt) : '').trim()
+    return { style_prompt_zh: text, style_prompt_en: text }
+  }
   const opt = findStyleOption(v)
   if (!opt) return { style_prompt_zh: v, style_prompt_en: v }
   return {
     style_prompt_zh: opt.prompt || opt.promptEn || '',
     style_prompt_en: opt.promptEn || opt.prompt || '',
   }
+}
+
+/** 列表/触发器展示用中文名 */
+export function getStyleLabel(val) {
+  const v = (val || '').toString().trim()
+  if (!v) return ''
+  if (v === CUSTOM_STYLE_VALUE) return '自定义'
+  const opt = findStyleOption(v)
+  return opt?.label || v
 }
 
 /**
@@ -285,6 +305,7 @@ export async function backfillDramaStylePromptMetadataIfNeeded(dramaAPI, dramaId
   if (!drama || dramaId == null) return drama
   const styleVal = (drama.style || '').toString().trim()
   if (!styleVal) return drama
+  if (styleVal === CUSTOM_STYLE_VALUE) return drama
   const hasEn = (drama.metadata?.style_prompt_en || '').toString().trim()
   if (hasEn) return drama
   const patch = stylePromptMetadataForSave(styleVal)

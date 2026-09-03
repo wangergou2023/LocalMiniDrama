@@ -257,6 +257,7 @@ function setupRouter(cfg, db, log) {
   r.post('/videos', videos.create);
   r.post('/videos/image/:image_gen_id', videos.fromImage);
   r.post('/videos/episode/:episode_id/batch', videos.episodeBatch);
+  r.post('/videos/:id/resume-poll', videos.resumePoll);
   r.get('/videos/:id', videos.get);
   r.delete('/videos/:id', videos.delete);
 

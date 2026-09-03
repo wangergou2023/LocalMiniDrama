@@ -6,13 +6,13 @@
       :class="{ 'has-value': !!modelValue }"
       @click="visible = true"
     >
-      <template v-if="selectedOption">
-        <span class="spt-swatch" :style="swatchStyle(selectedOption)" />
-        <span class="spt-label">{{ selectedOption.label }}</span>
+      <template v-if="displayLabel">
+        <span class="spt-swatch" :style="triggerSwatchStyle" />
+        <span class="spt-label">{{ displayLabel }}</span>
       </template>
       <span v-else class="spt-placeholder">{{ placeholder }}</span>
       <el-icon class="spt-arrow"><ArrowDown /></el-icon>
-      <span v-if="modelValue" class="spt-clear" @click.stop="emit('update:modelValue', ''); emit('change', '')">
+      <span v-if="modelValue" class="spt-clear" @click.stop="clearSelection">
         <el-icon><CircleClose /></el-icon>
       </span>
     </div>
@@ -26,6 +26,7 @@
       class="style-picker-dialog"
       :append-to-body="true"
       destroy-on-close
+      @closed="showCustomEditor = false"
     >
       <div class="spd-search">
         <el-input
@@ -37,7 +38,7 @@
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
         <span v-if="modelValue" class="spd-selected-hint">
-          已选：{{ selectedOption?.label }}
+          已选：{{ getStyleLabel(modelValue) || displayLabel }}
         </span>
       </div>
 
@@ -67,7 +68,40 @@
             </div>
           </div>
         </template>
-        <div v-if="filteredGroups.length === 0" class="spd-empty">没有匹配的风格</div>
+
+        <template v-if="showCustomSection">
+          <div class="spd-group-title">其他</div>
+          <div class="spd-grid">
+            <div
+              class="spd-item"
+              :class="{ 'is-active': modelValue === CUSTOM_STYLE_VALUE }"
+              @click="openCustomEditor"
+            >
+              <div class="spd-thumb" :style="{ background: CUSTOM_SWATCH }">
+                <span class="spd-thumb-text">自定</span>
+              </div>
+              <div class="spd-name">自定义</div>
+              <div v-if="modelValue === CUSTOM_STYLE_VALUE" class="spd-check">✓</div>
+            </div>
+          </div>
+        </template>
+
+        <div v-if="showCustomEditor" class="spd-custom-editor">
+          <el-input
+            v-model="customDraft"
+            type="textarea"
+            :rows="4"
+            maxlength="500"
+            show-word-limit
+            placeholder="描述画面风格，例如：赛博朋克水墨，霓虹灯映在宣纸上…"
+          />
+          <div class="spd-custom-actions">
+            <el-button @click="showCustomEditor = false">取消</el-button>
+            <el-button type="primary" @click="confirmCustom">确认</el-button>
+          </div>
+        </div>
+
+        <div v-if="filteredGroups.length === 0 && !showCustomSection" class="spd-empty">没有匹配的风格</div>
       </div>
 
       <template #footer>
@@ -81,20 +115,45 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { ArrowDown, CircleClose, Search } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { CUSTOM_STYLE_VALUE, getStyleLabel } from '@/constants/styleOptions'
+
+const CUSTOM_SWATCH = 'linear-gradient(135deg,#5b8def,#2dd4bf)'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
+  customPrompt: { type: String, default: '' },
   options: { type: Array, default: () => [] },
   placeholder: { type: String, default: '图片/视频风格' },
 })
 
-const emit = defineEmits(['update:modelValue', 'change'])
+const emit = defineEmits(['update:modelValue', 'update:customPrompt', 'change'])
 
 const visible = ref(false)
 const search = ref('')
+const showCustomEditor = ref(false)
+const customDraft = ref('')
 
 const allOptions = computed(() => props.options.flatMap((g) => g.options))
 const selectedOption = computed(() => allOptions.value.find((o) => o.value === props.modelValue) || null)
+
+const isCustom = computed(() => props.modelValue === CUSTOM_STYLE_VALUE)
+
+const displayLabel = computed(() => {
+  if (isCustom.value) return '自定义'
+  return selectedOption.value?.label || ''
+})
+
+const triggerSwatchStyle = computed(() => {
+  if (isCustom.value) return { background: CUSTOM_SWATCH }
+  return swatchStyle(selectedOption.value)
+})
+
+const showCustomSection = computed(() => {
+  const kw = search.value.trim().toLowerCase()
+  if (!kw) return true
+  return '自定义'.includes(kw) || 'custom'.includes(kw) || kw.includes('自定义') || kw.includes('custom')
+})
 
 const filteredGroups = computed(() => {
   const kw = search.value.trim().toLowerCase()
@@ -110,18 +169,43 @@ function thumbStyle(opt) {
 }
 
 function swatchStyle(opt) {
-  return { background: opt.color || 'linear-gradient(135deg,#667eea,#764ba2)' }
+  return { background: opt?.color || 'linear-gradient(135deg,#667eea,#764ba2)' }
+}
+
+function openCustomEditor() {
+  customDraft.value = props.customPrompt || ''
+  showCustomEditor.value = true
+}
+
+function confirmCustom() {
+  const text = customDraft.value.trim()
+  if (!text) {
+    ElMessage.warning('请填写画风描述')
+    return
+  }
+  emit('update:customPrompt', text)
+  emit('update:modelValue', CUSTOM_STYLE_VALUE)
+  emit('change', CUSTOM_STYLE_VALUE)
+  showCustomEditor.value = false
+  visible.value = false
 }
 
 function select(opt) {
   emit('update:modelValue', opt.value)
   emit('change', opt.value)
+  showCustomEditor.value = false
   visible.value = false
 }
 
-function clearAndClose() {
+function clearSelection() {
   emit('update:modelValue', '')
+  emit('update:customPrompt', '')
   emit('change', '')
+}
+
+function clearAndClose() {
+  clearSelection()
+  showCustomEditor.value = false
   visible.value = false
 }
 </script>
@@ -281,6 +365,20 @@ function clearAndClose() {
   padding: 40px;
   color: var(--el-text-color-placeholder);
   font-size: 13px;
+}
+.spd-custom-editor {
+  margin-top: 4px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color-lighter);
+}
+.spd-custom-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
 }
 </style>
 

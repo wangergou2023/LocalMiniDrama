@@ -50,6 +50,10 @@ function list(db, query) {
   return { items: rows.map(rowToItem), total, page, pageSize };
 }
 
+function hasProviderTaskId(r) {
+  return !!(r && r.provider_task_id && String(r.provider_task_id).trim());
+}
+
 function rowToItem(r) {
   return {
     id: r.id,
@@ -68,6 +72,8 @@ function rowToItem(r) {
     created_at: r.created_at,
     updated_at: r.updated_at,
     completed_at: r.completed_at,
+    /** 失败且已有上游任务 ID 时可「继续查询」，不暴露原始 provider_task_id */
+    can_resume_poll: r.status === 'failed' && hasProviderTaskId(r),
   };
 }
 
@@ -293,7 +299,7 @@ async function pollProviderTaskAndFinalize(db, log, videoGenId, row, rowForAspec
 }
 
 /**
- * 服务重启后恢复对厂商异步任务的轮询（需已持久化 provider_task_id）
+ * 恢复对厂商异步任务的轮询（需已持久化 provider_task_id；调用方须先将记录置为 processing）
  */
 async function resumePollForVideoGeneration(db, log, videoGenId) {
   if (activeVideoPolls.has(videoGenId)) {
@@ -314,7 +320,7 @@ async function resumePollForVideoGeneration(db, log, videoGenId) {
   }
 
   activeVideoPolls.add(videoGenId);
-  log.info('Resuming video generation poll after restart', {
+  log.info('Resuming video generation poll', {
     videoGenId,
     provider_task_id: providerTaskId,
   });
@@ -334,6 +340,70 @@ async function resumePollForVideoGeneration(db, log, videoGenId) {
   } finally {
     activeVideoPolls.delete(videoGenId);
   }
+}
+
+/**
+ * 失败记录「继续查询」：复用 provider_task_id 再轮询，不重新提交上游任务。
+ * @returns {{ ok: true, item: object } | { ok: false, status: number, error: string }}
+ */
+function resumeFailedVideoPoll(db, log, videoGenId) {
+  const id = Number(videoGenId);
+  const row = db.prepare('SELECT * FROM video_generations WHERE id = ? AND deleted_at IS NULL').get(id);
+  if (!row) return { ok: false, status: 404, error: '记录不存在' };
+  if (row.status === 'processing' && hasProviderTaskId(row)) {
+    if (!activeVideoPolls.has(id)) {
+      setImmediate(() => {
+        resumePollForVideoGeneration(db, log, id).catch((e) => {
+          log.error('resumeFailedVideoPoll reattach unhandled', { videoGenId: id, error: e.message });
+        });
+      });
+    }
+    return { ok: true, item: getById(db, id) };
+  }
+  if (row.status !== 'failed') {
+    return { ok: false, status: 400, error: '仅失败的视频任务可继续查询' };
+  }
+  if (!hasProviderTaskId(row)) {
+    return { ok: false, status: 400, error: '缺少厂商任务 ID，无法继续查询，请重新生成' };
+  }
+
+  const now = new Date().toISOString();
+  try {
+    db.prepare(
+      'UPDATE video_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?'
+    ).run('processing', '', now, id);
+  } catch (e) {
+    if ((e.message || '').includes('error_msg')) {
+      db.prepare('UPDATE video_generations SET status = ?, updated_at = ? WHERE id = ?').run(
+        'processing',
+        now,
+        id
+      );
+    } else throw e;
+  }
+
+  let taskId = row.task_id;
+  if (!taskId) {
+    const task = taskService.createTask(db, log, 'video_generation', String(row.drama_id || ''));
+    taskId = task.id;
+    db.prepare('UPDATE video_generations SET task_id = ?, updated_at = ? WHERE id = ?').run(taskId, now, id);
+  }
+  taskService.updateTaskStatus(db, taskId, 'processing', 10, '继续查询上游任务…');
+  try {
+    db.prepare('UPDATE async_tasks SET error = NULL WHERE id = ?').run(taskId);
+  } catch (_) {}
+
+  log.info('Resume failed video poll requested', {
+    videoGenId: id,
+    provider_task_id: String(row.provider_task_id).trim(),
+    task_id: taskId,
+  });
+  setImmediate(() => {
+    resumePollForVideoGeneration(db, log, id).catch((e) => {
+      log.error('resumeFailedVideoPoll unhandled', { videoGenId: id, error: e.message });
+    });
+  });
+  return { ok: true, item: getById(db, id) };
 }
 
 /** 启动时恢复 processing 视频任务；无 provider_task_id 的视为中断 */
@@ -523,4 +593,6 @@ module.exports = {
   deleteById,
   processVideoGeneration,
   resumeProcessingVideoGenerations,
+  resumeFailedVideoPoll,
+  resumePollForVideoGeneration,
 };

@@ -110,9 +110,11 @@
             </div>
             <div
               class="nav-sub-item"
+              :class="{ 'nav-sub-item--generating': isSbGenerating(sb.id) }"
               :title="sb.title || '分镜 ' + (i + 1)"
               @click="scrollToAnchor('sb-' + sb.id)"
             >
+              <span v-if="isSbGenerating(sb.id)" class="nav-sub-spin" title="生成中..."><el-icon class="is-loading"><Loading /></el-icon></span>
               {{ i + 1 }}. {{ sb.title || '分镜' }}
             </div>
           </template>
@@ -3964,6 +3966,15 @@ function getGeneratingSetsBag() {
     generatingSbLastImageIds,
     generatingSbVideoIds,
   }
+}
+
+/** 该分镜是否正在生成（分镜图/首尾帧/视频/全能分镜），用于左导航的进度指示 */
+function isSbGenerating(sbId) {
+  return generatingSbImageIds.has(sbId)
+    || generatingSbFirstImageIds.has(sbId)
+    || generatingSbLastImageIds.has(sbId)
+    || generatingSbVideoIds.has(sbId)
+    || generatingUniversalSegmentIds.has(sbId)
 }
 
 function buildSbGenMeta(sb, resourceType, labelPrefix) {
@@ -8267,6 +8278,7 @@ async function runRepairPipeline() {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onPreviewKeydown)
+  if (taskSyncTimer) clearInterval(taskSyncTimer)
 })
 
 function applyRouteToStore() {
@@ -8292,10 +8304,15 @@ function applyRouteToStore() {
   }
 }
 
+let taskSyncTimer = null
 onMounted(async () => {
   window.addEventListener('keydown', onPreviewKeydown)
   loadPipelineConcurrency()
   applyRouteToStore()
+  // 周期同步运行中的生成任务，让左导航/任务面板实时显示进度（含导演助手 API 新建的任务）
+  taskSyncTimer = setInterval(() => {
+    if (currentEpisodeId.value) recoverAndSyncEpisodeTasks(currentEpisodeId.value)
+  }, 4000)
 })
 
 watch(() => route.params.id, () => {
@@ -8988,6 +9005,16 @@ html.light .nav-sub-list { background: rgba(99,102,241,0.03); }
 html.light .nav-sub-item { color: #9ca3af; }
 .nav-sub-item:hover { color: #d4d4d8; background: rgba(255,255,255,0.04); }
 html.light .nav-sub-item:hover { color: #1e1b4b; background: rgba(99,102,241,0.06); }
+.nav-sub-item--generating { color: #a1a1aa; }
+html.light .nav-sub-item--generating { color: #6b7280; }
+.nav-sub-item--generating:hover { color: #e4e4e7; }
+.nav-sub-spin {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-right: 5px;
+  color: #6366f1;
+}
+.nav-sub-spin .el-icon { font-size: 11px; }
 
 .main {
   margin-left: 180px;

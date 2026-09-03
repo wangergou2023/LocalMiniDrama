@@ -260,8 +260,8 @@ function _doImport(db, storagePath, files, data, d, title, metaStr, now, log) {
     if (!episodeId) continue;
 
     for (const sb of (ep.storyboards || [])) {
-      const sbAudioPath = saveMediaFile(storagePath, projectDir, 'audio', files, sb.audio_file, 'sb_audio_imp');
-      const sbNarrationAudioPath = saveMediaFile(storagePath, projectDir, 'audio', files, sb.narration_audio_file, 'sb_narr_audio_imp');
+      const sbAudioPath = saveMediaFile(storagePath, projectDir, 'audio', files, sb.audio_file, 'shot_audio_imp');
+      const sbNarrationAudioPath = saveMediaFile(storagePath, projectDir, 'audio', files, sb.narration_audio_file, 'shot_narr_audio_imp');
 
       // 还原 characters：从导出时记录的下标映射回新 ID
       const charIndices = Array.isArray(sb.character_indices) ? sb.character_indices : [];
@@ -365,7 +365,7 @@ function _doImport(db, storagePath, files, data, d, title, metaStr, now, log) {
       const genOldToNew = new Map(); // original_id -> {newId, localPath}
       if (Array.isArray(sb.image_generations) && sb.image_generations.length > 0) {
         for (const gen of sb.image_generations) {
-          const genLocalPath = saveMediaFile(storagePath, projectDir, 'images', files, gen.zip_file || gen.file, 'sb_imp_gen');
+          const genLocalPath = saveMediaFile(storagePath, projectDir, 'images', files, gen.zip_file || gen.file, 'shot_imp_gen');
           if (genLocalPath) {
             const genInfo = db.prepare(
               `INSERT INTO image_generations (drama_id, storyboard_id, provider, prompt, negative_prompt, model, frame_type, size, quality, status, error_msg, local_path, created_at, updated_at, completed_at)
@@ -395,7 +395,7 @@ function _doImport(db, storagePath, files, data, d, title, metaStr, now, log) {
         }
       } else {
         // 老版兼容：仅单张 image_file（导入后只有这一个历史图，首尾帧绑定丢失是旧行为）
-        const sbImagePath = saveMediaFile(storagePath, projectDir, 'images', files, sb.image_file, 'sb_imp');
+        const sbImagePath = saveMediaFile(storagePath, projectDir, 'images', files, sb.image_file, 'shot_imp');
         if (sbImagePath) {
           db.prepare(
             `INSERT INTO image_generations (drama_id, storyboard_id, provider, prompt, status, local_path, created_at, updated_at)

@@ -124,7 +124,7 @@ function exportDrama(db, cfg, log, dramaId) {
     const sbId = Number(sbIdStr);
     for (const ig of igs) {
       if (!ig.local_path) continue;
-      const zipPath = `media/storyboards/sb_${sbId}_gen_${ig.id}${extOf(ig.local_path)}`;
+      const zipPath = `media/storyboards/shot_${sbId}_gen_${ig.id}${extOf(ig.local_path)}`;
       imageFilesToPack.push({ localRelPath: ig.local_path, zipPath });
     }
   }
@@ -224,14 +224,14 @@ function exportDrama(db, cfg, log, dramaId) {
           const igsForThis = allImagesBySb[sb.id] || [];
           // 兼容：仍提供 image_file（指向首帧或最新一张），旧版导入器可继续工作
           let mainIg = igsForThis.find(g => g.id === sb.first_frame_image_id) || igsForThis[igsForThis.length - 1];
-          const sbImageFile = mainIg ? `media/storyboards/sb_${sb.id}_gen_${mainIg.id}${extOf(mainIg.local_path)}` : null;
+          const sbImageFile = mainIg ? `media/storyboards/shot_${sb.id}_gen_${mainIg.id}${extOf(mainIg.local_path)}` : null;
           const vg = videosBySb[sb.id];
-          const sbVideoFile = vg && vg.local_path ? `media/videos/sb_${sb.id}${extOf(vg.local_path)}` : null;
+          const sbVideoFile = vg && vg.local_path ? `media/videos/shot_${sb.id}${extOf(vg.local_path)}` : null;
           const sbAudioFile = sb.audio_local_path
-            ? `media/audio/sb_${sb.id}${extOf(sb.audio_local_path)}`
+            ? `media/audio/shot_${sb.id}${extOf(sb.audio_local_path)}`
             : null;
           const sbNarrationAudioFile = sb.narration_audio_local_path
-            ? `media/audio/sb_${sb.id}_narration${extOf(sb.narration_audio_local_path)}`
+            ? `media/audio/shot_${sb.id}_narration${extOf(sb.narration_audio_local_path)}`
             : null;
 
           // characters: 存储角色在导出列表中的下标（而非原 ID），方便跨项目恢复
@@ -307,7 +307,7 @@ function exportDrama(db, cfg, log, dramaId) {
               created_at: ig.created_at || null,
               updated_at: ig.updated_at || null,
               completed_at: ig.completed_at || null,
-              zip_file: `media/storyboards/sb_${sb.id}_gen_${ig.id}${extOf(ig.local_path)}`,
+              zip_file: `media/storyboards/shot_${sb.id}_gen_${ig.id}${extOf(ig.local_path)}`,
             })),
             // 首尾帧提示词编辑器保存的专业提示词（含 layout）
             frame_prompts: framePromptsBySb[sb.id] || [],
@@ -389,7 +389,7 @@ function exportDrama(db, cfg, log, dramaId) {
     if (vg.local_path) {
       const abs = localPathToAbs(storagePath, vg.local_path);
       const buf = safeReadFile(abs);
-      if (buf) zip.addFile(`media/videos/sb_${sbId}${extOf(vg.local_path)}`, buf);
+      if (buf) zip.addFile(`media/videos/shot_${sbId}${extOf(vg.local_path)}`, buf);
     }
   }
 
@@ -399,12 +399,12 @@ function exportDrama(db, cfg, log, dramaId) {
       if (sb.audio_local_path) {
         const abs = localPathToAbs(storagePath, sb.audio_local_path);
         const buf = safeReadFile(abs);
-        if (buf) zip.addFile(`media/audio/sb_${sb.id}${extOf(sb.audio_local_path)}`, buf);
+        if (buf) zip.addFile(`media/audio/shot_${sb.id}${extOf(sb.audio_local_path)}`, buf);
       }
       if (sb.narration_audio_local_path) {
         const abs = localPathToAbs(storagePath, sb.narration_audio_local_path);
         const buf = safeReadFile(abs);
-        if (buf) zip.addFile(`media/audio/sb_${sb.id}_narration${extOf(sb.narration_audio_local_path)}`, buf);
+        if (buf) zip.addFile(`media/audio/shot_${sb.id}_narration${extOf(sb.narration_audio_local_path)}`, buf);
       }
     }
   }

@@ -562,7 +562,7 @@
                       :class="{ 'asset-cover--clickable': hasAssetImage(char), 'asset-cover--dragover': dragOverResourceKey === 'char-' + char.id }"
                       role="button"
                       tabindex="0"
-                      @click="hasAssetImage(char) && openImagePreview(assetImageUrl(char))"
+                      @click="hasAssetImage(char) && openImagePreview(assetImageUrl(char), buildCharacterGallery())"
                       @dragover="onResourceDragOver($event, 'character', char.id)"
                       @dragleave="onResourceDragLeave($event, 'char-' + char.id)"
                       @drop="onResourceDrop($event, 'character', char.id)"
@@ -576,7 +576,7 @@
                     <div v-if="parseExtraImages(char).length" class="extra-images-strip">
                       <div v-for="ep in parseExtraImages(char)" :key="ep" class="extra-thumb" :title="'点击设为主图（悬停左上角可放大预览）'">
                         <img :src="localPathToUrl(ep)" alt="" @click="onSetPrimaryImage('character', char, ep)" />
-                        <button class="thumb-preview-btn" title="放大预览" @click.stop="openImagePreview(localPathToUrl(ep))">
+                        <button class="thumb-preview-btn" title="放大预览" @click.stop="openImagePreview(localPathToUrl(ep), buildCharacterGallery())">
                           <el-icon :size="10"><ZoomIn /></el-icon>
                         </button>
                         <button class="extra-thumb-remove" title="移除" @click.stop="onRemoveExtraImage('character', char, ep)">×</button>
@@ -657,7 +657,7 @@
                       :class="{ 'asset-cover--clickable': hasAssetImage(prop), 'asset-cover--dragover': dragOverResourceKey === 'prop-' + prop.id }"
                       role="button"
                       tabindex="0"
-                      @click="hasAssetImage(prop) && openImagePreview(assetImageUrl(prop))"
+                      @click="hasAssetImage(prop) && openImagePreview(assetImageUrl(prop), buildPropGallery())"
                       @dragover="onResourceDragOver($event, 'prop', prop.id)"
                       @dragleave="onResourceDragLeave($event, 'prop-' + prop.id)"
                       @drop="onResourceDrop($event, 'prop', prop.id)"
@@ -670,7 +670,7 @@
                     <div v-if="parseExtraImages(prop).length" class="extra-images-strip">
                       <div v-for="ep in parseExtraImages(prop)" :key="ep" class="extra-thumb" title="点击设为主图（悬停左上角可放大预览）">
                         <img :src="localPathToUrl(ep)" alt="" @click="onSetPrimaryImage('prop', prop, ep)" />
-                        <button class="thumb-preview-btn" title="放大预览" @click.stop="openImagePreview(localPathToUrl(ep))">
+                        <button class="thumb-preview-btn" title="放大预览" @click.stop="openImagePreview(localPathToUrl(ep), buildPropGallery())">
                           <el-icon :size="10"><ZoomIn /></el-icon>
                         </button>
                         <button class="extra-thumb-remove" title="移除" @click.stop="onRemoveExtraImage('prop', prop, ep)">×</button>
@@ -758,7 +758,7 @@
                       :class="{ 'asset-cover--clickable': hasAssetImage(scene), 'asset-cover--dragover': dragOverResourceKey === 'scene-' + scene.id }"
                       role="button"
                       tabindex="0"
-                      @click="hasAssetImage(scene) && openImagePreview(assetImageUrl(scene))"
+                      @click="hasAssetImage(scene) && openImagePreview(assetImageUrl(scene), buildSceneGallery())"
                       @dragover="onResourceDragOver($event, 'scene', scene.id)"
                       @dragleave="onResourceDragLeave($event, 'scene-' + scene.id)"
                       @drop="onResourceDrop($event, 'scene', scene.id)"
@@ -771,7 +771,7 @@
                     <div v-if="parseExtraImages(scene).length" class="extra-images-strip">
                       <div v-for="ep in parseExtraImages(scene)" :key="ep" class="extra-thumb" title="点击设为主图（悬停左上角可放大预览）">
                         <img :src="localPathToUrl(ep)" alt="" @click="onSetPrimaryImage('scene', scene, ep)" />
-                        <button class="thumb-preview-btn" title="放大预览" @click.stop="openImagePreview(localPathToUrl(ep))">
+                        <button class="thumb-preview-btn" title="放大预览" @click.stop="openImagePreview(localPathToUrl(ep), buildSceneGallery())">
                           <el-icon :size="10"><ZoomIn /></el-icon>
                         </button>
                         <button class="extra-thumb-remove" title="移除" @click.stop="onRemoveExtraImage('scene', scene, ep)">×</button>
@@ -1112,7 +1112,7 @@
                       :class="{ 'sb-thumb-clickable': hasAssetImage(c) }"
                       :title="c.name"
                       role="button"
-                      @click="hasAssetImage(c) && openImagePreview(assetImageUrl(c))"
+                      @click="hasAssetImage(c) && openImagePreview(assetImageUrl(c), buildCharacterGallery())"
                     >
                       <img v-if="hasAssetImage(c)" :src="assetImageUrl(c)" alt="" />
                       <span v-else class="sb-thumb-placeholder">{{ (c.name || '')[0] }}</span>
@@ -1153,7 +1153,7 @@
                       :class="{ 'sb-thumb-clickable': hasAssetImage(p) }"
                       :title="p.name"
                       role="button"
-                      @click="hasAssetImage(p) && openImagePreview(assetImageUrl(p))"
+                      @click="hasAssetImage(p) && openImagePreview(assetImageUrl(p), buildPropGallery())"
                     >
                       <img v-if="hasAssetImage(p)" :src="assetImageUrl(p)" alt="" />
                       <span v-else class="sb-thumb-placeholder">{{ (p.name || '')[0] }}</span>
@@ -1292,7 +1292,7 @@
                             :src="assetImageUrl(getSbFirstImage(sb.id))"
                             class="sb-generated-img"
                             alt=""
-                            @click="openImagePreview(assetImageUrl(getSbFirstImage(sb.id)))"
+                            @click="openImagePreview(assetImageUrl(getSbFirstImage(sb.id)), buildEpisodeImageGallery())"
                           />
                         </template>
                         <template v-else-if="sb.image_url || sb.composed_image">
@@ -1300,7 +1300,7 @@
                             :src="imageUrl(sb.composed_image || sb.image_url)"
                             class="sb-generated-img"
                             alt=""
-                            @click="openImagePreview(imageUrl(sb.composed_image || sb.image_url))"
+                            @click="openImagePreview(imageUrl(sb.composed_image || sb.image_url), buildEpisodeImageGallery())"
                           />
                         </template>
                         <template v-else>
@@ -1329,7 +1329,7 @@
                             class="sb-generated-img"
                             alt=""
                             :title="getSbLastImage(sb.id).prompt || ''"
-                            @click="openImagePreview(assetImageUrl(getSbLastImage(sb.id)))"
+                            @click="openImagePreview(assetImageUrl(getSbLastImage(sb.id)), buildEpisodeImageGallery())"
                           />
                         </template>
                         <template v-else>
@@ -1384,7 +1384,7 @@
                       class="sb-generated-img"
                       alt=""
                       :title="getSbImage(sb.id).prompt || ''"
-                      @click="openImagePreview(assetImageUrl(getSbImage(sb.id)))"
+                      @click="openImagePreview(assetImageUrl(getSbImage(sb.id)), buildEpisodeImageGallery())"
                     />
                     <div v-if="getSbImage(sb.id).prompt" class="sb-main-img-prompt">{{ getSbImage(sb.id).prompt }}</div>
                   </template>
@@ -1393,7 +1393,7 @@
                       :src="imageUrl(sb.composed_image || sb.image_url)"
                       class="sb-generated-img"
                       alt=""
-                      @click="openImagePreview(imageUrl(sb.composed_image || sb.image_url))"
+                      @click="openImagePreview(imageUrl(sb.composed_image || sb.image_url), buildEpisodeImageGallery())"
                     />
                   </template>
                   <template v-else-if="sb.error_msg || sb.errorMsg">
@@ -2630,7 +2630,7 @@
       <AIConfigContent v-if="showAiConfigDialog" />
     </el-dialog>
 
-    <!-- 图片放大预览：点击遮罩或图片关闭 -->
+    <!-- 图片放大预览：点击遮罩或图片关闭；多图时可上一张/下一张翻页 -->
     <Teleport to="body">
       <div
         v-if="previewImageUrl"
@@ -2638,6 +2638,27 @@
         @click="closeImagePreview"
       >
         <img :src="previewImageUrl" alt="" class="image-preview-img" @click.stop="closeImagePreview" />
+        <template v-if="previewList.length > 1">
+          <button
+            type="button"
+            class="image-preview-nav image-preview-nav--prev"
+            :disabled="previewIndex <= 0"
+            aria-label="上一张"
+            @click.stop="previewStep(-1)"
+          >
+            <el-icon><ArrowLeft /></el-icon>
+          </button>
+          <button
+            type="button"
+            class="image-preview-nav image-preview-nav--next"
+            :disabled="previewIndex >= previewList.length - 1"
+            aria-label="下一张"
+            @click.stop="previewStep(1)"
+          >
+            <el-icon><ArrowRight /></el-icon>
+          </button>
+          <span class="image-preview-counter">{{ previewIndex + 1 }} / {{ previewList.length }}</span>
+        </template>
       </div>
     </Teleport>
   </div>
@@ -3619,11 +3640,61 @@ function hasAssetImage(item) {
 function getSelectedStyle() {
   return getSelectedStylePrompt()
 }
-function openImagePreview(url) {
-  previewImageUrl.value = url
+const previewList = ref([])
+const previewIndex = ref(0)
+/** 把 URL 去重压进画廊列表 */
+function pushGalleryUrl(list, url) {
+  if (url && !list.includes(url)) list.push(url)
 }
+/** 构建当前剧集内所有分镜图的有序 URL（点图后可用上一张/下一张翻阅） */
+function buildEpisodeImageGallery() {
+  const list = []
+  const sbs = store.storyboards || []
+  for (const sb of sbs) {
+    pushGalleryUrl(list, assetImageUrl(getSbImage(sb.id)))
+    const composed = sb.composed_image || sb.image_url
+    if (composed) pushGalleryUrl(list, imageUrl(composed))
+    pushGalleryUrl(list, assetImageUrl(getSbFirstImage(sb.id)))
+    pushGalleryUrl(list, assetImageUrl(getSbLastImage(sb.id)))
+    for (const st of getStripItems(sb.id)) pushGalleryUrl(list, st.src || assetImageUrl(st.img))
+  }
+  return list
+}
+function openImagePreview(url, gallery) {
+  previewImageUrl.value = url
+  const g = Array.isArray(gallery) && gallery.length ? gallery : [url]
+  previewList.value = g
+  const idx = g.findIndex((u) => u === url)
+  previewIndex.value = idx >= 0 ? idx : 0
+}
+/** 构建角色/道具/场景图画廊：主图 + 额外参考图，按 store 顺序排列 */
+function buildAssetGallery(list) {
+  const out = []
+  for (const item of (list || [])) {
+    pushGalleryUrl(out, assetImageUrl(item))
+    for (const ep of parseExtraImages(item)) pushGalleryUrl(out, localPathToUrl(ep))
+  }
+  return out
+}
+function buildCharacterGallery() { return buildAssetGallery(store.characters) }
+function buildPropGallery() { return buildAssetGallery(store.props) }
+function buildSceneGallery() { return buildAssetGallery(store.scenes) }
 function closeImagePreview() {
   previewImageUrl.value = null
+  previewList.value = []
+  previewIndex.value = 0
+}
+function previewStep(dir) {
+  if (!previewList.value.length) return
+  const n = previewList.value.length
+  previewIndex.value = (previewIndex.value + dir + n) % n
+  previewImageUrl.value = previewList.value[previewIndex.value]
+}
+function onPreviewKeydown(e) {
+  if (!previewImageUrl.value) return
+  if (e.key === 'ArrowLeft') { e.preventDefault(); previewStep(-1) }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); previewStep(1) }
+  else if (e.key === 'Escape') { closeImagePreview() }
 }
 /** 视频地址：优先 local_path（/static/），否则 video_url */
 function assetVideoUrl(item) {
@@ -8195,6 +8266,7 @@ async function runRepairPipeline() {
 
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onPreviewKeydown)
 })
 
 function applyRouteToStore() {
@@ -8221,6 +8293,7 @@ function applyRouteToStore() {
 }
 
 onMounted(async () => {
+  window.addEventListener('keydown', onPreviewKeydown)
   loadPipelineConcurrency()
   applyRouteToStore()
 })
@@ -9493,6 +9566,48 @@ html.light .section-desc { color: #6b7280; }
   object-fit: contain;
   cursor: pointer;
   pointer-events: auto;
+}
+.image-preview-nav {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10000;
+  width: 48px;
+  height: 64px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  background: rgba(24, 24, 27, 0.72);
+  color: #e4e4e7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 22px;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+.image-preview-nav:hover {
+  background: rgba(63, 63, 70, 0.85);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+.image-preview-nav:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.image-preview-nav--prev { left: 24px; }
+.image-preview-nav--next { right: 24px; }
+.image-preview-counter {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  padding: 4px 14px;
+  border-radius: 999px;
+  background: rgba(24, 24, 27, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #e4e4e7;
+  font-size: 13px;
+  user-select: none;
 }
 .asset-info { padding: 10px; }
 .asset-name { font-weight: 600; margin-bottom: 4px; color: #e4e4e7; }

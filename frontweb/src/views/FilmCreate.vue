@@ -1380,6 +1380,10 @@
                 <!-- 单主图（未勾选首尾帧） -->
                 <template v-else>
                 <div class="sb-main-image-wrap">
+                  <button class="sb-aidir-btn" title="添加到 AI 导演（可加多个一起发送）" @click.stop="aidirFromStoryboard(sb)">
+                    <el-icon :size="12"><Plus /></el-icon>
+                    <span>@AI</span>
+                  </button>
                   <template v-if="getSbImage(sb.id)">
                     <img
                       :src="assetImageUrl(getSbImage(sb.id))"
@@ -2674,6 +2678,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Setting, Plus, Minus, Sunny, Moon, MagicStick, Upload, Delete, Check, Loading, WarningFilled, User, Box, Picture, Film, VideoCamera, Document, InfoFilled, Refresh, ZoomIn, QuestionFilled, DocumentAdd, Expand, Fold, VideoPlay, Grid, Close } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { useFilmStore } from '@/stores/film'
+import { useAidirStore } from '@/stores/aidir'
 import { useGenerationTaskStore, GEN_RESOURCE } from '@/stores/generationTaskStore'
 import { syncGeneratingSetsFromStore, buildEpisodeContext, buildExtractTaskMeta, isEpisodeExtractRunning } from '@/composables/useGenerationTaskSync'
 import { dramaAPI } from '@/api/drama'
@@ -2715,6 +2720,7 @@ const route = useRoute()
 const router = useRouter()
 const store = useFilmStore()
 const genStore = useGenerationTaskStore()
+const aidir = useAidirStore()
 const { isDark, toggle: toggleTheme } = useTheme()
 const { videoResolution: storeVideoResolution } = storeToRefs(store)
 
@@ -3975,6 +3981,29 @@ function isSbGenerating(sbId) {
     || generatingSbLastImageIds.has(sbId)
     || generatingSbVideoIds.has(sbId)
     || generatingUniversalSegmentIds.has(sbId)
+}
+
+/**
+ * 分镜图片旁的「+@」快捷按钮：把该分镜作为一个引用（类似添加文件）挂到 AI 导演输入框上方，
+ * 可连续添加多个，最后连同文字一起发送。agent 收到 refs 精确定位并处理这些分镜。
+ */
+function aidirFromStoryboard(sb) {
+  const sbId = sb?.id
+  if (!sbId) return
+  const num = sb?.storyboard_number ?? sb?.id
+  const title = sb?.title || sb?.segment_title || `分镜${num}`
+  const img = getSbImage(sbId)
+  const imgUrl = img ? assetImageUrl(img) : (sb?.composed_image ? imageUrl(sb.composed_image) : '')
+  const prompt = (img?.prompt || sb?.image_prompt || '').trim()
+  aidir.addRef({
+    type: 'storyboard',
+    id: sbId,
+    label: `#${num} ${title}`,
+    title: `${title} (分镜#${num})`,
+    img: imgUrl,
+    prefix: '',
+    prompt,
+  })
 }
 
 function buildSbGenMeta(sb, resourceType, labelPrefix) {
@@ -10413,7 +10442,32 @@ html.light .sb-ctrl-mode-btn.el-button:hover {
   align-items: center;
   justify-content: center;
   min-height: 80px;
+  position: relative;
 }
+/* 图片右上角「@AI」快捷按钮：把该分镜注入 AI 导演助手 */
+.sb-aidir-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: #fff;
+  background: rgba(75, 123, 255, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transition: background 0.15s, transform 0.1s;
+  user-select: none;
+}
+.sb-aidir-btn:hover { background: rgba(75, 123, 255, 1); transform: translateY(-1px); }
+.sb-aidir-btn:active { transform: scale(0.96); }
 /* 主图下方提示词预览 */
 .sb-main-img-prompt {
   width: 100%;

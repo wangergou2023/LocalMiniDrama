@@ -34,23 +34,35 @@
     <!-- 悬浮药丸输入框 -->
     <div class="aidir-pill" :class="{ active: expanded }">
       <span class="aidir-avatar">🤖</span>
-      <input
-        v-model="text"
-        class="aidir-input"
-        placeholder="指挥 AI 导演，回车发送，如：给第3幕每镜出图，有瑕疵的自己重生成"
-        @keydown.enter.prevent="send"
-        :disabled="busy"
-      />
+      <div class="aidir-pill-main">
+        <!-- @引用芯片区（类添加附件）：用户从图片/分镜处 +@ 累积 -->
+        <div v-if="aidirRefCount" class="aidir-refs">
+          <span v-for="r in aidirRefs" :key="r.key" class="aidir-ref">
+            <img v-if="r.img" :src="r.img" class="aidir-ref-thumb" alt="" />
+            <span class="aidir-ref-label" :title="r.title">{{ r.prefix || '' }}{{ r.label || r.title }}</span>
+            <button class="aidir-ref-x" @click="removeRef(r.key)" title="移除">×</button>
+          </span>
+        </div>
+        <input
+          ref="inputRef"
+          v-model="text"
+          class="aidir-input"
+          :placeholder="aidirRefCount ? '已引用 ' + aidirRefCount + ' 项，补充指令后回车发送' : '指挥 AI 导演，回车发送，如：给第3幕每镜出图，有瑕疵的自己重生成'"
+          @keydown.enter.prevent="send"
+          :disabled="busy"
+        />
+      </div>
       <button v-if="busy" class="aidir-btn stop" @click="stop" title="停止">■</button>
-      <button class="aidir-btn send" :disabled="busy || !text.trim()" @click="send">↑</button>
+      <button class="aidir-btn send" :disabled="busy || (!text.trim() && aidirRefCount === 0)" @click="send">↑</button>
       <button class="aidir-btn ghost" @click="expanded = !expanded" :title="expanded ? '收起日志' : '展开日志'">{{ expanded ? '▾' : '▴' }}</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, watch, computed } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useAidirStore } from '@/stores/aidir'
 
 const text = ref('')
 const messages = ref<any[]>([])
@@ -59,7 +71,14 @@ const expanded = ref(false)
 const awaitingConfirm = ref(false)
 const confirmText = ref('')
 const bodyRef = ref<HTMLElement | null>(null)
+const inputRef = ref<HTMLInputElement | null>(null)
 let aborter: AbortController | null = null
+
+const aidirStore = useAidirStore()
+const aidirRefs = aidirStore.refs // 响应式引用列表（#加文件形式）
+const aidirRefCount = computed(() => aidirRefs.length)
+
+function removeRef(key: string) { aidirStore.removeRef(key) }
 
 function push(m: any) { messages.value.push(m); scrollBottom() }
 function scrollBottom() { nextTick(() => { if (bodyRef.value) bodyRef.value.scrollTop = bodyRef.value.scrollHeight }) }
@@ -77,14 +96,15 @@ async function readSSE(res: Response, onEvent: (ev: any) => void) {
 }
 
 async function send() {
-  const q = text.value.trim(); if (!q || busy.value) return
-  text.value = ''; busy.value = true; expanded.value = true
-  push({ role: 'user', content: q })
+  const q = text.value.trim(); if (!q && aidirRefs.length === 0) return
+  const refsPayload = aidirRefs.map((r: any) => ({ type: r.type, id: r.id, title: r.title, num: r.num, img: r.img, prompt: r.prompt, extra: r.extra }))
+  text.value = ''; aidirStore.clearRefs(); busy.value = true; expanded.value = true
+  push({ role: 'user', content: q, refs: refsPayload })
   const history = messages.value.filter((m: any) => m.content).map((m: any) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))
   aborter = new AbortController()
   let cur: any = null
   try {
-    const res = await fetch('/api/v1/agent/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: history }), signal: aborter.signal })
+    const res = await fetch('/api/v1/agent/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: history, refs: refsPayload }), signal: aborter.signal })
     if (!res.ok) { const t = await res.text().catch(() => ''); push({ role: 'assistant', content: `后端未就绪: HTTP ${res.status} ${t.slice(0, 100)}` }); return }
     await readSSE(res, (ev) => {
       if (ev.type === 'message') { if (!cur) { cur = { role: 'assistant', content: '' }; push(cur) } cur.content += ev.text || ''; scrollBottom() }
@@ -140,6 +160,25 @@ async function confirmYes() {
 }
 .aidir-pill.active { border-color: var(--el-color-primary, #4b7bff); box-shadow: 0 8px 24px rgba(75,123,255,.18); }
 .aidir-avatar { font-size: 16px; user-select: none; }
+.aidir-pill-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+/* @引用芯片区（类添加附件） */
+.aidir-refs { display: flex; flex-wrap: wrap; gap: 4px; max-height: 52px; overflow-y: auto; }
+.aidir-ref {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 4px 2px 2px; border-radius: 6px;
+  background: var(--bg-inner, #1c1c1e); border: 1px solid var(--border-color, #27272a);
+  font-size: 11px; color: var(--text-primary, #e4e4e7); max-width: 180px;
+}
+.aidir-ref-thumb {
+  width: 20px; height: 20px; border-radius: 4px; object-fit: cover; flex-shrink: 0;
+  background: var(--bg-hover, #27272a);
+}
+.aidir-ref-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.aidir-ref-x {
+  background: none; border: none; color: var(--border-muted, #3f3f46); cursor: pointer;
+  font-size: 13px; line-height: 1; padding: 0 2px; flex-shrink: 0; border-radius: 3px;
+}
+.aidir-ref-x:hover { color: #e74c3c; background: rgba(231,76,60,.12); }
 .aidir-input {
   flex: 1; min-width: 0; height: 32px; padding: 0; border: none; outline: none;
   background: transparent; color: var(--text-primary, #e4e4e7); font-size: 13px;

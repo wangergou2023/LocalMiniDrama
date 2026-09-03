@@ -63,14 +63,25 @@ async function callTool(db, log, name, args) {
   }
 }
 
-function buildUserPromptForState(history) {
+function buildRefsContext(refs) {
+  if (!Array.isArray(refs) || refs.length === 0) return '';
+  const lines = refs.map((r, i) => {
+    const t = (r && (r.title || r.label)) || `引用${i + 1}`;
+    const id = (r && r.id) != null ? `id=${r.id}` : '';
+    return `  ${i + 1}. ${t} ${id}`.trim();
+  });
+  return `\n用户通过「@引用」挂载了以下对象（类似上传的附件，请优先处理这些，可对每个调用对应工具）:\n${lines.join('\n')}`;
+}
+
+function buildUserPromptForState(history, refs) {
   // 把最近对话压缩成系统提示(agent 职责说明)
   const lastUser = [...history].reverse().find(m => m.role === 'user');
+  const refCtx = buildRefsContext(refs);
   return `你是「AI 导演」助手,负责用工具驱动 LocalMiniDrama 生产短剧。规则:
 1. 用户要"出图/生成图片",应调用 generate_all_storyboard_images(按剧集)或 generate_storyboard_image(单分镜)。
 2. 生成后可选调用 qc_storyboard_image 质检;质检 ok=false 时,建议再生成(你可以直接再调 generate_storyboard_image)。
 3. 涉及视频(MiniMax)的操作需先向用户确认,这里仅提示"需用户确认",不要触发。
-4. 使用中文简洁回复。用户刚说的: ${lastUser ? lastUser.content : '(无)'}`;
+4. 使用中文简洁回复。用户刚说的: ${lastUser ? lastUser.content : '(无)'}${refCtx}`;
 }
 
 // 主循环:用文本模型跑工具调用,SSE 输出事件
@@ -88,7 +99,7 @@ async function chat(db, log, cfg, req, res) {
   const apiKey = config.api_key || '';
 
   let messages = [
-    { role: 'system', content: buildUserPromptForState(req.body?.messages || []) },
+    { role: 'system', content: buildUserPromptForState(req.body?.messages || [], req.body?.refs) },
     ...(req.body?.messages || []).filter(m => m.role === 'user' || m.role === 'assistant').map(m => ({ role: m.role, content: m.content })).slice(-12),
   ];
 

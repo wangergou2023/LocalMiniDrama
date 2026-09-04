@@ -573,6 +573,10 @@
                       <div v-else-if="char.error_msg || char.errorMsg" class="cover-placeholder error" :title="char.error_msg || char.errorMsg">{{ char.error_msg || char.errorMsg }}</div>
                       <div v-else class="cover-placeholder">暂无图</div>
                       <div v-if="dragOverResourceKey === 'char-' + char.id" class="asset-cover-drop-hint">松开上传</div>
+                      <button class="aidir-asset-btn" title="添加到 AI 导演（可加多个一起发送）" @click.stop="aidirFromAsset('character', char)">
+                        <el-icon :size="12"><Plus /></el-icon>
+                        <span>@AI</span>
+                      </button>
                     </div>
                     <!-- 额外参考图条 -->
                     <div v-if="parseExtraImages(char).length" class="extra-images-strip">
@@ -668,6 +672,10 @@
                       <div v-else-if="prop.error_msg || prop.errorMsg" class="cover-placeholder error" :title="prop.error_msg || prop.errorMsg">{{ prop.error_msg || prop.errorMsg }}</div>
                       <div v-else class="cover-placeholder">暂无图</div>
                       <div v-if="dragOverResourceKey === 'prop-' + prop.id" class="asset-cover-drop-hint">松开上传</div>
+                      <button class="aidir-asset-btn" title="添加到 AI 导演（可加多个一起发送）" @click.stop="aidirFromAsset('prop', prop)">
+                        <el-icon :size="12"><Plus /></el-icon>
+                        <span>@AI</span>
+                      </button>
                     </div>
                     <div v-if="parseExtraImages(prop).length" class="extra-images-strip">
                       <div v-for="ep in parseExtraImages(prop)" :key="ep" class="extra-thumb" title="点击设为主图（悬停左上角可放大预览）">
@@ -769,6 +777,10 @@
                       <div v-else-if="scene.error_msg || scene.errorMsg" class="cover-placeholder error" :title="scene.error_msg || scene.errorMsg">{{ scene.error_msg || scene.errorMsg }}</div>
                       <div v-else class="cover-placeholder">暂无图</div>
                       <div v-if="dragOverResourceKey === 'scene-' + scene.id" class="asset-cover-drop-hint">松开上传</div>
+                      <button class="aidir-asset-btn" title="添加到 AI 导演（可加多个一起发送）" @click.stop="aidirFromAsset('scene', scene)">
+                        <el-icon :size="12"><Plus /></el-icon>
+                        <span>@AI</span>
+                      </button>
                     </div>
                     <div v-if="parseExtraImages(scene).length" class="extra-images-strip">
                       <div v-for="ep in parseExtraImages(scene)" :key="ep" class="extra-thumb" title="点击设为主图（悬停左上角可放大预览）">
@@ -4003,6 +4015,27 @@ function aidirFromStoryboard(sb) {
     img: imgUrl,
     prefix: '',
     prompt,
+  })
+}
+
+/**
+ * 角色/道具/场景图片旁的「+@」快捷引用：把该资源作为引用挂到 AI 导演输入框。
+ * agent 收到 type 为 character/scene/prop 的引用时，可调用 regenerate_asset_storyboards 批量重生成该资源关联的分镜图。
+ */
+function aidirFromAsset(type, item) {
+  const id = item?.id
+  if (!id) return
+  const name = item?.name || item?.title || `${type}#${id}`
+  const imgUrl = item ? assetImageUrl(item) : ''
+  const typeLabel = type === 'character' ? '角色' : (type === 'scene' ? '场景' : '道具')
+  aidir.addRef({
+    type: type, // character / scene / prop
+    id,
+    label: `${name}`,
+    title: `${name} (${typeLabel}#${id})`,
+    img: imgUrl,
+    prefix: '',
+    prompt: (item?.prompt || item?.description || '').trim(),
   })
 }
 
@@ -10489,6 +10522,30 @@ html.light .sb-ctrl-mode-btn.el-button:hover {
 }
 .sb-aidir-btn:hover { background: rgba(75, 123, 255, 1); transform: translateY(-1px); }
 .sb-aidir-btn:active { transform: scale(0.96); }
+/* 角色/道具/场景主覆盖图 右上角 @AI 引用按钮 */
+.aidir-asset-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: #fff;
+  background: rgba(75, 123, 255, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transition: background 0.15s, transform 0.1s;
+  user-select: none;
+}
+.aidir-asset-btn:hover { background: rgba(75, 123, 255, 1); transform: translateY(-1px); }
+.aidir-asset-btn:active { transform: scale(0.96); }
 /* 主图下方提示词预览 */
 .sb-main-img-prompt {
   width: 100%;

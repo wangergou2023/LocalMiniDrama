@@ -11,6 +11,7 @@ function buildTools() {
     { type: 'function', function: { name: 'generate_storyboard_image', description: '为单个分镜生成参考图(用角色/场景/道具参考,公司网关)', parameters: { type: 'object', properties: { storyboard_id: { type: 'integer' } }, required: ['storyboard_id'] } } },
     { type: 'function', function: { name: 'generate_all_storyboard_images', description: '为剧集内所有尚无图的分镜批量/逐个生成参考图', parameters: { type: 'object', properties: { episode_id: { type: 'integer' } }, required: ['episode_id'] } } },
     { type: 'function', function: { name: 'qc_storyboard_image', description: '质检某分镜最新生成的参考图(视觉模型打分,低分说明需重生成)', parameters: { type: 'object', properties: { storyboard_id: { type: 'integer' } }, required: ['storyboard_id'] } } },
+    { type: 'function', function: { name: 'regenerate_asset_storyboards', description: '重新生成某个角色/道具/场景关联的所有分镜图(找含该资源的全部分镜,逐张重生成,可覆盖原图)', parameters: { type: 'object', properties: { asset_type: { type: 'string', enum: ['character', 'scene', 'prop'], description: '资源类型: character=角色, scene=场景, prop=道具' }, asset_id: { type: 'integer', description: '资源ID' } }, required: ['asset_type', 'asset_id'] } } },
     { type: 'function', function: { name: 'get_task', description: '查询异步任务状态', parameters: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] } } },
     { type: 'function', function: { name: 'list_tasks', description: '列出最近的异步任务', parameters: { type: 'object', properties: { limit: { type: 'integer' } } } } },
   ];
@@ -46,6 +47,37 @@ async function callTool(db, log, name, args) {
         const res = await qcService.qcImage(db, log, { image: img, prompt: ig.prompt || '' });
         return { ok: true, data: res };
       }
+      case 'regenerate_asset_storyboards': {
+        const type = String(a.asset_type || '').toLowerCase();
+        const assetId = Number(a.asset_id);
+        if (!['character', 'scene', 'prop'].includes(type) || !assetId) return { ok: false, error: 'asset_type 须为 character/scene/prop 且 asset_id 必填' };
+        // 找出关联分镜: 角色看 sb.characters(JSON), 场景看 sb.scene_id, 道具看 storyboard_props 关联表
+        let boards;
+        if (type === 'scene') {
+          boards = db.prepare("SELECT sb.id, sb.episode_id, ep.drama_id, sb.image_prompt, sb.polished_prompt FROM storyboards sb JOIN episodes ep ON ep.id=sb.episode_id WHERE sb.scene_id=? AND sb.deleted_at IS NULL ORDER BY sb.storyboard_number").all(assetId);
+        } else if (type === 'prop') {
+          boards = db.prepare("SELECT sb.id, sb.episode_id, ep.drama_id, sb.image_prompt, sb.polished_prompt FROM storyboards sb JOIN episodes ep ON ep.id=sb.episode_id JOIN storyboard_props sp ON sp.storyboard_id=sb.id WHERE sp.prop_id=? AND sb.deleted_at IS NULL ORDER BY sb.storyboard_number").all(assetId);
+        } else {
+          boards = db.prepare("SELECT sb.id, sb.episode_id, ep.drama_id, sb.image_prompt, sb.polished_prompt, sb.characters AS asset_col FROM storyboards sb JOIN episodes ep ON ep.id=sb.episode_id WHERE sb.deleted_at IS NULL ORDER BY sb.storyboard_number").all();
+          boards = boards.filter((r) => {
+            const raw = r.asset_col;
+            if (!raw) return false;
+            let arr = [];
+            try { arr = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (_) { arr = []; }
+            return arr.some((c) => Number(typeof c === 'object' && c != null ? c.id : c) === assetId);
+          });
+        }
+        if (!boards.length) return { ok: true, data: { matched: 0, submitted: 0, msg: '无关联分镜' } };
+        let submitted = 0;
+        for (const sb of boards) {
+          try {
+            const prompt = (sb.polished_prompt || sb.image_prompt || '').trim() || 'cinematic scene';
+            imageService.create(db, log, { drama_id: sb.drama_id, storyboard_id: sb.id, prompt, provider: 'openai' });
+            submitted++;
+          } catch (e) { log.warn('regen_asset skip', { id: sb.id, e: e.message }); }
+        }
+        return { ok: true, data: { matched: boards.length, submitted } };
+      }
       case 'get_task': {
         const t = db.prepare('SELECT id,type,status,progress,message,error FROM async_tasks WHERE id=?').get(String(a.task_id));
         return { ok: !!t, data: t || null };
@@ -80,8 +112,9 @@ function buildUserPromptForState(history, refs) {
   return `你是「AI 导演」助手,负责用工具驱动 LocalMiniDrama 生产短剧。规则:
 1. 用户要"出图/生成图片",应调用 generate_all_storyboard_images(按剧集)或 generate_storyboard_image(单分镜)。
 2. 生成后可选调用 qc_storyboard_image 质检;质检 ok=false 时,建议再生成(你可以直接再调 generate_storyboard_image)。
-3. 涉及视频(MiniMax)的操作需先向用户确认,这里仅提示"需用户确认",不要触发。
-4. 使用中文简洁回复。用户刚说的: ${lastUser ? lastUser.content : '(无)'}${refCtx}`;
+3. 用户引用了"角色/道具/场景"图片(type 为 character/scene/prop)并要重新生成时,调用 regenerate_asset_storyboards(asset_type, id) 批量重生成该资源关联的全部分镜图。
+4. 涉及视频(MiniMax)的操作需先向用户确认,这里仅提示"需用户确认",不要触发。
+5. 使用中文简洁回复。用户刚说的: ${lastUser ? lastUser.content : '(无)'}${refCtx}`;
 }
 
 // 主循环:用文本模型跑工具调用,SSE 输出事件

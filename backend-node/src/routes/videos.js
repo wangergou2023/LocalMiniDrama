@@ -2,6 +2,7 @@ const response = require('../response');
 const videoService = require('../services/videoService');
 const taskService = require('../services/taskService');
 const { normalizeAspectRatioForApi } = require('../services/videoClient');
+const aiClient = require('../services/aiClient');
 
 function routes(db, log) {
   return {
@@ -22,7 +23,9 @@ function routes(db, log) {
         const now = new Date().toISOString();
         const dramaId = Number(body.drama_id) || 0;
         const storyboardId = body.storyboard_id != null ? Number(body.storyboard_id) : null;
-        const provider = body.provider || 'chatfire';
+        const provider = body.provider
+          || (aiClient.getDefaultConfig(db, 'video')?.provider)
+          || 'chatfire';
         let prompt = body.prompt || '';
         const style = (body.style || '').toString().trim();
         if (style) {

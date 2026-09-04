@@ -10,6 +10,20 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
   const bodyIn = reqBody && typeof reqBody === 'object' ? reqBody : {};
   const forceWithoutReferenceImages = !!bodyIn.force_without_reference_images;
 
+  // MiniMax H3 参考图引用适配：官方 r2va 示例用「参考图N」而非「@图片N」。
+  // 判断当前视频默认配置的 provider，若是 MiniMax 则生成/润色时直接教 AI 用「参考图N」。
+  let imageRefWord = '@图片';
+  try {
+    const aiConfigService = require('./aiConfigService');
+    const vcfg = aiConfigService.listConfigs(db, 'video');
+    const activeV = (vcfg || []).filter((c) => c.is_active);
+    const def = activeV.find((c) => c.is_default) || activeV[0] || null;
+    const vp = String((def && def.provider) || '').toLowerCase();
+    if (vp === 'minimax_h3' || /minimax[-_]?h3/.test(vp)) imageRefWord = '参考图';
+  } catch (_) {}
+  // 把 /@图片(\d+)/ 里的词替换为 imageRefWord（仅 @图片 -> imageRefWord，数字保留）
+  const imgRef = (s) => String(s || '').replace(/@图片/g, imageRefWord);
+
   const sb = db.prepare(
     `SELECT id, episode_id, storyboard_number, scene_id, title, description, location, time,
       action, dialogue, narration, result, atmosphere,
@@ -469,9 +483,11 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     .filter(Boolean)
     .join('\n');
 
+  const finalPrompt = imgRef(userPrompt);
+
   return {
     ok: true,
-    userPrompt,
+    userPrompt: finalPrompt,
     durationLabel,
     durationSec,
     sbId,

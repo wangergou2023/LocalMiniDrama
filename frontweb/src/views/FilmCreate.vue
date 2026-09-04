@@ -1209,7 +1209,7 @@
                     <el-tooltip placement="top" :show-after="280" :show-arrow="false" popper-class="sb-universal-tooltip-popper">
                       <template #content>
                         <div class="sb-universal-tooltip">
-                          全能生视频链路（<strong>AI 配置 · 视频</strong> 中选接口规范：<code>kling_omni</code> 可灵 Omni，或 <code>volcengine_omni</code> 火山即梦 Seedance 2.0 多图参考；模型如 <code>kling-video-o1</code>、<code>doubao-seedance-2-0-260128</code> 等以控制台为准）：此处为提交主提示词；只要本框有内容，生视频时<strong>只</strong>发送这段，不会拼接下方「视频提示词」里的动作/对话/旁白。参考图顺序一般为：场景 → 角色（多张）→ 物品（<strong>不含</strong>经典分镜中间主图）；请用 <strong>@图片1</strong>、<strong>@图片2</strong>…（<strong>@图片N 后建议加半角空格</strong>）对应参考图，勿用 @姓名 指图；有场景图时 <strong>@图片1</strong> 只表环境，人物从 <strong>@图片2</strong> 起。若场景参考是<strong>四宫格/多视角拼图</strong>，仅借空间与氛围，须在文案中写明<strong>单镜头完整画幅、禁止分屏宫格</strong>，避免成片模仿拼图布局。全能提示词下拉中「生成」会按<strong>本条分镜总时长</strong>与本集剧本、镜序、邻镜信息，自动决定子分镜数 M（第2行「由以下M个分镜…」），第4行起为「分镜1：T1秒:」…多行，且各段秒数之和等于本镜时长；第3行仍为环境/参考图约束；「生成」与「润色」均为<strong>流式输出</strong>到本框；「润色」在此基础上增强。若本框留空，则退回仅用「视频提示词」。
+                          全能生视频链路（<strong>AI 配置 · 视频</strong> 中选接口规范：<code>kling_omni</code> 可灵 Omni、<code>volcengine_omni</code> 火山即梦 Seedance 2.0 多图参考、<code>minimax_h3</code> MiniMax H3 多模态参考；模型如 <code>kling-video-o1</code>、<code>doubao-seedance-2-0-260128</code>、<code>MiniMax-H3</code> 等以控制台为准）：此处为提交主提示词；只要本框有内容，生视频时<strong>只</strong>发送这段，不会拼接下方「视频提示词」里的动作/对话/旁白。参考图顺序一般为：场景 → 角色（多张）→ 物品（<strong>不含</strong>经典分镜中间主图）；请用 <strong>@图片1</strong>、<strong>@图片2</strong>…（<strong>@图片N 后建议加半角空格</strong>）对应参考图，勿用 @姓名 指图；有场景图时 <strong>@图片1</strong> 只表环境，人物从 <strong>@图片2</strong> 起。若场景参考是<strong>四宫格/多视角拼图</strong>，仅借空间与氛围，须在文案中写明<strong>单镜头完整画幅、禁止分屏宫格</strong>，避免成片模仿拼图布局。全能提示词下拉中「生成」会按<strong>本条分镜总时长</strong>与本集剧本、镜序、邻镜信息，自动决定子分镜数 M（第2行「由以下M个分镜…」），第4行起为「分镜1：T1秒:」…多行，且各段秒数之和等于本镜时长；第3行仍为环境/参考图约束；「生成」与「润色」均为<strong>流式输出</strong>到本框；「润色」在此基础上增强。若本框留空，则退回仅用「视频提示词」。
                         </div>
                       </template>
                       <el-icon class="sb-universal-hint-icon" tabindex="0" role="img" aria-label="片段说明">
@@ -2386,7 +2386,7 @@
             <el-radio-button value="classic">经典分镜</el-radio-button>
             <el-radio-button value="universal">全能模式</el-radio-button>
           </el-radio-group>
-          <div class="vp-mode-hint">全能模式：中间为片段描述；生视频时使用 <strong>AI 配置里当前启用的视频</strong>（接口规范 <code>kling_omni</code> 或 <code>volcengine_omni</code>，模型如 <code>kling-video-o1</code>、<code>doubao-seedance-2-0-260128</code> 等）并合并场景/角色/道具等参考图（不含经典分镜主图）。经典字段保留，可随时切回。</div>
+          <div class="vp-mode-hint">全能模式：中间为片段描述；生视频时使用 <strong>AI 配置里当前启用的视频</strong>（支持 <code>kling_omni</code> 可灵 Omni、<code>volcengine_omni</code> 火山即梦 Seedance 2.0、<code>minimax_h3</code> MiniMax H3 等；模型以 AI 配置为准）并合并场景/角色/道具等参考图（不含经典分镜主图）。经典字段保留，可随时切回。</div>
         </el-form-item>
         <el-row :gutter="12">
           <el-col :span="12">
@@ -6265,6 +6265,22 @@ function buildSbVideoPromptForApi(sb, { preferClassicPrompt = false } = {}) {
   return vp
 }
 
+/**
+ * MiniMax H3 参考图引用适配：把 prompt 里的 @图片N 占位符换成官方「参考图N」表述。
+ * MiniMax 官方多模态参考生视频（r2va）示例用「参考图1 / 参考图2 / 参考视频1」引用素材，
+ * 编号从 1 起，对应 content 数组里 reference_image / reference_video 的提交顺序；
+ * 不认 @图片N / <IMAGE_N> 这类占位符，不转换会被当成画面文字导致生成理解错乱。
+ * 仅 minimax_h3 时启用，不影响 kling_omni / volcengine_omni / grok 的编排。
+ */
+function adaptPromptForVideoProvider(prompt, provider) {
+  const p = String(provider || '').toLowerCase()
+  const isMiniMax = p === 'minimax_h3' || /minimax[-_]?h3/.test(p)
+  if (!isMiniMax) return prompt
+  // @图片N -> 参考图N（按官方 r2va 示例），保留上下文避免粘连
+  return String(prompt || '').replace(/@图片\s*(\d+)/g, (m, num) => `参考图${num}`)
+}
+
+
 /** 全能模式：与 collectSbOmniReferenceAbsoluteUrls 同序的参考槽位（用于 @ 选择器缩略图） */
 function getSbUniversalOmniRefSlots(sb) {
   if (!sb?.id) return []
@@ -6394,6 +6410,10 @@ function canUseUniversalOmniVideoApi(cfg) {
   // 选了 volcengine_omni 即表示走多图参考；模型名可能是 996 等网关别名（如 mingiz-sd2），勿再按 seedance 字样拦截
   if (proto === 'volcengine_omni') return true
   if (proto === 'agnes' || provider === 'agnes' || /agnes-video/.test(model)) {
+    return true
+  }
+  // MiniMax H3 支持多模态参考生视频（reference_image 最多 9 张）：文档明确支持多图参考
+  if (proto === 'minimax_h3' || provider === 'minimax_h3' || /minimax[-_]?h3/.test(model)) {
     return true
   }
   return false
@@ -6677,8 +6697,9 @@ async function onGenerateSbVideo(sb) {
   if (!dramaId.value || !sb?.id || !sbCanSubmitVideo(sb)) return
   const universal = isSbUniversalMode(sb.id)
   let universalOmniApi = universal
+  // 提前取视频配置（提交处也要用来判断文案 provider 适配），避免只在 universal 分支内定义导致 use 时报未定义
+  const videoCfg = await getActiveVideoAiConfig()
   if (universal) {
-    const videoCfg = await getActiveVideoAiConfig()
     if (!canUseUniversalOmniVideoApi(videoCfg)) {
       try {
         await confirmUniversalNonSeedance2Video()
@@ -6759,7 +6780,7 @@ async function onGenerateSbVideo(sb) {
     const res = await videosAPI.create({
       drama_id: dramaId.value,
       storyboard_id: sb.id,
-      prompt: buildSbVideoPromptForApi(sb, { preferClassicPrompt }),
+      prompt: adaptPromptForVideoProvider(buildSbVideoPromptForApi(sb, { preferClassicPrompt }), videoCfg?.provider),
       image_url: universalOmniApi ? undefined : ((vFirst || absoluteUrl) || undefined),
       first_frame_url: universalOmniApi ? undefined : (vFirst || absoluteUrl || undefined),
       last_frame_url: universalOmniApi ? undefined : vLast,

@@ -11,11 +11,11 @@
                 添加配置
               </el-button>
               <el-button plain @click="exportConfigs">
-                <el-icon><Download /></el-icon>
+                <el-icon><Upload /></el-icon>
                 导出配置
               </el-button>
               <el-button plain @click="triggerImport">
-                <el-icon><Upload /></el-icon>
+                <el-icon><Download /></el-icon>
                 导入配置
               </el-button>
               <input ref="importFileRef" type="file" accept=".json" style="display:none" @change="importConfigs" />
@@ -85,6 +85,7 @@
                 <span :class="['type-badge', 'type-' + row.service_type]">
                   <el-icon class="type-icon">
                     <ChatDotRound v-if="row.service_type === 'text'" />
+                    <View v-else-if="row.service_type === 'vision'" />
                     <Picture v-else-if="row.service_type === 'image'" />
                     <Film v-else-if="row.service_type === 'storyboard_image'" />
                     <VideoCamera v-else-if="row.service_type === 'video'" />
@@ -274,6 +275,7 @@
           </template>
           <el-select v-model="form.service_type" placeholder="选择类型" style="width: 100%" @change="onServiceTypeChange">
             <el-option label="文本/对话" value="text" />
+            <el-option label="视觉质检(助手打分)" value="vision" />
             <el-option label="文本生成图片" value="image" />
             <el-option label="分镜图片生成" value="storyboard_image" />
             <el-option label="视频生成" value="video" />
@@ -1151,7 +1153,7 @@ input_reference = (图片文件，可选)</pre>
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, MagicStick, QuestionFilled, Download, Upload, Delete, ChatDotRound, Picture, Film, VideoCamera, Key, Microphone, Folder } from '@element-plus/icons-vue'
+import { Plus, MagicStick, QuestionFilled, Download, Upload, Delete, ChatDotRound, Picture, Film, VideoCamera, Key, Microphone, Folder, View } from '@element-plus/icons-vue'
 import { aiAPI } from '@/api/ai'
 import { generationSettingsAPI } from '@/api/prompts'
 import PromptEditor from '@/components/PromptEditor.vue'
@@ -1361,6 +1363,13 @@ const providerConfigs = {
     { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-v4-flash', 'deepseek-v4-pro'] },
     { id: 'qwen', name: '通义千问', models: ['qwen3-max', 'qwen-plus', 'qwen-flash'] },
     { id: 'agnes', name: 'Agnes AI', models: ['agnes-2.0-flash'] }
+  ],
+  vision: [
+    { id: 'openai', name: 'OpenAI 视觉', models: ['deepseek-v4-flash-vision-exp-hermes', 'gpt-4o', 'gpt-4o-mini', 'qwen-vl-max'] },
+    { id: 'volcengine', name: '火山引擎', models: ['doubao-1-5-vision-pro-32k-250115'] },
+    { id: 'qwen', name: '通义千问', models: ['qwen-vl-max', 'qwen-vl-plus'] },
+    { id: 'gemini', name: 'Google Gemini', models: ['gemini-2.5-flash', 'gemini-3-flash-preview'] },
+    { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-v4-flash-vision-exp-hermes'] },
   ],
   image: [
     { id: 'comfyui', name: 'ComfyUI', models: ['qwen-image-edit-2511'] },
@@ -1802,6 +1811,7 @@ const AGNES_CONFIGS = [
 function serviceTypeLabel(t) {
   const map = {
     text: '文本',
+    vision: '视觉质检',
     image: '文本生成图片',
     storyboard_image: '分镜图片生成',
     video: '视频',

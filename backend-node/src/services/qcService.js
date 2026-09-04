@@ -36,7 +36,7 @@ async function qcImage(db, log, opts) {
   if (!imgSrc) return { score: 0, ok: false, issues: ['图片无法解析'], reason: '图片不可访问' };
 
   try {
-    const raw = await aiClient.generateTextWithVision(db, log, 'text', buildUserPrompt(prompt, expect), QC_SYSTEM, imgSrc, {
+    const raw = await aiClient.generateTextWithVision(db, log, 'vision', buildUserPrompt(prompt, expect), QC_SYSTEM, imgSrc, {
       model: QC_VISION_MODEL,
       max_tokens: 800,
       temperature: 0.2,

@@ -59,11 +59,12 @@ function routes(db, log) {
         // 首尾帧：支持 URL 或本地路径（sxy，存到 first_frame_url / last_frame_url）
         const firstFrameUrl = body.first_frame_url ?? body.first_frame_local_path ?? null;
         const lastFrameUrl = body.last_frame_url ?? body.last_frame_local_path ?? null;
-        // 多图模式：sxy，存 JSON 数组到 reference_image_urls
-        const refImagesJson =
-          body.reference_image_urls && Array.isArray(body.reference_image_urls)
-            ? JSON.stringify(body.reference_image_urls.slice(0, 10))
-            : null;
+        // 多图模式：sxy，存 JSON 数组到 reference_image_urls（带类型标签，供 ComfyUI H3 分组）
+        const rawRefs = Array.isArray(body.reference_image_urls) ? body.reference_image_urls.slice(0, 10) : [];
+        const rawLabels = Array.isArray(body.reference_labels) ? body.reference_labels : [];
+        const refImagesJson = rawRefs.length
+          ? JSON.stringify(rawRefs.map((u, i) => ({ url: u, type: rawLabels[i] || '' })))
+          : null;
         db.prepare(
           `INSERT INTO video_generations (drama_id, storyboard_id, provider, prompt, model, duration, aspect_ratio, resolution, seed, camera_fixed, watermark, image_url, first_frame_url, last_frame_url, reference_image_urls, status, task_id, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?)`

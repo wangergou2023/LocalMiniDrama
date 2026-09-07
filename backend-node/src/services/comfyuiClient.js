@@ -84,6 +84,18 @@ function httpDownload(url, destPath) {
   });
 }
 
+/** 统一解析 ComfyUI input 目录：优先 AI 配置 settings.input_dir，其次环境变量 COMFYUI_INPUT_DIR，默认 ~/ComfyUI/input */
+function resolveComfyInputDir(config) {
+  if (config && config.settings) {
+    try {
+      const s = typeof config.settings === 'string' ? JSON.parse(config.settings) : config.settings;
+      if (s.input_dir && typeof s.input_dir === 'string') return s.input_dir;
+    } catch (_) {}
+  }
+  if (process.env.COMFYUI_INPUT_DIR) return process.env.COMFYUI_INPUT_DIR;
+  return path.join(require('os').homedir(), 'ComfyUI', 'input');
+}
+
 async function prepareReferenceImages(referenceUrls, comfyuiInputDir, log, storageLocalPath) {
   if (!Array.isArray(referenceUrls) || referenceUrls.length === 0) return [];
   const filenames = [];
@@ -354,7 +366,7 @@ async function callComfyUIImageApi(config, log, opts) {
     });
 
     // 准备参考图
-    const inputDir = path.join(process.env.HOME || '/home/wangergou', 'ComfyUI', 'input');
+    const inputDir = resolveComfyInputDir(config);
     if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir, { recursive: true });
     let refFilenames = [];
     if (hasRefs) {
@@ -439,8 +451,107 @@ async function callComfyUIImageApi(config, log, opts) {
 // LTX 2.3 图生视频工作流（API 格式已固化在 workflows/ltx23-i2v-api.json，
 // 两阶段采样 + 音轨；由 WYC UI 工作流一次性转换而来，不再依赖 ComfyUI 用户目录）
 
+/** 检测工作流是否为 MiniMax H3 参考图生视频（含编辑器格式 nodes/links 与 API 格式两种） */
+function hasH3ReferenceNode(wf) {
+  if (!wf) return false;
+  const isRef = (t) => t === 'MiniMaxH3ReferenceToVideo' || t === 'MiniMaxH3ImageToVideo';
+  if (Array.isArray(wf.nodes)) return wf.nodes.some((n) => isRef(n.type));
+  return Object.values(wf).some((n) => n && typeof n === 'object' && isRef(n.class_type));
+}
+
+/**
+ * H3 参考生视频：把参考图按要求接到 MiniMaxH3ReferenceToVideo 的 ref_image_0..N。
+ *  - labels 与 refImages 等长且带类型（scene/角色/character 等）：Qwen 式分组，
+ *    多角色/多物品用 ImageStitch 横拼成单张，最多 3 通道，并生成中文说明头拼进 prompt。
+ *  - 无 labels：每张参考图一个 LoadImage，逐张切槽（最多 9 张，节点 Autogrow 上限）。
+ * 就地修改 apiPrompt，返回说明头（可为空串）。
+ */
+function applyH3RefsToApi(apiPrompt, refImages, labels, promptText) {
+  let h3Id = null;
+  for (const [nid, node] of Object.entries(apiPrompt)) {
+    if (node && node.class_type === 'MiniMaxH3ReferenceToVideo') { h3Id = nid; break; }
+  }
+  if (!h3Id) return '';
+  const h3 = apiPrompt[h3Id];
+  // 清掉旧接线（若工作流本身有 ref_image_0/1/2 -> LoadImage）
+  for (const k of Object.keys(h3.inputs || {})) {
+    if (k.indexOf('ref_images.ref_image_') === 0) delete h3.inputs[k];
+  }
+
+  let seq = 0;
+  const addNodes = {};
+  function buildOne(files, tag) {
+    if (!files || !files.length) return null;
+    const imgKeys = files.map((f) => {
+      const k = 'h3_ld_' + tag + '_' + (seq++);
+      addNodes[k] = { class_type: 'LoadImage', inputs: { image: f } };
+      return k;
+    });
+    let prev = imgKeys[0];
+    for (let i = 1; i < imgKeys.length; i++) {
+      const sk = 'h3_st_' + tag + '_' + (seq++);
+      addNodes[sk] = {
+        class_type: 'ImageStitch',
+        inputs: { image1: [prev, 0], image2: [imgKeys[i], 0], direction: 'right', match_image_size: true, spacing_width: 16, spacing_color: 'white' },
+      };
+      prev = sk;
+    }
+    return prev;
+  }
+
+  const typed = Array.isArray(labels) && labels.length === refImages.length;
+  const groups = { scene: [], chars: [], props: [] };
+  const names = { chars: [], props: [] };
+  if (typed) {
+    for (let i = 0; i < refImages.length; i++) {
+      const lbl = String(labels[i] || '');
+      const nameMatch = lbl.match(/for\s+"([^"]+)"/i);
+      const name = nameMatch ? nameMatch[1] : '';
+      if (/scene background|场景|scene/i.test(lbl)) groups.scene.push(refImages[i]);
+      else if (/character appearance|角色|character/i.test(lbl)) { groups.chars.push(refImages[i]); names.chars.push(name || ('角色' + (groups.chars.length))); }
+      else { groups.props.push(refImages[i]); names.props.push(name || ('物品' + (groups.props.length))); }
+    }
+  } else {
+    // 无标签回退：第 1 张当场景，其余当角色（投影到单个通道即可，尽量不丢图）
+    if (refImages.length >= 1) groups.scene = refImages.slice(0, 1);
+    if (refImages.length > 1) groups.chars = refImages.slice(1);
+  }
+
+  const slots = [];
+  const headerLines = [];
+  if (groups.scene.length) {
+    slots.push(buildOne(groups.scene, 'scene'));
+    headerLines.push('图' + slots.length + '：场景环境参考（注意：该图为参考，可能是多视角/宫格拼图——只取其中统一的空间、光线与氛围语义，禁止照搬其分格/取景/并列布局）');
+  }
+  if (groups.chars.length) {
+    slots.push(buildOne(groups.chars, 'char'));
+    headerLines.push(
+      groups.chars.length > 1
+        ? '图' + slots.length + '：角色外貌参考拼图（从左到右依次为：' + (names.chars.join('、') || '角色') + '；此为多个角色从左到右拼合参考，请严格区分每个人并保持各自的长相、发型、服装；若有某角色为四视图/多角度合成图，仅锁定其身份与外观，成片取单一自然镜头，禁止复现多视图/拼图布局；禁止把拼图中的并列人物当成同一人或多分屏画面）'
+        : '图' + slots.length + '：角色「' + (names.chars[0] || '角色') + '」外貌参考（若该图为同一人物多角度/四视图合成图，仅锁定其长相、发型、服装；成片取单一自然镜头，禁止复现其多视图/拼图布局）'
+    );
+  }
+  if (groups.props.length) {
+    slots.push(buildOne(groups.props, 'prop'));
+    headerLines.push(
+      groups.props.length > 1
+        ? '图' + slots.length + '：道具外观参考拼图（从左到右依次为：' + (names.props.join('、') || '道具') + '；为多个道具拼合参考，请区分各道具外形；禁止把并列道具当成一件或做成多分屏）'
+        : '图' + slots.length + '：道具「' + (names.props[0] || '道具') + '」外观参考（若为多角度/合成图，仅锁定道具外形）'
+    );
+  }
+
+  for (let i = 0; i < Math.min(slots.length, 9); i++) {
+    if (slots[i]) h3.inputs['ref_images.ref_image_' + i] = [slots[i], 0];
+  }
+  Object.assign(apiPrompt, addNodes);
+
+  const header = headerLines.length ? headerLines.join('\n') + '\n\n生成一段连续、完整、单一镜头的画面（禁止拼贴、分屏、宫格、多画面并列、复刻参考图的网格/多视图布局）：\n' : '';
+  if (header && promptText !== undefined) h3.inputs.prompt = header + promptText;
+  return header;
+}
+
 async function callComfyUIVideoApi(config, log, opts) {
-  const { prompt, model, image_url, video_gen_id, files_base_url, storage_local_path } = opts;
+  const { prompt, model, image_url, video_gen_id, files_base_url, storage_local_path, reference_image_urls, reference_labels } = opts;
   const baseUrl = (config.base_url || "http://127.0.0.1:8188").replace(/\/$/, "");
 
   const fs = require("fs");
@@ -468,7 +579,7 @@ async function callComfyUIVideoApi(config, log, opts) {
   const vidH = Math.max(256, Math.round(Math.sqrt(totalPx / ratioVal) / 32) * 32);
 
   // Prepare input image
-  const inputDir = path.join(require("os").homedir(), "ComfyUI", "input");
+  const inputDir = resolveComfyInputDir(config);
   if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir, { recursive: true });
   let imgName = "example.png";
   if (image_url) {
@@ -485,6 +596,31 @@ async function callComfyUIVideoApi(config, log, opts) {
 
     const wf = loadWorkflow(workflowFile);
     const seed = Math.floor(Math.random() * 9007199254740991);
+    const isH3Ref = hasH3ReferenceNode(wf);
+
+    // H3 参考生视频：准备多张参考图（场景/角色/道具）+ 标签；LTX 用首帧图
+    let refImages;
+    let refLabelsArr = [];
+    if (isH3Ref) {
+      const rawUrls = Array.isArray(reference_image_urls) ? reference_image_urls.filter(Boolean) : [];
+      const rawLabels = Array.isArray(reference_labels) ? reference_labels : [];
+      const items = rawUrls.map((u, i) => ({ url: u, label: rawLabels[i] || '' }));
+      if (items.length) {
+        const prepped = await prepareReferenceImages(items.map((it) => it.url), inputDir, log, storage_local_path);
+        refImages = prepped;
+        const srcIndices = prepped.srcIndices || items.map((_, i) => i);
+        refLabelsArr = srcIndices.map((si) => (items[si] ? items[si].label : ''));
+      }
+      if (!refImages || !refImages.length) {
+        if (image_url) {
+          refImages = await prepareReferenceImages([image_url], inputDir, log, storage_local_path);
+          refLabelsArr = [];
+        } else {
+          refImages = [];
+        }
+      }
+    }
+
     const { prompt: apiPrompt } = prepareWorkflow(wf, {
       prompt: prompt || '',
       width: vidW,
@@ -492,26 +628,33 @@ async function callComfyUIVideoApi(config, log, opts) {
       seed,
       videoFrames: frames,
       videoFps: fps,
+      refImages: isH3Ref ? undefined : refImages,
     });
 
-    // Video-specific injection
-    for (const [nid, node] of Object.entries(apiPrompt)) {
-      if (node.class_type === 'EmptyLTXVLatentVideo') {
-        node.inputs.length = frames;
-        node.inputs.width = vidW;
-        node.inputs.height = vidH;
-      }
-      if (node.class_type === 'RandomNoise') {
-        node.inputs.noise_seed = seed;
-      }
-      if (node.class_type === 'LoadImage' && node.inputs.image != null) {
-        node.inputs.image = imgName;
-      }
-      if (node.class_type === 'CLIPTextEncode' && !Array.isArray(node.inputs.text)) {
-        node.inputs.text = prompt || '';
-      }
-      if (node.class_type === 'LTXVImgToVideoInplace' && node.inputs.strength != null && node.inputs.strength < 0.95) {
-        node.inputs.strength = 0.8;
+    // H3 参考生视频：分组/拼图/说明头/动态槽位已由 applyH3RefsToApi 处理，跳过 LTX 首帧图覆盖
+    if (isH3Ref) {
+      const header = applyH3RefsToApi(apiPrompt, refImages || [], refLabelsArr, prompt || '');
+      log.info("[ComfyUI/H3] 参考生视频，参考图 " + (refImages ? refImages.length : 0) + " 张" + (header ? '（含拼图说明头）' : ''));
+    } else {
+      // Video-specific injection
+      for (const [nid, node] of Object.entries(apiPrompt)) {
+        if (node.class_type === 'EmptyLTXVLatentVideo') {
+          node.inputs.length = frames;
+          node.inputs.width = vidW;
+          node.inputs.height = vidH;
+        }
+        if (node.class_type === 'RandomNoise') {
+          node.inputs.noise_seed = seed;
+        }
+        if (node.class_type === 'LoadImage' && node.inputs.image != null) {
+          node.inputs.image = imgName;
+        }
+        if (node.class_type === 'CLIPTextEncode' && !Array.isArray(node.inputs.text)) {
+          node.inputs.text = prompt || '';
+        }
+        if (node.class_type === 'LTXVImgToVideoInplace' && node.inputs.strength != null && node.inputs.strength < 0.95) {
+          node.inputs.strength = 0.8;
+        }
       }
     }
 
@@ -655,4 +798,4 @@ async function callComfyUIVideoApi(config, log, opts) {
   return { video_url: videoUrl, first_frame_url: image_url || null };
 }
 
-module.exports = { callComfyUIImageApi, callComfyUIVideoApi, parseSize };
+module.exports = { callComfyUIImageApi, callComfyUIVideoApi, parseSize, hasH3ReferenceNode, applyH3RefsToApi };

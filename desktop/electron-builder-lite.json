@@ -1,6 +1,7 @@
 {
   "appId": "com.localminidrama.desktop",
   "productName": "LocalMiniDrama",
+  "npmRebuild": false,
   "directories": {
     "output": "release"
   },
@@ -24,6 +25,11 @@
     {
       "from": "../backend-node/tools/ffmpeg",
       "to": "ffmpeg",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "../workflows",
+      "to": "workflows",
       "filter": ["**/*"]
     }
   ],

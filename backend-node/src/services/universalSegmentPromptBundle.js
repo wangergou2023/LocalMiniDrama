@@ -221,9 +221,12 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     const brief = String(summary || '').trim() || kind;
     slots.push({ num, tag: `@图片${num}`, kind, summary: brief });
   };
+  // 参考槽位按「场景/角色/道具」分组，各占一个槽（@图片1/2/3），与 H3 r2v 的 3 通道对齐；
+  // 多个角色/多个道具合并进同槽，成片时由后端拼成一张（场景/角色拼图/道具拼图）。
   if (sceneRow && hasMediaRef(sceneRow)) {
     pushSlot('场景', String(sceneRow.location || '').trim() || '场景环境');
   }
+  const charNameArr = [];
   for (const ent of charOrderEntries) {
     let row = null;
     if (ent.key.startsWith('drama:')) {
@@ -236,13 +239,15 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
         .get(Number(ent.key.slice(4)));
     }
     if (!hasMediaRef(row)) continue;
-    const cn = String(row.name || ent.nameHint || '角色').trim();
-    pushSlot('角色', cn);
+    charNameArr.push(String(row.name || ent.nameHint || '角色').trim());
   }
+  if (charNameArr.length) pushSlot('角色', charNameArr.join('、'));
+  const propNameArr = [];
   for (const pr of propRows) {
     if (!hasMediaRef(pr)) continue;
-    pushSlot('道具', String(pr.name || '道具').trim());
+    propNameArr.push(String(pr.name || '道具').trim());
   }
+  if (propNameArr.length) pushSlot('道具', propNameArr.join('、'));
 
   const charSlots = slots.filter((s) => s.kind === '角色');
   const sceneFirst = slots.length > 0 && slots[0].kind === '场景';
@@ -341,6 +346,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
           '- 禁止用 @场景、@姓名、@林薇、@道具名 等形式指代参考图；需要指图时一律 @图片N。',
           '- 若 @图片1 为「场景」：只写环境/光影/陈设；人物外貌与动作按 CHARACTER_IMAGE_BINDING 从 @图片2 起。若首张参考图即角色，则以 MAP 为准。',
           '- 场景参考若为四宫格/九宫格等拼图：见 SCENE_REFERENCE_LAYOUT；成片须单镜头连续画面，禁止模仿拼图布局。',
+          '- 若本镜绑定了道具（IMAGE_SLOT_MAP 中的「道具」槽，通常为 @图片3）：凡在该镜头文案中出现的道具，**必须用 @图片3 显式引用**（例：@图片3 帆布包、@图片3 草图、@图片3 铅笔），不得只用文字描写而不引图占位符；道具名见 ORDERED_PROP_NAMES。若某道具不重要可省略，但重要道具必须指到 @图片3。',
         ]),
     '- 每个 @图片N 与后随的中/英文字之间保留一个半角空格（后处理也会修正，但模型应直接写对）。',
     '- ORDERED_CHARACTER_NAMES 仅供理解剧情，不得当作图占位符。',
@@ -449,7 +455,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
   const multiBeatContract = [
     'MULTI_BEAT_OUTPUT（一条成片 API 内的多节拍文案）:',
     '- 总行数 = 3 + M。M 为你选择的子分镜条数（时间轴节拍），整数 1～8。',
-    '- 第1行：「画面风格和类型:」…',
+    '- 第1行：「画面风格和类型:」…必须完全遵循下方 STYLE_HINT/STYLE_ZH 给定的风格；若 STYLE_ZH 已给定（例如“中国传统水墨画风格，泼墨写意技法…”），**整句只能使用该给定风格，禁止再叠加“真人写实、电影风格、高清画质、写实摄影、真实人物”等与之冲突的修饰词**；风格描述内部必须自洽、无相互矛盾项。',
     `- 第2行：必须为「生成一个由以下M个分镜组成的视频。」（将 M 替换为你的整数；与下文实际「分镜1…分镜M」条数一致）。`,
     '- 第3行：必须逐字等于 LINE3_REQUIRED（见下）。',
     '- 第4行到第(3+M)行：依次为「分镜1： T1秒:」「分镜2： T2秒:」…「分镜M： TM秒:」；每行冒号后先写秒数再写该子时段内的动态影像与运镜描写。',

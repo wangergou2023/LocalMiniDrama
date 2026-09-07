@@ -395,9 +395,10 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
   const lightingStyle = sb.lighting_style ?? null;
   const depthOfField = sb.depth_of_field ?? null;
   let durationSec = normalizeDuration(sb.duration) || 5;
-  const targetClip = opts.targetClipDuration != null ? Number(opts.targetClipDuration) : 0;
-  if (Number.isFinite(targetClip) && targetClip > 0) {
-    durationSec = Math.max(durationSec, Math.round(targetClip));
+  const maxClip = opts.maxClipDuration != null ? Number(opts.maxClipDuration) : 0;
+  // 只封顶、不抬升：避免每个镜头都被拉到目标时长（导致全都是最大时长）
+  if (Number.isFinite(maxClip) && maxClip > 0) {
+    durationSec = Math.min(durationSec, Math.round(maxClip));
   }
   durationSec = Math.min(120, Math.max(1, Math.round(durationSec)));
   sb.duration = durationSec;
@@ -616,11 +617,46 @@ function tryIncrementalSave(db, log, episodeIdNum, accumulated, savedNums, style
 /**
  * @param {Set|null} skipShotNumbers - 已通过增量流式保存的 storyboard_number 集合，跳过重复插入
  */
+/**
+ * 把一批分镜的 duration 按「AI 内容权重」比例归一化：和≈总时长、单镜封顶 maxSec，
+ * 避免每个分镜都被抬到最大时长。
+ * @param {Array<{duration:any}>} storyboards
+ * @param {{totalSec?:number, maxSec?:number, minSec?:number}} opts
+ */
+function redistributeShotDurations(storyboards, opts = {}) {
+  const n = storyboards.length;
+  if (!n) return;
+  const minSec = Number(opts.minSec) > 0 ? Number(opts.minSec) : 1;
+  const maxSec = Number(opts.maxSec) > 0 ? Number(opts.maxSec) : 15;
+  const weights = storyboards.map((sb) => Math.max(0.05, Number(sb.duration) || minSec));
+  const wsum = weights.reduce((a, b) => a + b, 0) || 1;
+  const aiSum = weights.reduce((a, b) => a + b, 0);
+  const target = Number(opts.totalSec) > 0 ? Math.min(Number(opts.totalSec), n * maxSec) : Math.min(aiSum, n * maxSec);
+  if (target <= 0) return;
+  // 按 AI 内容权重比例分配并封顶（不强行补满，避免每个镜头都被拉到最大时长）；最后一个吸收尾差
+  let allocated = 0;
+  const out = weights.map((w, i) => {
+    if (i === n - 1) {
+      return Math.max(minSec, Math.min(maxSec, Math.round((target - allocated) * 10) / 10));
+    }
+    const v = Math.max(minSec, Math.min(maxSec, Math.round((target * w / wsum) * 10) / 10));
+    allocated += v;
+    return v;
+  });
+  for (let i = 0; i < n; i++) storyboards[i].duration = out[i];
+}
+
 function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, skipShotNumbers = null, deriveOpts = {}) {
   const episodeIdNum = Number(episodeId);
   if (storyboards.length === 0) {
     throw new Error('AI生成分镜失败：返回的分镜数量为0');
   }
+  // 把各分镜时长按内容权重比例归一化，单镜封顶（H3=15s 或项目每段时长），避免每个都是最大时长
+  redistributeShotDurations(storyboards, {
+    totalSec: deriveOpts.video_duration || deriveOpts.total_duration,
+    maxSec: deriveOpts.maxClipDuration || deriveOpts.max_duration,
+    minSec: 1,
+  });
   const style = (styleOverride && String(styleOverride).trim()) || cfg?.style?.default_style || '';
   const videoRatio = cfg?.style?.default_video_ratio || '16:9';
   const now = new Date().toISOString();
@@ -849,6 +885,7 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
   const deriveOpts = {
     universalOmni: !!universalOmni,
     targetClipDuration: targetClipDurationSec != null && Number(targetClipDurationSec) > 0 ? Number(targetClipDurationSec) : null,
+    maxClipDuration: targetClipDurationSec != null && Number(targetClipDurationSec) > 0 ? Number(targetClipDurationSec) : null,
   };
   let streamThrottle = 0;
 

@@ -4,9 +4,28 @@
 const fs = require('fs');
 const path = require('path');
 
-const WORKFLOWS_DIR = path.join(__dirname, '..', '..', '..', 'workflows', 'C图像-Zimage');
-const WORKFLOWS_DIR_B = path.join(__dirname, '..', '..', '..', 'workflows', 'B图像-Qwen编辑');
-const WORKFLOWS_DIR_V = path.join(__dirname, '..', '..', '..', 'workflows', 'A视频-LTX');
+/**
+ * 定位工作流目录：兼容多种形态
+ *  - 源码 backend-node：  <repo>/workflows/<subdir>（__dirname 上溯三级）
+ *  - 开发 desktop/backend-app： <repo>/workflows/<subdir>（__dirname 上溯四级）
+ *  - 打包后：             <resources>/workflows/<subdir>（electron-builder extraResources）
+ * 取第一个存在的目录；都不存在时回退到源码路径，交给后续 existsSync 判空。
+ */
+function findWorkflowDir(subdir) {
+  const candidates = [
+    path.join(__dirname, '..', '..', '..', 'workflows', subdir),
+    path.join(__dirname, '..', '..', '..', '..', 'workflows', subdir),
+    path.join(process.resourcesPath || '', 'workflows', subdir),
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return candidates[0];
+}
+
+const WORKFLOWS_DIR = findWorkflowDir('C图像-Zimage');
+const WORKFLOWS_DIR_B = findWorkflowDir('B图像-Qwen编辑');
+const WORKFLOWS_DIR_V = findWorkflowDir('A视频-LTX');
 
 function listWorkflows(type) {
   const all = [];
@@ -316,6 +335,14 @@ function prepareWorkflow(workflow, params) {
       if (videoFrames !== undefined) apiInputs.length = videoFrames;
       if (width !== undefined) apiInputs.width = width;
       if (height !== undefined) apiInputs.height = height;
+    }
+
+    // MiniMax H3 参考图生视频 / 图生视频节点: 注入 prompt、宽高、时长（覆盖已连线的输入）
+    if (classType === 'MiniMaxH3ReferenceToVideo' || classType === 'MiniMaxH3ImageToVideo') {
+      if (promptText !== undefined) apiInputs.prompt = promptText;
+      if (width !== undefined) apiInputs.width = width;
+      if (height !== undefined) apiInputs.height = height;
+      if (videoFrames !== undefined) apiInputs.length = videoFrames;
     }
 
     // 收集输出前缀

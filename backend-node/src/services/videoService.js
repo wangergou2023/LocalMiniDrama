@@ -471,10 +471,21 @@ async function processVideoGeneration(db, log, videoGenId) {
       return;
     }
     let reference_urls = null;
+    let reference_labels = null;
     if (row.reference_image_urls) {
       try {
-        reference_urls = JSON.parse(row.reference_image_urls);
-        if (!Array.isArray(reference_urls)) reference_urls = null;
+        const raw = JSON.parse(row.reference_image_urls);
+        if (Array.isArray(raw)) {
+          if (raw.length && typeof raw[0] === 'object') {
+            // 新版：[{url,type}] → URL 列表 + 类型标签（ComfyUI H3 分组用）
+            reference_urls = raw.map((o) => o && o.url).filter(Boolean);
+            reference_labels = raw.map((o) => (o ? o.type : '') || '');
+            if (!reference_urls.length) reference_urls = null;
+          } else {
+            reference_urls = raw; // 旧版：纯 URL 列表
+            if (!Array.isArray(reference_urls)) reference_urls = null;
+          }
+        }
       } catch (_) {}
     }
     // 优先使用分镜自身的镜头时长（storyboard.duration），其次用 video_generations.duration
@@ -537,6 +548,7 @@ async function processVideoGeneration(db, log, videoGenId) {
         first_frame_url: row.first_frame_url,
         last_frame_url: hasOmniRefs ? undefined : row.last_frame_url,
         reference_urls,
+        reference_labels,
         files_base_url: filesBaseUrl,
         storage_local_path: storageLocalPath,
         video_gen_id: videoGenId,

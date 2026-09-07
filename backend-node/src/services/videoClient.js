@@ -3828,6 +3828,8 @@ async function callVideoApi(db, log, opts) {
       prompt,
       model,
       image_url: opts.image_url || opts.first_frame_url,
+      reference_image_urls: opts.reference_urls,
+      reference_labels: opts.reference_labels,
       aspect_ratio,
       duration: opts.duration,
       files_base_url: opts.files_base_url,

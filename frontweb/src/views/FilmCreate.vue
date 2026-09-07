@@ -498,7 +498,7 @@
                       </el-button>
                     </div>
 
-                    <!-- Seedance 2.0 音色参考（仅该模型有效，其他模型不生效） -->
+                    <!-- 角色音色参考（Seedance 2.0 / MiniMax H3 均生效） -->
                     <div class="sd2-voice-row" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                       <template v-if="char.seedance2_voice_asset?.status === 'active'">
                         <!-- 音色参考已设置：显示试听 + 更换 -->
@@ -534,7 +534,7 @@
                         </el-button>
                         <span v-if="char.seedance2_voice_asset?.status === 'stale'" style="font-size:11px;color:#e6a23c">需刷新</span>
                       </template>
-                      <span style="font-size:10px;color:#909399">仅 Seedance 2.0 模型生效</span>
+                      <span style="font-size:10px;color:#909399">Seedance 2.0 / MiniMax H3 均生效</span>
                     </div>
                     <div v-if="getCharAffectedStoryboards(char.id).length" class="asset-storyboard-link">
                       <span class="asl-label">影响的分镜：</span>
@@ -720,7 +720,7 @@
                 <el-button size="small" @click="showSceneLibrary = true">本剧场景库</el-button>
               </div>
               <div class="scene-gen-mode" style="margin: 8px 0; font-size: 13px;">
-                <el-checkbox v-model="sceneUseQuadGrid">生成四宫格场景（默认单图）</el-checkbox>
+                <el-checkbox v-model="sceneUseQuadGrid">生成四宫格场景（默认四宫格）</el-checkbox>
               </div>
               <div class="asset-list asset-list-two">
                 <div v-for="scene in scenes" :key="scene.id" class="asset-item asset-item-left-right">
@@ -3099,7 +3099,7 @@ const resourcePanelCollapsed = ref(false)
 const charactersBlockCollapsed = ref(false)
 const propsBlockCollapsed = ref(false)
 const scenesBlockCollapsed = ref(false)
-const sceneUseQuadGrid = ref(false)
+const sceneUseQuadGrid = ref(true)
 
 // 分镜行内编辑状态（按 storyboard id 存储）
 // navCollapsed/storyboardMenuExpanded/toggleNav → 已移至 useNavigation composable
@@ -4059,6 +4059,11 @@ function buildSbGenMeta(sb, resourceType, labelPrefix) {
 function isSbVideoGenerating(sbId) {
   if (generatingSbVideoIds.has(sbId)) return true
   if (sbId == null || dramaId.value == null || currentEpisodeId.value == null) return false
+  // 后端兜底:该分镜已拉到视频列表里若有 processing/pending 未完成的记录,也视为正在生成(刷新页面后仍有效)
+  const vlist = sbVideos.value[sbId]
+  if (Array.isArray(vlist) && vlist.some((v) => v && typeof v.status === 'string' && (v.status === 'processing' || v.status === 'pending' || v.status === 'queued'))) {
+    return true
+  }
   return genStore.isRunning({
     dramaId: dramaId.value,
     episodeId: currentEpisodeId.value,

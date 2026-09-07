@@ -708,7 +708,7 @@ export function useCharacters(deps) {
   async function onSd2VoicePrimaryAction(char) {
     const status = String(char?.seedance2_voice_asset?.status || '').toLowerCase()
     if (status === 'active') {
-      ElMessage.info('音色参考已设置，将在 Seedance 2.0 模型中使用')
+      ElMessage.info('音色参考已设置，将在 Seedance 2.0 / MiniMax H3 模型中使用')
       return
     }
     if (status === 'processing' || status === 'stale') {
@@ -750,7 +750,7 @@ export function useCharacters(deps) {
       sd2VoiceUploadingId.value = char.id
       try {
         const res = await characterAPI.sd2VoiceUpload(char.id, file)
-        ElMessage.success('Seedance 2.0 音色参考已上传')
+        ElMessage.success('音色参考已上传（Seedance 2.0 / MiniMax H3 均生效）')
         // 强制重新加载整个剧本数据，确保 seedance2_voice_asset 被正确解析并更新到 store
         await loadDrama()
       } catch (e) {
@@ -762,7 +762,7 @@ export function useCharacters(deps) {
     input.click()
   }
 
-  // 播放 Seedance 2.0 音色参考（仅 active 状态）
+  // 播放音色参考（Seedance 2.0 / MiniMax H3 通用，仅 active 状态）
   function playSd2Voice(char) {
     const url = char?.seedance2_voice_asset?.url
     if (!url) {

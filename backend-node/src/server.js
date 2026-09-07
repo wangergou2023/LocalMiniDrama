@@ -16,7 +16,7 @@ const { createApp } = require('./app.js');
 const { closeDb } = require('./db/index.js');
 const logger = require('./logger.js');
 
-const { app, config } = createApp();
+const { app, config, db } = createApp();
 const port = Number(process.env.PORT) || config.server?.port || 5679;
 const host = config.server?.host || '0.0.0.0';
 
@@ -34,6 +34,15 @@ const server = app.listen(port, host, () => {
   logger.info('API:       http://localhost:' + port + '/api/v1');
   logger.info('Health:    http://localhost:' + port + '/health');
   logger.info('Server is ready!');
+  // 启动恢复:标记因软件/进程重启而中断的孤儿任务,并继续轮询还有 provider_task_id 的生成任务
+  try {
+    const taskService = require('./services/taskService');
+    const videoService = require('./services/videoService');
+    taskService.failOrphanedAsyncTasksOnStartup(db, logger);
+    videoService.resumeProcessingVideoGenerations(db, logger);
+  } catch (e) {
+    try { logger.error('startup recovery failed', { error: e && e.stack ? e.stack : String(e) }); } catch (_) {}
+  }
 });
 
 function shutdown() {

@@ -634,7 +634,7 @@ async function callVolcengineOmniVideoApi(config, log, opts) {
               const buf = fs.readFileSync(filePath);
               const ext = path.extname(filePath).toLowerCase();
               const mime =
-                { '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.ogg': 'audio/ogg' }[ext] || 'audio/mpeg';
+                { '.mp3': 'audio/mp3', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.ogg': 'audio/ogg' }[ext] || 'audio/mp3';
               voiceUrl = 'data:' + mime + ';base64,' + buf.toString('base64');
             }
           } catch (_) {}
@@ -3371,6 +3371,57 @@ function collectActiveCharacterVoiceRefs(db, dramaId) {
   return map;
 }
 
+const narratorVoiceRefCache = new Map();
+
+async function resolveDefaultNarratorVoiceReferenceUrl(db, log, storageLocalPath, videoGenId) {
+  if (!db || !storageLocalPath) return '';
+  try {
+    const configs = aiConfigService.listConfigs(db, 'tts').filter((c) => c && c.is_active !== false);
+    const ttsConfig = configs.find((c) => c.is_default) || configs[0] || null;
+    if (!ttsConfig) return '';
+
+    const ttsSettings = (() => {
+      try { return JSON.parse(ttsConfig.settings || '{}') || {}; } catch (_) { return {}; }
+    })();
+    const voiceId = String(ttsConfig.voice_id || ttsSettings.voice_id || '').trim();
+    if (!voiceId) return '';
+
+    const ttsModel = String(ttsConfig.default_model || (Array.isArray(ttsConfig.model) ? ttsConfig.model[0] : ttsConfig.model) || '').trim();
+    const cacheKey = [String(ttsConfig.id || ttsConfig.name || 'tts'), voiceId, ttsModel, String(ttsConfig.provider || '').toLowerCase()].join('|');
+    const cachedRel = narratorVoiceRefCache.get(cacheKey);
+    if (cachedRel) {
+      const cachedAbs = path.join(storageLocalPath, cachedRel.replace(/\//g, path.sep));
+      if (fs.existsSync(cachedAbs)) return cachedRel;
+      narratorVoiceRefCache.delete(cacheKey);
+    }
+
+    const ttsService = require('./ttsService');
+    const result = await ttsService.synthesize(db, log, {
+      text: '大家好，下面开始介绍本产品。',
+      storyboard_id: null,
+      config: ttsConfig,
+      storage_base: storageLocalPath,
+      voice_id: voiceId,
+      speed: 1,
+    });
+    if (result && result.local_path) {
+      narratorVoiceRefCache.set(cacheKey, result.local_path);
+      log?.info?.('[视频][音色] 已生成 TTS 默认旁白参考音频', {
+        video_gen_id,
+        voice_id: voiceId,
+        local_path: String(result.local_path).slice(0, 120),
+      });
+      return result.local_path;
+    }
+  } catch (e) {
+    log?.warn?.('[视频][音色] 生成 TTS 默认旁白参考音频失败', {
+      video_gen_id,
+      error: e && e.message ? e.message : String(e),
+    });
+  }
+  return '';
+}
+
 function applySeedance2CertifiedAssetUrlsToVideoOpts(db, log, opts) {
   const out = { ...opts };
   const lookup = buildSd2ActiveAssetUrlLookup(db, opts.drama_id);
@@ -3539,6 +3590,7 @@ async function callMinimaxH3VideoApi(config, log, opts) {
     files_base_url,
     storage_local_path,
     video_gen_id,
+    voice_reference_url,
   } = opts || {};
   const url = buildMinimaxH3CreateUrl(config);
   const finalModel = isMinimaxH3Model(model) ? 'MiniMax-H3' : model || 'MiniMax-H3';
@@ -3587,6 +3639,30 @@ async function callMinimaxH3VideoApi(config, log, opts) {
       if (refUrl) {
         content.push({ type: 'image_url', image_url: { url: refUrl }, role: 'reference_image' });
       }
+    }
+    // 人声音色参考（多模态参考生视频：可直接与 reference_image 组合；与首尾帧互斥）
+    let voiceUrl = (voice_reference_url || '').toString().trim();
+    if (voiceUrl) {
+      // 本地相对路径/本地 URL → 读文件转 base64（MiniMax 云端访问不到本机 localhost，须内嵌）
+      const isLocal = /localhost|127\.0\.0\.1/i.test(voiceUrl) || !/^https?:\/\//i.test(voiceUrl) || /\/static\//i.test(voiceUrl);
+      if (isLocal && storage_local_path) {
+        const baseUrl = (files_base_url || '').replace(/\/$/, '');
+        const afterStatic = voiceUrl.split('/static/')[1] || (baseUrl ? voiceUrl.replace(baseUrl + '/', '').replace(baseUrl, '') : null);
+        const relPath = afterStatic ? afterStatic.replace(/^\//, '') : (voiceUrl.replace(/^\//, '') || null);
+        if (relPath) {
+          const filePath = path.join(storage_local_path, relPath);
+          try {
+            if (fs.existsSync(filePath)) {
+              const buf = fs.readFileSync(filePath);
+              const ext = path.extname(filePath).toLowerCase();
+              const mime = { '.mp3': 'audio/mp3', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.ogg': 'audio/ogg' }[ext] || 'audio/mp3';
+              voiceUrl = 'data:' + mime + ';base64,' + buf.toString('base64');
+              log.info('[MiniMaxH3][音色] 本地音色已转 base64 提交', { video_gen_id, rel: relPath.slice(0, 80) });
+            }
+          } catch (_) {}
+        }
+      }
+      content.push({ type: 'audio_url', audio_url: { url: voiceUrl }, role: 'reference_audio' });
     }
   }
 
@@ -3684,10 +3760,11 @@ async function callVideoApi(db, log, opts) {
     opts = applySeedance2CertifiedAssetUrlsToVideoOpts(db, log, opts);
   }
 
-  // Seedance 2.0 自动注入角色音色参考（模型为 SD2 家族，或协议为 volcengine_omni；未显式指定 voice_reference_url 时）
+  // 自动注入角色音色参考（Seedance 2.0 / volcengine_omni，或 MiniMax H3 多模态参考；未显式指定 voice_reference_url 时）
   const isSeedance2 =
     isSeedance2FamilyModel(model) || protocol === 'volcengine_omni';
-  if (isSeedance2 && db && opts.drama_id && !opts.voice_reference_url) {
+  const isMinimaxH3 = protocol === 'minimax_h3';
+  if ((isSeedance2 || isMinimaxH3) && db && opts.drama_id && !opts.voice_reference_url) {
     const voiceMap = collectActiveCharacterVoiceRefs(db, opts.drama_id);
     if (voiceMap.size > 0) {
       // 优先使用分镜显式指定的角色（如果有），否则取第一个
@@ -3710,7 +3787,7 @@ async function callVideoApi(db, log, opts) {
       }
       if (chosen) {
         opts.voice_reference_url = chosen;
-        log.info('[视频][SD2][全能] 自动为 Seedance 2.0 注入角色音色参考（来自角色 seedance2_voice_asset）', {
+        log.info('[视频][音色] 自动注入角色音色参考（来自角色 seedance2_voice_asset）', {
           video_gen_id,
           storyboard_id: opts.storyboard_id,
           voice_ref_url: String(chosen).slice(0, 100)
@@ -3723,7 +3800,18 @@ async function callVideoApi(db, log, opts) {
         });
       }
     } else {
-      log.info('[视频][SD2][全能] Seedance 2.0 模型但本剧暂无 active 音色参考', { video_gen_id, drama_id: opts.drama_id });
+      log.info('[视频][SD2][全能] Seedance 2.0 模型但本剧暂无 active 角色音色参考', { video_gen_id, drama_id: opts.drama_id });
+      if (isMinimaxH3 && Array.isArray(opts.reference_urls) && opts.reference_urls.length > 0) {
+        const narratorRef = await resolveDefaultNarratorVoiceReferenceUrl(db, log, opts.storage_local_path, video_gen_id);
+        if (narratorRef && !opts.voice_reference_url) {
+          opts.voice_reference_url = narratorRef;
+          log.info('[视频][音色] 已回退为 TTS 默认旁白音色参考', {
+            video_gen_id,
+            drama_id: opts.drama_id,
+            voice_ref_url: String(narratorRef).slice(0, 100),
+          });
+        }
+      }
     }
   }
   log.info('[视频] 路由协议', {
@@ -3924,6 +4012,7 @@ async function callVideoApi(db, log, opts) {
       files_base_url: opts.files_base_url,
       storage_local_path: opts.storage_local_path,
       video_gen_id: opts.video_gen_id,
+      voice_reference_url: opts.voice_reference_url,
     });
   }
 

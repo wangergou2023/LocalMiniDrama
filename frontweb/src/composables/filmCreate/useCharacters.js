@@ -71,6 +71,13 @@ export function useCharacters(deps) {
   const charSd2CertPayload = ref(null)
   const sd2VoiceUploadingId = ref(null)
 
+  // ── 软件内置音色库（参考音色）状态 ────────────────────
+  const voiceBankVisible = ref(false)
+  const voiceBankLoading = ref(false)
+  const voiceBankList = ref([])
+  const voiceBankApplyingId = ref(null)
+  const currentVoiceBankChar = ref(null)
+
   // ── 角色库状态 ────────────────────────────────────────
   const showCharLibrary = ref(false)
   const charLibraryList = ref([])
@@ -762,6 +769,52 @@ export function useCharacters(deps) {
     input.click()
   }
 
+  // 打开内置音色库弹窗，拉取音色列表
+  async function openVoiceBank(char) {
+    currentVoiceBankChar.value = char || null
+    voiceBankVisible.value = true
+    voiceBankLoading.value = true
+    try {
+      const res = await characterAPI.voiceBankList()
+      voiceBankList.value = res?.data?.voices || res?.voices || []
+    } catch (e) {
+      ElMessage.error(e?.message || '内置音色库加载失败')
+    } finally {
+      voiceBankLoading.value = false
+    }
+  }
+
+  // 试听某个内置音色（通过后端 /voice-bank/audio/:key 流式返回 mp3）
+  function playVoiceBankAudio(v) {
+    if (!v?.key) return
+    const url = `/voice-bank/audio/${encodeURIComponent(v.key)}`
+    try { if (window.__vbAudio) { window.__vbAudio.pause(); window.__vbAudio = null } } catch (_) {}
+    const audio = new Audio(url)
+    window.__vbAudio = audio
+    audio.play().catch(() => {})
+  }
+
+  function closeVoiceBank() {
+    voiceBankVisible.value = false
+  }
+
+  // 应用某个内置音色到指定角色
+  async function applyVoiceBank(char, voiceKey) {
+    if (!char?.id || !voiceKey) return
+    voiceBankApplyingId.value = char.id
+    try {
+      const res = await characterAPI.voiceBankApply(char.id, voiceKey)
+      ElMessage.success('已应用内置音色（Seedance 2.0 / MiniMax H3 均生效）')
+      voiceBankVisible.value = false
+      // 重新加载数据，确保 seedance2_voice_asset 更新
+      await loadDrama()
+    } catch (e) {
+      ElMessage.error(e?.message || '应用音色失败')
+    } finally {
+      voiceBankApplyingId.value = null
+    }
+  }
+
   // 播放音色参考（Seedance 2.0 / MiniMax H3 通用，仅 active 状态）
   function playSd2Voice(char) {
     const url = char?.seedance2_voice_asset?.url
@@ -801,6 +854,12 @@ export function useCharacters(deps) {
     showCharSd2Cert,
     charSd2CertPayload,
     sd2VoiceUploadingId,
+    // 内置音色库状态
+    voiceBankVisible,
+    voiceBankLoading,
+    voiceBankList,
+    voiceBankApplyingId,
+    currentVoiceBankChar,
     // 库状态
     showCharLibrary,
     charLibraryList,
@@ -853,6 +912,11 @@ export function useCharacters(deps) {
     onSd2VoicePrimaryAction,
     onSd2VoiceReplace,
     sd2VoiceActionLabel,
+    // 内置音色库操作
+    openVoiceBank,
+    closeVoiceBank,
+    applyVoiceBank,
+    playVoiceBankAudio,
     playSd2Voice,
     loadCharLibraryList,
     debouncedLoadCharLibrary,

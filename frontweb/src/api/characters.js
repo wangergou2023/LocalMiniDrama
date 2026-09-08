@@ -59,5 +59,12 @@ export const characterAPI = {
   },
   sd2VoiceRefresh(characterId) {
     return request.post(`/characters/${characterId}/sd2-voice-refresh`, {})
+  },
+  // 软件内置音色库（参考音色）
+  voiceBankList() {
+    return request.get('/voice-bank')
+  },
+  voiceBankApply(characterId, voiceKey) {
+    return request.post(`/characters/${characterId}/voice-bank-apply`, { voice_key: voiceKey })
   }
 }

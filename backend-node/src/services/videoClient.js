@@ -3830,6 +3830,7 @@ async function callVideoApi(db, log, opts) {
       image_url: opts.image_url || opts.first_frame_url,
       reference_image_urls: opts.reference_urls,
       reference_labels: opts.reference_labels,
+      reference_audio_urls: opts.reference_audio_urls,
       aspect_ratio,
       duration: opts.duration,
       files_base_url: opts.files_base_url,

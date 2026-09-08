@@ -72,6 +72,7 @@ function rowToItem(r) {
     created_at: r.created_at,
     updated_at: r.updated_at,
     completed_at: r.completed_at,
+    reference_audio_urls: r.reference_audio_urls,
     /** 失败且已有上游任务 ID 时可「继续查询」，不暴露原始 provider_task_id */
     can_resume_poll: r.status === 'failed' && hasProviderTaskId(r),
   };
@@ -488,6 +489,17 @@ async function processVideoGeneration(db, log, videoGenId) {
         }
       } catch (_) {}
     }
+    // 参考音频（H3 ref_audios）：new/failed 行存的是 JSON 数组（URL/路径）
+    let reference_audio_urls = null;
+    if (row.reference_audio_urls) {
+      try {
+        const rawA = JSON.parse(row.reference_audio_urls);
+        if (Array.isArray(rawA)) {
+          reference_audio_urls = rawA.filter(Boolean);
+          if (!reference_audio_urls.length) reference_audio_urls = null;
+        }
+      } catch (_) {}
+    }
     // 优先使用分镜自身的镜头时长（storyboard.duration），其次用 video_generations.duration
     let effectiveDuration = row.duration || null;
     if (row.storyboard_id) {
@@ -549,6 +561,7 @@ async function processVideoGeneration(db, log, videoGenId) {
         last_frame_url: hasOmniRefs ? undefined : row.last_frame_url,
         reference_urls,
         reference_labels,
+        reference_audio_urls,
         files_base_url: filesBaseUrl,
         storage_local_path: storageLocalPath,
         video_gen_id: videoGenId,

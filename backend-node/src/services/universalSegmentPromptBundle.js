@@ -431,20 +431,26 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
 
   let neighborDetailBlock = '';
   try {
+    // 取出相邻分镜的完整文案（含 universal_segment_text，用于判断上一镜结尾/下一镜开头的实际动作，避免跨镜重复）
     const prevFull = db
       .prepare(
-        `SELECT storyboard_number, title, segment_title, action, dialogue, narration, shot_type, movement, atmosphere
+        `SELECT storyboard_number, title, segment_title, action, dialogue, narration, shot_type, movement, atmosphere, universal_segment_text
          FROM storyboards WHERE episode_id = ? AND storyboard_number < ? AND deleted_at IS NULL ORDER BY storyboard_number DESC LIMIT 1`
       )
       .get(sb.episode_id, sb.storyboard_number);
     const nextFull = db
       .prepare(
-        `SELECT storyboard_number, title, segment_title, action, dialogue, narration, shot_type, movement, atmosphere
+        `SELECT storyboard_number, title, segment_title, action, dialogue, narration, shot_type, movement, atmosphere, universal_segment_text
          FROM storyboards WHERE episode_id = ? AND storyboard_number > ? AND deleted_at IS NULL ORDER BY storyboard_number ASC LIMIT 1`
       )
       .get(sb.episode_id, sb.storyboard_number);
     const fmtN = (row, tag) => {
       if (!row) return `${tag}: (none)`;
+      const u = String(row.universal_segment_text || '').trim();
+      // 上一镜的结尾(最后一个分镜N行) / 下一镜的开头(第一个分镜N行)：供判别重复边界
+      const beats = u.split(/\n/).filter((l) => /^分镜\d+：/.test(l.trim()));
+      const lastBeat = beats.length ? beats[beats.length - 1].trim() : '';
+      const firstBeat = beats.length ? beats[0].trim() : '';
       const bits = [
         `${tag}:`,
         chunk('N_NUM', row.storyboard_number),
@@ -457,9 +463,22 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
         chunk('N_MOVEMENT', row.movement),
         chunk('N_ATMOSPHERE', row.atmosphere),
       ].filter(Boolean);
+      if (lastBeat) bits.push('N_ENDING_BEAT（上一镜/下一镜的结尾分镜N行，本镜开头禁止重演）: ' + lastBeat.slice(0, 320));
+      if (firstBeat) bits.push('N_OPENING_BEAT（上一镜/下一镜的开头分镜N行，仅供衔接参考）: ' + firstBeat.slice(0, 320));
       return bits.join('\n');
     };
-    neighborDetailBlock = [fmtN(prevFull, 'NEIGHBOR_PREV_DETAIL'), '', fmtN(nextFull, 'NEIGHBOR_NEXT_DETAIL')].join('\n');
+    neighborDetailBlock =
+      [
+        fmtN(prevFull, 'NEIGHBOR_PREV_DETAIL'),
+        '',
+        fmtN(nextFull, 'NEIGHBOR_NEXT_DETAIL'),
+        '',
+        'NEIGHBOR_SEQUENCE_RULE（避免与相邻分镜重复，违反即失败）:',
+        '- 本分镜的「分镜1」（开头子节拍）**严禁**重演 NEIGHBOR_PREV_DETAIL 里上一镜已完成的动作/结局。例如上一镜结尾是「抛刀化寒光射向分身」或「二人对视蓄势」，本镜开头不得再写一遍同样的抛刀/对视。',
+        '- 本分镜应在上一镜**结束后的新状态**上继续推进：先一句承接上一镜结果（如「寒光散去/蓄势后」），随即进入本镜自己的新动作，而不是把上一镜的动作再演一次。',
+        '- 本分镜结尾也不得提前演出 NEIGHBOR_NEXT_DETAIL 中下一镜的核心动作；相邻两镜的「结束→开始」只做状态承接，不重复同一动作或同一情景整段。',
+        '- 若本镜与上一镜题材连续（如「分身围攻」接「破分身」），明确把「上一镜的结果」作为本镜起点，再从该结果派生新动作，避免两镜都在演同一个挥刀/相撞/抛刀的瞬间。',
+      ].join('\n');
   } catch (_) {}
 
   const multiBeatContract = [
@@ -471,6 +490,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     '- 第4行到第(3+M)行：依次为「分镜1： T1秒:」「分镜2： T2秒:」…「分镜M： TM秒:」；每行冒号后先写秒数再写该子时段内的动态影像与运镜描写。',
     `- 约束：T1+T2+…+TM 必须严格等于 TOTAL_CLIP_SECONDS（数值与 ${durationLabel} 一致）；每个 Tk>0；子分镜序号连续无跳号。`,
     '- 若 M=1：即仅一行「分镜1： TOTAL秒:」写满整段；若 M>1：每行只覆盖本子时段，前后行衔接成连续时间线，避免剧情跳跃或重复前一行已完成的动作。',
+    '- 本镜的「分镜1」不得重演上一分镜结尾已完成的情景（见 NEIGHBOR_SEQUENCE_RULE），应从上一镜结果后的新状态推进并派生本镜新动作；「分镜M」结尾留给下一分镜做状态承接。',
     '- 禁止额外说明行、markdown、英文小标题；禁止把「子分镜」写成多次独立成片 API。',
   ].join('\n');
 

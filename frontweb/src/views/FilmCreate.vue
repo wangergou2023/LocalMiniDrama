@@ -1928,29 +1928,52 @@
         <p style="font-size:12px;color:#909399;margin:0 0 10px">
           选择一个人声音色应用到当前角色（Seedance 2.0 / MiniMax H3 均生效），可先试听再应用。
         </p>
-        <div v-if="voiceBankList.length" class="voice-bank-grid">
-          <div v-for="v in voiceBankList" :key="v.key" class="voice-bank-item">
-            <div class="vb-head">
-              <span class="vb-name">{{ v.name }}</span>
-              <span class="vb-gender">{{ v.gender }}</span>
+        <div v-if="voiceBankGroups.length" class="voice-bank-groups">
+          <div v-for="g in voiceBankGroups" :key="g.lang" class="voice-bank-group">
+            <div class="voice-bank-group-title">{{ g.lang }}</div>
+            <div v-if="g.male.length === 0" class="voice-bank-grid">
+              <div v-for="v in g.female" :key="v.key" class="voice-bank-item">
+                <div class="vb-head">
+                  <span class="vb-name">{{ v.name }}</span>
+                  <span class="vb-gender">{{ v.gender }}</span>
+                </div>
+                <div class="vb-meta">{{ v.style }}</div>
+                <div class="vb-actions">
+                  <el-button size="small" plain @click="playVoiceBankAudio(v)"><el-icon><VideoPlay /></el-icon><span style="margin-left:4px">试听</span></el-button>
+                  <el-button size="small" type="primary" :loading="voiceBankApplyingId === currentVoiceBankChar?.id" @click="applyVoiceBank(currentVoiceBankChar, v.key)">应用</el-button>
+                </div>
+              </div>
             </div>
-            <div class="vb-meta">{{ v.lang }} · {{ v.style }}</div>
-            <div class="vb-actions">
-              <el-button
-                size="small"
-                plain
-                @click="playVoiceBankAudio(v)"
-              >
-                <el-icon><VideoPlay /></el-icon>
-                <span style="margin-left:4px">试听</span>
-              </el-button>
-              <el-button
-                size="small"
-                type="primary"
-                :loading="voiceBankApplyingId === currentVoiceBankChar?.id"
-                @click="applyVoiceBank(currentVoiceBankChar, v.key)"
-              >应用</el-button>
-            </div>
+            <template v-else>
+              <div v-if="g.female.length" class="voice-bank-gender-title">女声</div>
+              <div v-if="g.female.length" class="voice-bank-grid">
+                <div v-for="v in g.female" :key="v.key" class="voice-bank-item">
+                  <div class="vb-head">
+                    <span class="vb-name">{{ v.name }}</span>
+                    <span class="vb-gender">{{ v.gender }}</span>
+                  </div>
+                  <div class="vb-meta">{{ v.style }}</div>
+                  <div class="vb-actions">
+                    <el-button size="small" plain @click="playVoiceBankAudio(v)"><el-icon><VideoPlay /></el-icon><span style="margin-left:4px">试听</span></el-button>
+                    <el-button size="small" type="primary" :loading="voiceBankApplyingId === currentVoiceBankChar?.id" @click="applyVoiceBank(currentVoiceBankChar, v.key)">应用</el-button>
+                  </div>
+                </div>
+              </div>
+              <div v-if="g.male.length" class="voice-bank-gender-title">男声</div>
+              <div v-if="g.male.length" class="voice-bank-grid">
+                <div v-for="v in g.male" :key="v.key" class="voice-bank-item">
+                  <div class="vb-head">
+                    <span class="vb-name">{{ v.name }}</span>
+                    <span class="vb-gender">{{ v.gender }}</span>
+                  </div>
+                  <div class="vb-meta">{{ v.style }}</div>
+                  <div class="vb-actions">
+                    <el-button size="small" plain @click="playVoiceBankAudio(v)"><el-icon><VideoPlay /></el-icon><span style="margin-left:4px">试听</span></el-button>
+                    <el-button size="small" type="primary" :loading="voiceBankApplyingId === currentVoiceBankChar?.id" @click="applyVoiceBank(currentVoiceBankChar, v.key)">应用</el-button>
+                  </div>
+                </div>
+              </div>
+            </template>
           </div>
         </div>
         <el-empty v-else-if="!voiceBankLoading" description="暂无内置音色" />
@@ -3057,7 +3080,7 @@ const {
   extractingCharAppearance, extractingAnchors, addCharRefImage, addCharRefFileInput,
   charactersGenerating, generatingCharIds, sd2CertifyingId, showCharSd2Cert, charSd2CertPayload,
   sd2VoiceUploadingId,
-  voiceBankVisible, voiceBankLoading, voiceBankList, voiceBankApplyingId, currentVoiceBankChar,
+  voiceBankVisible, voiceBankLoading, voiceBankList, voiceBankGroups, voiceBankApplyingId, currentVoiceBankChar,
   showCharLibrary, charLibraryList, charLibraryLoading, charLibraryPage, charLibraryPageSize,
   charLibraryTotal, charLibraryKeyword, charLibraryTab,
   dramaAllCharList, dramaAllCharLoading, dramaAllCharPage, dramaAllCharPageSize, dramaAllCharTotal, dramaAllCharKeyword,
@@ -6501,6 +6524,22 @@ function omniRefLabel(item) {
   return 'prop appearance for "' + (name || '物品') + '"'
 }
 
+/** 分镜的参考音频（对白 TTS + 旁白 TTS）绝对 URL 列表，用于 H3 ref_audios（最多 3 段）；无则空 */
+function sbAudioRefUrls(sb) {
+  if (!sb?.id) return []
+  const urls = []
+  const seen = new Set()
+  const pushRel = (rel) => {
+    const s = String(rel || '').trim()
+    if (!s || seen.has(s)) return
+    seen.add(s)
+    urls.push(toAbsoluteImageUrl('/static/' + s.replace(/^\//, '')))
+  }
+  pushRel(sbDialogueAudioRelPath(sb))
+  pushRel(sbNarrationAudioRelPath(sb))
+  return urls.slice(0, 3)
+}
+
 /** 全能模式：场景/角色/物品 → 绝对 URL 列表（不含经典分镜中间主图；供可灵 Omni / 火山多图参考，最多 10，方舟侧最多取 9 张） */
 function collectSbOmniReferenceAbsoluteUrls(sb) {
   if (!sb?.id) return []
@@ -6973,6 +7012,7 @@ async function onGenerateSbVideo(sb) {
       last_frame_url: universalOmniApi ? undefined : vLast,
       reference_image_urls: referenceUrls,
       reference_labels: omniLabels,
+      reference_audio_urls: sbAudioRefUrls(sb),
       style: getSelectedStyle(),
       aspect_ratio: projectAspectRatio.value || '16:9',
       resolution: videoResolution.value || undefined,
@@ -7435,6 +7475,7 @@ async function startBatchVideoGeneration() {
             last_frame_url: vLast,
             reference_image_urls: refUrls,
             reference_labels: omniLabels,
+            reference_audio_urls: sbAudioRefUrls(sb),
             style: getSelectedStyle(),
             aspect_ratio: projectAspectRatio.value || '16:9',
             resolution: videoResolution.value || undefined,
@@ -8135,6 +8176,7 @@ async function runOneClickPipeline(textOnly = false) {
               last_frame_url: vLast,
               reference_image_urls: refUrls,
             reference_labels: omniLabels,
+            reference_audio_urls: sbAudioRefUrls(sb),
               style,
               aspect_ratio: projectAspectRatio.value || '16:9',
               resolution: videoResolution.value || undefined,
@@ -8479,6 +8521,7 @@ async function runRepairPipeline() {
               last_frame_url: vLast,
               reference_image_urls: refUrls,
             reference_labels: omniLabels,
+            reference_audio_urls: sbAudioRefUrls(sb),
               aspect_ratio: projectAspectRatio.value || '16:9',
               resolution: videoResolution.value || undefined,
               duration: getSbVideoDurationForApi(sb),
@@ -11142,15 +11185,32 @@ html.light .sb-narration-input :deep(.el-textarea__inner::placeholder) {
 }
 /* 内置音色库弹窗 */
 .voice-bank-dialog .el-dialog__body { padding-top: 10px; }
+.voice-bank-dialog { max-width: 720px; }
+.voice-bank-dialog .el-dialog__body { max-height: 70vh; overflow-y: auto; }
 .voice-bank-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
   gap: 10px;
+}
+.voice-bank-groups { display: flex; flex-direction: column; gap: 14px; }
+.voice-bank-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-primary, #303133);
+  padding-left: 8px;
+  margin-bottom: 6px;
+  border-left: 3px solid var(--el-color-primary, #409eff);
+  line-height: 20px;
+}
+.voice-bank-gender-title {
+  font-size: 12px;
+  color: var(--el-text-color-secondary, #909399);
+  margin: 4px 0 6px;
 }
 .voice-bank-item {
   border: 1px solid var(--el-border-color-lighter, #ebeef5);
   border-radius: 8px;
-  padding: 10px;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -11159,17 +11219,25 @@ html.light .sb-narration-input :deep(.el-textarea__inner::placeholder) {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
 }
 .voice-bank-item .vb-name {
   font-weight: 600;
   font-size: 14px;
+  line-height: 1.3;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .voice-bank-item .vb-gender {
+  flex-shrink: 0;
   font-size: 11px;
   color: var(--el-color-primary, #409eff);
   border: 1px solid currentColor;
   border-radius: 4px;
   padding: 0 5px;
+  line-height: 18px;
 }
 .voice-bank-item .vb-meta {
   font-size: 12px;
@@ -11180,6 +11248,7 @@ html.light .sb-narration-input :deep(.el-textarea__inner::placeholder) {
   gap: 6px;
   margin-top: 2px;
 }
+.voice-bank-item .vb-actions .el-button { flex: 1; }
 .sd2-cert-value {
   display: inline-block;
   max-width: 100%;

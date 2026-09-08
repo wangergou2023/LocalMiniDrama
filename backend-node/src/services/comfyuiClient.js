@@ -135,6 +135,50 @@ async function prepareReferenceImages(referenceUrls, comfyuiInputDir, log, stora
   return filenames;
 }
 
+/** 把音频参考 URL/路径准备进 ComfyUI input 目录，返回可写入 LoadAudio 的 [{name, ext}] 列表（含 srcIndices 对齐）。 */
+async function prepareReferenceAudios(referenceUrls, comfyuiInputDir, log, storageLocalPath) {
+  if (!Array.isArray(referenceUrls) || referenceUrls.length === 0) return [];
+  const filenames = [];
+  const srcIndices = [];
+  const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.oga', '.ogg', '.aac', '.flac', '.mp4'];
+  for (let i = 0; i < referenceUrls.length; i++) {
+    const ref = referenceUrls[i];
+    if (!ref) continue;
+    try {
+      const extMatch = String(ref).split('?')[0].match(/\.([a-zA-Z0-9]+)$/);
+      const ext = '.' + (extMatch ? extMatch[1].toLowerCase() : 'mp3');
+      const safeExt = AUDIO_EXTS.includes(ext) ? ext : '.mp3';
+      const name = 'ref_audio_' + Date.now() + '_' + i + safeExt;
+      const destPath = path.join(comfyuiInputDir, name);
+      let via = null;
+      if (ref.startsWith('data:audio')) {
+        const base64Data = ref.replace(/^data:audio\/[^;]+;base64,/, '');
+        fs.writeFileSync(destPath, Buffer.from(base64Data, 'base64'));
+        via = 'base64';
+      } else if (ref.startsWith('http://') || ref.startsWith('https://')) {
+        await httpDownload(ref, destPath);
+        via = 'http';
+      } else if (fs.existsSync(ref)) {
+        fs.copyFileSync(ref, destPath);
+        via = 'abs-path';
+      } else if (storageLocalPath && fs.existsSync(path.join(storageLocalPath, ref.replace(/^\//, '')))) {
+        fs.copyFileSync(path.join(storageLocalPath, ref.replace(/^\//, '')), destPath);
+        via = 'storage-rel';
+      } else {
+        log.warn('[ComfyUI] 参考音频 ' + (i + 1) + '/' + referenceUrls.length + ' 未找到，跳过: ' + String(ref).slice(0, 160));
+        continue;
+      }
+      log.info('[ComfyUI] 参考音频 ' + (i + 1) + '/' + referenceUrls.length + ' 已就绪 (' + via + '): ' + String(ref).slice(0, 120) + ' -> ' + name);
+      filenames.push(name);
+      srcIndices.push(i);
+    } catch (e) {
+      log.warn('[ComfyUI] 参考音频 ' + (i + 1) + '/' + referenceUrls.length + ' 处理失败: ' + String(ref).slice(0, 120) + ' err=' + e.message);
+    }
+  }
+  filenames.srcIndices = srcIndices;
+  return filenames;
+}
+
 // Qwen-Image-Edit-2511 GGUF 工作流固定文件名（models 目录下）
 /**
  * 按参考图标签分组：首帧站位锁+场景 / 角色 / 道具（无标签的归入道具组）。
@@ -466,7 +510,7 @@ function hasH3ReferenceNode(wf) {
  *  - 无 labels：每张参考图一个 LoadImage，逐张切槽（最多 9 张，节点 Autogrow 上限）。
  * 就地修改 apiPrompt，返回说明头（可为空串）。
  */
-function applyH3RefsToApi(apiPrompt, refImages, labels, promptText) {
+function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles) {
   let h3Id = null;
   for (const [nid, node] of Object.entries(apiPrompt)) {
     if (node && node.class_type === 'MiniMaxH3ReferenceToVideo') { h3Id = nid; break; }
@@ -474,7 +518,7 @@ function applyH3RefsToApi(apiPrompt, refImages, labels, promptText) {
   if (!h3Id) return '';
   const h3 = apiPrompt[h3Id];
   // 清掉旧接线（若工作流本身有 ref_image_0..N / ref_audio_0..N -> LoadImage/LoadAudio）。
-  // 应用当前只投喂整体参考图，不提供参考视频/音轨；保留音频/视频占位会因文件不存在而报错，故一并断开。
+  // 应用可投喂参考图与参考音频；参考视频/音轨暂未用，保留占位会因文件不存在而报错，故一并断开。
   for (const k of Object.keys(h3.inputs || {})) {
     if (k.indexOf('ref_images.ref_image_') === 0 ||
         k.indexOf('ref_audios.ref_audio_') === 0 ||
@@ -515,6 +559,17 @@ function applyH3RefsToApi(apiPrompt, refImages, labels, promptText) {
     }
     headerLines.push(desc);
   }
+
+  // 参考音频：每段独立接 ref_audio_0..N（最多 3 段），<Audio j> 编号从 1 起
+  const audioList = (Array.isArray(audioFiles) ? audioFiles : []).filter(Boolean);
+  const audioCap = Math.min(audioList.length, 3);
+  for (let j = 0; j < audioCap; j++) {
+    const k = 'h3_ad_' + j;
+    addNodes[k] = { class_type: 'LoadAudio', inputs: { audio: audioList[j] } };
+    h3.inputs['ref_audios.ref_audio_' + j] = [k, 0];
+    headerLines.push('<Audio ' + (j + 1) + '>：参考音频片段（用作生成音频的音色/节奏参考，按 <Audio j> 标签引用）');
+  }
+
   Object.assign(apiPrompt, addNodes);
 
   const header = headerLines.length ? headerLines.join('\n') + '\n\n生成一段连续、完整、单一镜头的画面（禁止拼贴、分屏、宫格、多画面并列、复刻参考图的网格/多视图布局）：\n' : '';
@@ -523,7 +578,7 @@ function applyH3RefsToApi(apiPrompt, refImages, labels, promptText) {
 }
 
 async function callComfyUIVideoApi(config, log, opts) {
-  const { prompt, model, image_url, video_gen_id, files_base_url, storage_local_path, reference_image_urls, reference_labels } = opts;
+  const { prompt, model, image_url, video_gen_id, files_base_url, storage_local_path, reference_image_urls, reference_labels, reference_audio_urls } = opts;
   const baseUrl = (config.base_url || "http://127.0.0.1:8188").replace(/\/$/, "");
 
   const fs = require("fs");
@@ -573,6 +628,7 @@ async function callComfyUIVideoApi(config, log, opts) {
     // H3 参考生视频：准备多张参考图（场景/角色/道具）+ 标签；LTX 用首帧图
     let refImages;
     let refLabelsArr = [];
+    let refAudios = [];
     if (isH3Ref) {
       const rawUrls = Array.isArray(reference_image_urls) ? reference_image_urls.filter(Boolean) : [];
       const rawLabels = Array.isArray(reference_labels) ? reference_labels : [];
@@ -591,6 +647,11 @@ async function callComfyUIVideoApi(config, log, opts) {
           refImages = [];
         }
       }
+      // 参考音频：准备进 input 目录，逐段接 ref_audio_0..N
+      const audioUrls = Array.isArray(reference_audio_urls) ? reference_audio_urls.filter(Boolean) : [];
+      if (audioUrls.length) {
+        refAudios = await prepareReferenceAudios(audioUrls, inputDir, log, storage_local_path);
+      }
     }
 
     const { prompt: apiPrompt } = prepareWorkflow(wf, {
@@ -605,8 +666,8 @@ async function callComfyUIVideoApi(config, log, opts) {
 
     // H3 参考生视频：分组/拼图/说明头/动态槽位已由 applyH3RefsToApi 处理，跳过 LTX 首帧图覆盖
     if (isH3Ref) {
-      const header = applyH3RefsToApi(apiPrompt, refImages || [], refLabelsArr, prompt || '');
-      log.info("[ComfyUI/H3] 参考生视频，参考图 " + (refImages ? refImages.length : 0) + " 张" + (header ? '（含拼图说明头）' : ''));
+      const header = applyH3RefsToApi(apiPrompt, refImages || [], refLabelsArr, prompt || '', refAudios);
+      log.info("[ComfyUI/H3] 参考生视频，参考图 " + (refImages ? refImages.length : 0) + " 张，参考音频 " + (refAudios ? refAudios.length : 0) + " 段" + (header ? '（含说明头）' : ''));
     } else {
       // Video-specific injection
       for (const [nid, node] of Object.entries(apiPrompt)) {

@@ -78,6 +78,37 @@ export function useCharacters(deps) {
   const voiceBankApplyingId = ref(null)
   const currentVoiceBankChar = ref(null)
 
+  // 按「哪里话（方言/语言）」分组，组内女声在前、男声在后，避免男女混排
+  const voiceBankGroups = computed(() => {
+    const groups = []
+    const byLang = new Map()
+    for (const v of voiceBankList.value || []) {
+      const lang = String(v.lang || v.raw || '其他').trim()
+      if (!byLang.has(lang)) byLang.set(lang, { lang, items: [] })
+      byLang.get(lang).items.push(v)
+    }
+    // 固定方言顺序：普通话 → 东北话 → 陕西方言 → 粤语(港) → 台湾国语，其余按名称兜底
+    const order = ['普通话', '东北话', '陕西方言', '粤语(港)', '台湾国语']
+    const sortedKeys = [...byLang.keys()].sort((a, b) => {
+      const ia = order.indexOf(a)
+      const ib = order.indexOf(b)
+      if (ia !== -1 && ib !== -1) return ia - ib
+      if (ia !== -1) return -1
+      if (ib !== -1) return 1
+      return a.localeCompare(b)
+    })
+    for (const lang of sortedKeys) {
+      const items = byLang.get(lang).items.slice()
+      items.sort((a, b) => {
+        // 女声在前，男声在后
+        if (a.gender !== b.gender) return a.gender === '女' ? -1 : 1
+        return String(a.style || a.name || '').localeCompare(String(b.style || b.name || ''))
+      })
+      groups.push({ lang, female: items.filter((x) => x.gender === '女'), male: items.filter((x) => x.gender !== '女'), items })
+    }
+    return groups
+  })
+
   // ── 角色库状态 ────────────────────────────────────────
   const showCharLibrary = ref(false)
   const charLibraryList = ref([])
@@ -784,10 +815,10 @@ export function useCharacters(deps) {
     }
   }
 
-  // 试听某个内置音色（通过后端 /voice-bank/audio/:key 流式返回 mp3）
+  // 试听某个内置音色（通过后端 /voice-bank/audio/:key 流式返回 mp3）——注意路由挂在 /api/v1 下，需带前缀
   function playVoiceBankAudio(v) {
     if (!v?.key) return
-    const url = `/voice-bank/audio/${encodeURIComponent(v.key)}`
+    const url = `/api/v1/voice-bank/audio/${encodeURIComponent(v.key)}`
     try { if (window.__vbAudio) { window.__vbAudio.pause(); window.__vbAudio = null } } catch (_) {}
     const audio = new Audio(url)
     window.__vbAudio = audio
@@ -858,6 +889,7 @@ export function useCharacters(deps) {
     voiceBankVisible,
     voiceBankLoading,
     voiceBankList,
+    voiceBankGroups,
     voiceBankApplyingId,
     currentVoiceBankChar,
     // 库状态

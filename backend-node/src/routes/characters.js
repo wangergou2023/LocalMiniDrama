@@ -4,6 +4,7 @@ const response = require('../response');
 const characterLibraryService = require('../services/characterLibraryService');
 const storageLayout = require('../services/storageLayout');
 const seedance2AssetGuards = require('../utils/seedance2AssetGuards');
+const voiceBankService = require('../services/voiceBankService');
 
 function routes(db, cfg, log, uploadService) {
   return {
@@ -397,6 +398,50 @@ function routes(db, cfg, log, uploadService) {
       } catch (err) {
         log.error('characters sd2-voice-refresh', { error: err.message });
         response.internalError(res, err.message);
+      }
+    },
+    /** 列出内置音色库（软件自带参考音色） */
+    voiceBankList: (req, res) => {
+      try {
+        response.success(res, { voices: voiceBankService.listVoices() });
+      } catch (err) {
+        log.error('characters voice-bank-list', { error: err.message });
+        response.internalError(res, err.message);
+      }
+    },
+    /** 应用内置音色到角色（Seedance 2.0 / MiniMax H3 均生效） */
+    voiceBankApply: (req, res) => {
+      try {
+        const charId = Number(req.params.id);
+        const voiceKey = req.body?.voice_key;
+        if (!voiceKey) return response.badRequest(res, '缺少 voice_key');
+        const result = voiceBankService.applyVoiceToCharacter(db, cfg, charId, voiceKey);
+        if (!result.ok) return response.badRequest(res, result.error || '应用音色失败');
+        response.success(res, { message: '已应用内置音色', seedance2_voice_asset: result.seedance2_voice_asset });
+      } catch (err) {
+        log.error('characters voice-bank-apply', { error: err.message });
+        response.internalError(res, err.message);
+      }
+    },
+    /** 内置音色音频（试听）：流式返回 mp3 */
+    voiceBankAudio: (req, res) => {
+      try {
+        const key = req.params.key;
+        const p = voiceBankService.voiceAudioPath(key);
+        if (!p) {
+          res.status(404);
+          res.end('not found');
+          return;
+        }
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        const stream = fs.createReadStream(p);
+        stream.on('error', () => { res.status(404); res.end('not found'); });
+        stream.pipe(res);
+        res.on('close', () => stream.destroy());
+      } catch (err) {
+        log.error('characters voice-bank-audio', { error: err.message });
+        res.status(500).end('error');
       }
     },
   };

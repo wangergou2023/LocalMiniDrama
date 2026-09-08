@@ -181,6 +181,9 @@ function setupRouter(cfg, db, log) {
   r.post('/characters/:id/sd2-certify/refresh', characters.sd2CertifyRefresh);
   r.post('/characters/:id/sd2-voice-upload', uploadModule.multerAudioSingle, characters.sd2VoiceUpload);
   r.post('/characters/:id/sd2-voice-refresh', characters.sd2VoiceRefresh);
+  r.get('/voice-bank', characters.voiceBankList);
+  r.get('/voice-bank/audio/:key', characters.voiceBankAudio);
+  r.post('/characters/:id/voice-bank-apply', characters.voiceBankApply);
   r.post('/characters/:id/extract-from-image', characters.extractFromImage);
   r.post('/characters/:id/extract-anchors', characters.extractAnchors);
 

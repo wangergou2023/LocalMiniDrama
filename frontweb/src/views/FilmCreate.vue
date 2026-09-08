@@ -542,6 +542,15 @@
                         </el-button>
                         <span v-if="char.seedance2_voice_asset?.status === 'stale'" style="font-size:11px;color:#e6a23c">需刷新</span>
                       </template>
+                      <el-button
+                        size="small"
+                        type="primary"
+                        plain
+                        @click="openVoiceBank(char)"
+                      >
+                        <el-icon><Collection /></el-icon>
+                        <span style="margin-left:4px">内置音色库</span>
+                      </el-button>
                       <span style="font-size:10px;color:#909399">Seedance 2.0 / MiniMax H3 均生效</span>
                     </div>
                     <div v-if="getCharAffectedStoryboards(char.id).length" class="asset-storyboard-link">
@@ -1907,6 +1916,50 @@
       </template>
     </el-dialog>
 
+    <!-- 内置音色库弹窗 -->
+    <el-dialog
+      v-model="voiceBankVisible"
+      title="内置音色库（参考音色）"
+      width="min(680px, 92vw)"
+      destroy-on-close
+      class="voice-bank-dialog"
+    >
+      <div v-loading="voiceBankLoading" style="min-height:220px">
+        <p style="font-size:12px;color:#909399;margin:0 0 10px">
+          选择一个人声音色应用到当前角色（Seedance 2.0 / MiniMax H3 均生效），可先试听再应用。
+        </p>
+        <div v-if="voiceBankList.length" class="voice-bank-grid">
+          <div v-for="v in voiceBankList" :key="v.key" class="voice-bank-item">
+            <div class="vb-head">
+              <span class="vb-name">{{ v.name }}</span>
+              <span class="vb-gender">{{ v.gender }}</span>
+            </div>
+            <div class="vb-meta">{{ v.lang }} · {{ v.style }}</div>
+            <div class="vb-actions">
+              <el-button
+                size="small"
+                plain
+                @click="playVoiceBankAudio(v)"
+              >
+                <el-icon><VideoPlay /></el-icon>
+                <span style="margin-left:4px">试听</span>
+              </el-button>
+              <el-button
+                size="small"
+                type="primary"
+                :loading="voiceBankApplyingId === currentVoiceBankChar?.id"
+                @click="applyVoiceBank(currentVoiceBankChar, v.key)"
+              >应用</el-button>
+            </div>
+          </div>
+        </div>
+        <el-empty v-else-if="!voiceBankLoading" description="暂无内置音色" />
+      </div>
+      <template #footer>
+        <el-button @click="closeVoiceBank()">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 编辑道具弹窗 -->
     <el-dialog v-model="showEditProp" :title="editPropForm?.id ? '编辑道具' : '添加道具'" width="75%" @close="onClosePropDialog">
       <el-form v-if="editPropForm" label-width="90px">
@@ -2710,7 +2763,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, reactive, nextTick } 
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Setting, Plus, Minus, Sunny, Moon, MagicStick, Upload, Delete, Check, Loading, WarningFilled, User, Box, Picture, Film, VideoCamera, Document, InfoFilled, Refresh, ZoomIn, QuestionFilled, DocumentAdd, Expand, Fold, VideoPlay, Grid, Close } from '@element-plus/icons-vue'
+import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Setting, Plus, Minus, Sunny, Moon, MagicStick, Upload, Delete, Check, Loading, WarningFilled, User, Box, Picture, Film, VideoCamera, Document, InfoFilled, Refresh, ZoomIn, QuestionFilled, DocumentAdd, Expand, Fold, VideoPlay, Grid, Close, Collection } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { useFilmStore } from '@/stores/film'
 import { useAidirStore } from '@/stores/aidir'
@@ -3004,6 +3057,7 @@ const {
   extractingCharAppearance, extractingAnchors, addCharRefImage, addCharRefFileInput,
   charactersGenerating, generatingCharIds, sd2CertifyingId, showCharSd2Cert, charSd2CertPayload,
   sd2VoiceUploadingId,
+  voiceBankVisible, voiceBankLoading, voiceBankList, voiceBankApplyingId, currentVoiceBankChar,
   showCharLibrary, charLibraryList, charLibraryLoading, charLibraryPage, charLibraryPageSize,
   charLibraryTotal, charLibraryKeyword, charLibraryTab,
   dramaAllCharList, dramaAllCharLoading, dramaAllCharPage, dramaAllCharPageSize, dramaAllCharTotal, dramaAllCharKeyword,
@@ -3013,6 +3067,7 @@ const {
   saveCharRefImageIfAny, submitEditCharacter, doGenerateCharacterPrompt, doExtractCharFromImage,
   extractIdentityAnchors, clearCharRefImage, onCloseCharDialog, onDeleteCharacter, onGenerateCharacterImage, onSd2CertifyCharacter, onSd2CertifyRefresh, sd2ActionLabel, onSd2PrimaryAction, openCharSd2CertDialog,
   onSd2VoicePrimaryAction, onSd2VoiceReplace, sd2VoiceActionLabel, playSd2Voice,
+  openVoiceBank, closeVoiceBank, applyVoiceBank, playVoiceBankAudio,
   loadCharLibraryList, debouncedLoadCharLibrary, loadDramaAllCharList, debouncedLoadDramaAllCharList,
   onCharLibraryDialogOpen, onCharLibraryTabChange, isCharAddToEpisodeLoading,
   openEditCharLibrary, submitEditCharLibrary,
@@ -11084,6 +11139,46 @@ html.light .sb-narration-input :deep(.el-textarea__inner::placeholder) {
   white-space: normal;
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+/* 内置音色库弹窗 */
+.voice-bank-dialog .el-dialog__body { padding-top: 10px; }
+.voice-bank-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+.voice-bank-item {
+  border: 1px solid var(--el-border-color-lighter, #ebeef5);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.voice-bank-item .vb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.voice-bank-item .vb-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.voice-bank-item .vb-gender {
+  font-size: 11px;
+  color: var(--el-color-primary, #409eff);
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.voice-bank-item .vb-meta {
+  font-size: 12px;
+  color: var(--el-text-color-secondary, #909399);
+}
+.voice-bank-item .vb-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
 }
 .sd2-cert-value {
   display: inline-block;

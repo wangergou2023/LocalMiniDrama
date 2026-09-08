@@ -1239,9 +1239,9 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
     if (clipFromProject) {
       const clip = Number(videoClipDuration);
       if (isEn) {
-        extraConstraint += `\nEach shot "duration" field: prioritize **~${clip}s per shot** (project clip-length setting); ±1s OK. Total ~${Number(videoDuration)}s and ~${Number(storyboardCount)} shots are overall planning hints—do NOT force every shot to ~${implied}s (total÷count) when it conflicts with the project clip length.`;
+        extraConstraint += `\nEach shot "duration" field: decide by content. Set it to how long the shot's dialogue, action and camera movement genuinely need (e.g. a fast verbal exchange or simple cut = 3-6s; a sustained slow push-in or tense standoff = up to ~${clip}s). Treat ~${clip}s as the per-shot CEILING, not a fixed target—do NOT make every shot the same value just to match the project clip length; vary by content. Keep the total of all shots near ~${Number(videoDuration)}s.`;
       } else {
-        extraConstraint += `\n每个镜头的 **duration** 请优先按项目「每段约 **${clip} 秒**」填写（可 ±1 秒微调）。全片总时长约 ${Number(videoDuration)} 秒、镜头数约 ${Number(storyboardCount)} 为整体规划参考，**禁止**为机械凑「总时长÷镜数」（约 ${implied}s）而把每镜普遍写成过短镜头；除非该镜对白与动作为实需的极短镜头。`;
+        extraConstraint += `\n每个镜头的 **duration** 请按**内容实际需要**决定：对白密、动作快或信息量少的镜头应短（如 3-6 秒），运镜缓慢、情绪铺垫或冲突对峙可长（最多到约 ${clip} 秒）。把「每段约 ${clip} 秒」当作**单镜上限**，**不要**为了对齐项目每段秒数而把所有镜头写成同一个值，须按对白/动作/运镜长短自然**变化**；全片所有镜头时长之和约为 ${Number(videoDuration)} 秒。`;
       }
     } else if (isEn) {
       extraConstraint += `\nEach shot target duration: approximately ${effectiveShotDuration}s (= total ${Number(videoDuration)}s ÷ ${Number(storyboardCount)} shots). Set each shot's duration field to this value, adjusting ±1s for dialogue/action length.`;

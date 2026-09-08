@@ -473,80 +473,52 @@ function applyH3RefsToApi(apiPrompt, refImages, labels, promptText) {
   }
   if (!h3Id) return '';
   const h3 = apiPrompt[h3Id];
-  // 清掉旧接线（若工作流本身有 ref_image_0/1/2 -> LoadImage）
+  // 清掉旧接线（若工作流本身有 ref_image_0..N / ref_audio_0..N -> LoadImage/LoadAudio）。
+  // 应用当前只投喂整体参考图，不提供参考视频/音轨；保留音频/视频占位会因文件不存在而报错，故一并断开。
   for (const k of Object.keys(h3.inputs || {})) {
-    if (k.indexOf('ref_images.ref_image_') === 0) delete h3.inputs[k];
+    if (k.indexOf('ref_images.ref_image_') === 0 ||
+        k.indexOf('ref_audios.ref_audio_') === 0 ||
+        k.indexOf('ref_videos.ref_video_') === 0 ||
+        k.indexOf('ref_video_audios.ref_video_audio_') === 0) {
+      delete h3.inputs[k];
+    }
   }
 
-  let seq = 0;
+  // MiniMax H3 本地节点只用 <Picture i>/<Video k>/<Audio j> 标签把参考媒体编码进 conditioning；
+  // 正文里的 @图片N / 参考图N 均为普通文本，不引入参考 token。
+  // 逐张独立：把每张参考图接到各自的 ref_image_N，<Picture N> 编号从 1 起，与 ref_image_0.. 连接顺序一致。
+  const toPictureTags = (s) =>
+    String(s || '')
+      .replace(/@图片\s*(\d+)/g, '<Picture $1>')
+      .replace(/参考图\s*(\d+)/g, '<Picture $1>');
+  const boundPrompt = toPictureTags(promptText);
+
+  // 逐张：每图一个 LoadImage，直接接 ref_image_0..N（最多 9 张），不拼图
   const addNodes = {};
-  function buildOne(files, tag) {
-    if (!files || !files.length) return null;
-    const imgKeys = files.map((f) => {
-      const k = 'h3_ld_' + tag + '_' + (seq++);
-      addNodes[k] = { class_type: 'LoadImage', inputs: { image: f } };
-      return k;
-    });
-    let prev = imgKeys[0];
-    for (let i = 1; i < imgKeys.length; i++) {
-      const sk = 'h3_st_' + tag + '_' + (seq++);
-      addNodes[sk] = {
-        class_type: 'ImageStitch',
-        inputs: { image1: [prev, 0], image2: [imgKeys[i], 0], direction: 'right', match_image_size: true, spacing_width: 16, spacing_color: 'white' },
-      };
-      prev = sk;
-    }
-    return prev;
-  }
-
-  const typed = Array.isArray(labels) && labels.length === refImages.length;
-  const groups = { scene: [], chars: [], props: [] };
-  const names = { chars: [], props: [] };
-  if (typed) {
-    for (let i = 0; i < refImages.length; i++) {
-      const lbl = String(labels[i] || '');
-      const nameMatch = lbl.match(/for\s+"([^"]+)"/i);
-      const name = nameMatch ? nameMatch[1] : '';
-      if (/scene background|场景|scene/i.test(lbl)) groups.scene.push(refImages[i]);
-      else if (/character appearance|角色|character/i.test(lbl)) { groups.chars.push(refImages[i]); names.chars.push(name || ('角色' + (groups.chars.length))); }
-      else { groups.props.push(refImages[i]); names.props.push(name || ('物品' + (groups.props.length))); }
-    }
-  } else {
-    // 无标签回退：第 1 张当场景，其余当角色（投影到单个通道即可，尽量不丢图）
-    if (refImages.length >= 1) groups.scene = refImages.slice(0, 1);
-    if (refImages.length > 1) groups.chars = refImages.slice(1);
-  }
-
-  const slots = [];
+  const cap = Math.min(refImages.length, 9);
   const headerLines = [];
-  if (groups.scene.length) {
-    slots.push(buildOne(groups.scene, 'scene'));
-    headerLines.push('图' + slots.length + '：场景环境参考（注意：该图为参考，可能是多视角/宫格拼图——只取其中统一的空间、光线与氛围语义，禁止照搬其分格/取景/并列布局）');
-  }
-  if (groups.chars.length) {
-    slots.push(buildOne(groups.chars, 'char'));
-    headerLines.push(
-      groups.chars.length > 1
-        ? '图' + slots.length + '：角色外貌参考拼图（从左到右依次为：' + (names.chars.join('、') || '角色') + '；此为多个角色从左到右拼合参考，请严格区分每个人并保持各自的长相、发型、服装；若有某角色为四视图/多角度合成图，仅锁定其身份与外观，成片取单一自然镜头，禁止复现多视图/拼图布局；禁止把拼图中的并列人物当成同一人或多分屏画面）'
-        : '图' + slots.length + '：角色「' + (names.chars[0] || '角色') + '」外貌参考（若该图为同一人物多角度/四视图合成图，仅锁定其长相、发型、服装；成片取单一自然镜头，禁止复现其多视图/拼图布局）'
-    );
-  }
-  if (groups.props.length) {
-    slots.push(buildOne(groups.props, 'prop'));
-    headerLines.push(
-      groups.props.length > 1
-        ? '图' + slots.length + '：道具外观参考拼图（从左到右依次为：' + (names.props.join('、') || '道具') + '；为多个道具拼合参考，请区分各道具外形；禁止把并列道具当成一件或做成多分屏）'
-        : '图' + slots.length + '：道具「' + (names.props[0] || '道具') + '」外观参考（若为多角度/合成图，仅锁定道具外形）'
-    );
-  }
-
-  for (let i = 0; i < Math.min(slots.length, 9); i++) {
-    if (slots[i]) h3.inputs['ref_images.ref_image_' + i] = [slots[i], 0];
+  for (let i = 0; i < cap; i++) {
+    const k = 'h3_ld_i' + i;
+    addNodes[k] = { class_type: 'LoadImage', inputs: { image: refImages[i] } };
+    h3.inputs['ref_images.ref_image_' + i] = [k, 0];
+    const lbl = String((Array.isArray(labels) ? labels[i] : '') || '');
+    const nameMatch = lbl.match(/for\s+"([^"]+)"/i);
+    const name = nameMatch ? nameMatch[1] : '';
+    const picNum = i + 1;
+    let desc;
+    if (/scene background|场景|scene/i.test(lbl)) {
+      desc = '<Picture ' + picNum + '>：场景环境参考（注意：该图为参考，可能是多视角/宫格拼图——只取其中统一的空间、光线与氛围语义，禁止照搬其分格/取景/并列布局）';
+    } else if (/character appearance|角色|character/i.test(lbl)) {
+      desc = '<Picture ' + picNum + '>：角色「' + (name || '角色' + picNum) + '」外貌参考（若该图为同一人物多角度/四视图合成图，仅锁定其长相、发型、服装；成片取单一自然镜头，禁止复现其多视图/拼图布局）';
+    } else {
+      desc = '<Picture ' + picNum + '>：道具「' + (name || '物品' + picNum) + '」外观参考（若为多角度/合成图，仅锁定道具外形）';
+    }
+    headerLines.push(desc);
   }
   Object.assign(apiPrompt, addNodes);
 
   const header = headerLines.length ? headerLines.join('\n') + '\n\n生成一段连续、完整、单一镜头的画面（禁止拼贴、分屏、宫格、多画面并列、复刻参考图的网格/多视图布局）：\n' : '';
-  if (header && promptText !== undefined) h3.inputs.prompt = header + promptText;
+  if (header && promptText !== undefined) h3.inputs.prompt = header + boundPrompt;
   return header;
 }
 
@@ -678,16 +650,21 @@ async function callComfyUIVideoApi(config, log, opts) {
     });
 
     let videoFilename = null;
+    let videoSubfolder = '';
     const outs = result.outputs || {};
     for (const key of Object.keys(outs)) {
       const out = outs[key];
-      if (out.images && out.images.length > 0) { videoFilename = out.images[0].filename; break; }
-      if (out.gifs && out.gifs.length > 0) { videoFilename = out.gifs[0].filename; break; }
-      if (out.videos && out.videos.length > 0) { videoFilename = out.videos[0].filename; break; }
+      if (out.images && out.images.length > 0) { videoFilename = out.images[0].filename; videoSubfolder = out.images[0].subfolder || ''; break; }
+      if (out.gifs && out.gifs.length > 0) { videoFilename = out.gifs[0].filename; videoSubfolder = out.gifs[0].subfolder || ''; break; }
+      if (out.videos && out.videos.length > 0) { videoFilename = out.videos[0].filename; videoSubfolder = out.videos[0].subfolder || ''; break; }
     }
     if (!videoFilename) throw new Error("ComfyUI completed but no video found");
 
-    const videoUrl = baseUrl + "/view?filename=" + videoFilename + "&type=output";
+    // SaveVideo 的 filename_prefix 常含子目录（如 video/MiniMax_H3），ComfyUI 输出对象的 subfolder 字段
+    // 记录该子目录；/view 必须带 subfolder 才能取到文件，否则 404。
+    const viewParams = "filename=" + videoFilename + "&type=output" +
+      (videoSubfolder ? "&subfolder=" + encodeURIComponent(videoSubfolder) : "");
+    const videoUrl = baseUrl + "/view?" + viewParams;
     log.info("[ComfyUI/LTX/" + workflowFile + "] Done: " + videoUrl);
     return { video_url: videoUrl };
   }

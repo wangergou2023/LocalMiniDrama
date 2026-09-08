@@ -114,6 +114,29 @@ function routes(db, log) {
         response.internalError(res, err.message);
       }
     },
+    /** 手动上传分镜视频（应用重启/生成中断时由用户自行上传并绑定到分镜） */
+    uploadVideo: (req, res) => {
+      if (!req.file || !req.file.buffer) {
+        return response.badRequest(res, '请选择视频文件');
+      }
+      const dramaId = Number(req.body?.drama_id) || 0;
+      const storyboardId = req.body?.storyboard_id != null && String(req.body.storyboard_id).trim() !== ''
+        ? Number(req.body.storyboard_id)
+        : null;
+      if (!storyboardId || !Number.isFinite(storyboardId) || storyboardId <= 0) {
+        return response.badRequest(res, '缺少有效的分镜 ID');
+      }
+      const result = videoService.saveManualVideoUpload(db, log, {
+        dramaId,
+        storyboardId,
+        buffer: req.file.buffer,
+        originalName: req.file.originalname || 'video.mp4',
+        mimeType: req.file.mimetype,
+      });
+      if (!result.ok) return response.internalError(res, result.error);
+      log.info('[Video] 手动上传分镜视频', { storyboard_id: storyboardId, video_generation_id: result.video_generation_id });
+      response.success(res, result);
+    },
     fromImage: (req, res) => {
       try {
         const task = taskService.createTask(db, log, 'video_generation', req.params.image_gen_id);

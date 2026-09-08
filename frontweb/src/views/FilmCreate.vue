@@ -187,6 +187,14 @@
         style="display: none"
         @change="onSbImageFileChange"
       />
+      <!-- 分镜视频手动上传用（应用重启/生成中断时绑定本地视频），单例放外层 -->
+      <input
+        ref="sbVideoFileInput"
+        type="file"
+        accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,video/x-matroska,.mp4,.webm,.mov,.avi,.mkv"
+        style="display: none"
+        @change="onSbVideoFileChange"
+      />
       <!-- 剧本工作台：单卡片 + 选项卡（创作 / 选择） -->
       <section class="section card script-workbench-unified">
         <el-tabs v-model="scriptWorkbenchMode" class="script-workbench-tabs">
@@ -1102,19 +1110,17 @@
                 <div v-if="getSbSelectedScene(sb.id)" class="sb-thumb-row">
                   <span class="sb-thumb-label">场景</span>
                   <div class="sb-thumb-list">
-                    <RefStitchThumb
-                      v-if="sbSceneRefUrls(sb).length"
-                      :urls="sbSceneRefUrls(sb)"
-                      :placeholder="(getSbSelectedScene(sb.id).location || '')[0]"
-                      :title="getSbSelectedScene(sb.id).location"
-                      @preview="(src, gallery) => openImagePreview(src, gallery)"
-                    />
                     <div
-                      v-else
+                      v-for="s in [getSbSelectedScene(sb.id)]"
+                      :key="s.id"
                       class="sb-thumb-item sb-thumb-scene"
-                      :title="getSbSelectedScene(sb.id).location"
+                      :class="{ 'sb-thumb-clickable': hasAssetImage(s) }"
+                      :title="s.location"
+                      role="button"
+                      @click="hasAssetImage(s) && openImagePreview(assetImageUrl(s), buildSceneGallery())"
                     >
-                      <span class="sb-thumb-placeholder">{{ (getSbSelectedScene(sb.id).location || '')[0] }}</span>
+                      <img v-if="hasAssetImage(s)" :src="assetImageUrl(s)" alt="" />
+                      <span v-else class="sb-thumb-placeholder">{{ (s.location || '')[0] }}</span>
                     </div>
                   </div>
                 </div>
@@ -1122,20 +1128,17 @@
                   <span class="sb-thumb-label">角色</span>
                   <div class="sb-thumb-list">
                     <template v-if="getSbSelectedCharacters(sb.id).length">
-                      <RefStitchThumb
-                        v-if="sbCharRefUrls(sb).length"
-                        :urls="sbCharRefUrls(sb)"
-                        :placeholder="(getSbSelectedCharacters(sb.id)[0].name || '')[0]"
-                        :title="'角色（' + getSbSelectedCharacters(sb.id).map((c) => c.name).join('、') + '）'"
-                        @preview="(src, gallery) => openImagePreview(src, gallery)"
-                      />
                       <div
-                        v-for="c in getSbSelectedCharacters(sb.id).filter((c) => !hasAssetImage(c))"
+                        v-for="c in getSbSelectedCharacters(sb.id)"
                         :key="c.id"
                         class="sb-thumb-item sb-thumb-avatar"
+                        :class="{ 'sb-thumb-clickable': hasAssetImage(c) }"
                         :title="c.name"
+                        role="button"
+                        @click="hasAssetImage(c) && openImagePreview(assetImageUrl(c), buildCharacterGallery())"
                       >
-                        <span class="sb-thumb-placeholder">{{ (c.name || '')[0] }}</span>
+                        <img v-if="hasAssetImage(c)" :src="assetImageUrl(c)" alt="" />
+                        <span v-else class="sb-thumb-placeholder">{{ (c.name || '')[0] }}</span>
                       </div>
                     </template>
                     <el-dropdown trigger="click" @command="(cmd) => onSbAddCharacterCommand(sb.id, cmd)">
@@ -1167,20 +1170,17 @@
                 <div v-if="getSbSelectedProps(sb.id).length" class="sb-thumb-row">
                   <span class="sb-thumb-label">物品</span>
                   <div class="sb-thumb-list">
-                    <RefStitchThumb
-                      v-if="sbPropRefUrls(sb).length"
-                      :urls="sbPropRefUrls(sb)"
-                      :placeholder="(getSbSelectedProps(sb.id)[0].name || '')[0]"
-                      :title="'物品（' + getSbSelectedProps(sb.id).map((p) => p.name).join('、') + '）'"
-                      @preview="(src, gallery) => openImagePreview(src, gallery)"
-                    />
                     <div
-                      v-for="p in getSbSelectedProps(sb.id).filter((p) => !hasAssetImage(p))"
+                      v-for="p in getSbSelectedProps(sb.id)"
                       :key="p.id"
                       class="sb-thumb-item sb-thumb-prop"
+                      :class="{ 'sb-thumb-clickable': hasAssetImage(p) }"
                       :title="p.name"
+                      role="button"
+                      @click="hasAssetImage(p) && openImagePreview(assetImageUrl(p), buildPropGallery())"
                     >
-                      <span class="sb-thumb-placeholder">{{ (p.name || '')[0] }}</span>
+                      <img v-if="hasAssetImage(p)" :src="assetImageUrl(p)" alt="" />
+                      <span v-else class="sb-thumb-placeholder">{{ (p.name || '')[0] }}</span>
                     </div>
                   </div>
                 </div>
@@ -1552,6 +1552,14 @@
                   >
                     生成分镜视频
                   </el-button>
+                  <el-button
+                    size="small"
+                    class="sb-generate-video-btn"
+                    :loading="uploadingSbVideoId === sb.id"
+                    @click="onUploadSbVideoClick(sb)"
+                  >
+                    <el-icon><Upload /></el-icon>上传视频
+                  </el-button>
                 </template>
               </div>
               <!-- 视频历史条：有多条历史时显示，点击可切换 -->
@@ -1573,6 +1581,11 @@
               </div>
               <div v-if="getSbVideo(sb.id)" class="sb-video-actions">
                 <el-button size="small" :loading="isSbVideoGenerating(sb.id)" :disabled="!sbCanSubmitVideo(sb) || isSbVideoGenerating(sb.id)" @click="onGenerateSbVideo(sb)">重新生成</el-button>
+                <el-tooltip content="上传本地视频文件，绑定为本分镜视频（生成失败/重启后手动补救）" placement="top">
+                  <el-button size="small" :loading="uploadingSbVideoId === sb.id" @click="onUploadSbVideoClick(sb)">
+                    <el-icon><Upload /></el-icon>上传视频
+                  </el-button>
+                </el-tooltip>
                 <el-tooltip v-if="getNextStoryboard(sb.id)" content="提取本视频尾帧，设为下一个分镜的首帧" placement="top">
                   <el-button size="small" :loading="linkingTailFrameIds.has(sb.id)" @click="onLinkTailFrameToNext(sb)">尾帧衔接</el-button>
                 </el-tooltip>
@@ -2723,7 +2736,6 @@ import { exportStoryboardSheet } from '@/utils/exportStoryboardSheet'
 import StylePickerButton from '@/components/StylePickerButton.vue'
 import AIConfigContent from '@/components/AIConfigContent.vue'
 import UniversalSegmentOmniAtEditor from '@/components/UniversalSegmentOmniAtEditor.vue'
-import RefStitchThumb from '@/components/RefStitchThumb.vue'
 import {
   generationStyleOptions,
   getStylePromptEn,
@@ -3367,6 +3379,9 @@ const editingFramePromptRegenerating = ref(false)
 const uploadingSbImageId = ref(null)
 const sbImageFileInput = ref(null)
 const sbImageUploadForId = ref(null)
+// 分镜视频手动上传（应用重启/生成中断时绑定本地视频）
+const uploadingSbVideoId = ref(null)
+const sbVideoFileInput = ref(null)
 // 角色/道具/场景 上传图片
 const resourceImageFileInput = ref(null)
 const resourceUploadType = ref(null) // 'character' | 'prop' | 'scene'
@@ -4676,6 +4691,56 @@ function onSbImageFileChange(ev) {
   const slot = sbImageUploadSlotById.value[sid] || 'first'
   doUploadSbImage(sid, file, slot).finally(() => {
     sbImageUploadForId.value = null
+    ev.target.value = ''
+  })
+}
+
+function onUploadSbVideoClick(sb) {
+  if (!sb?.id) return
+  uploadingSbVideoId.value = sb.id
+  if (sbVideoFileInput.value) {
+    sbVideoFileInput.value.value = ''
+    sbVideoFileInput.value.click()
+  }
+}
+
+async function doUploadSbVideo(sbId, file) {
+  if (!file || !sbId || !dramaId.value) return
+  uploadingSbVideoId.value = sbId
+  try {
+    const res = await videosAPI.uploadVideo(file, { dramaId: dramaId.value, storyboardId: sbId })
+    if (res?.error) {
+      ElMessage.error(res.error || '上传失败')
+      return
+    }
+    const url = res?.video_url || res?.url || ''
+    const localPath = res?.local_path || ''
+    if (!url && !localPath) {
+      ElMessage.error('上传未返回视频地址')
+      return
+    }
+    await loadSingleStoryboardMedia(sbId)
+    ElMessage.success('分镜视频上传成功')
+  } catch (e) {
+    ElMessage.error(e?.message || '视频上传失败')
+  } finally {
+    uploadingSbVideoId.value = null
+  }
+}
+
+function onSbVideoFileChange(ev) {
+  const file = ev.target?.files?.[0]
+  if (!file) {
+    ev.target.value = ''
+    return
+  }
+  const sid = uploadingSbVideoId.value
+  if (!sid) {
+    ev.target.value = ''
+    return
+  }
+  doUploadSbVideo(sid, file).finally(() => {
+    uploadingSbVideoId.value = null
     ev.target.value = ''
   })
 }
@@ -6330,99 +6395,55 @@ function adaptPromptForVideoProvider(prompt, provider) {
 }
 
 
-/** 场景参考图绝对 URL（单张，最多 1 张） */
-function sbSceneRefUrls(sb) {
-  const scene = getSbSelectedScene(sb?.id)
-  if (!scene || !hasAssetImage(scene)) return []
-  return [toAbsoluteImageUrl(assetImageUrl(scene))]
-}
-
-/** 角色参考图绝对 URL（多张则前端拼成一张预览，与 H3 r2v 的 ImageStitch 一致） */
-function sbCharRefUrls(sb) {
-  return getSbSelectedCharacters(sb?.id)
-    .filter((c) => hasAssetImage(c))
-    .map((c) => toAbsoluteImageUrl(assetImageUrl(c)))
-    .filter(Boolean)
-}
-
-/** 物品参考图绝对 URL（多张则前端拼成一张预览） */
-function sbPropRefUrls(sb) {
-  return getSbSelectedProps(sb?.id)
-    .filter((p) => hasAssetImage(p))
-    .map((p) => toAbsoluteImageUrl(assetImageUrl(p)))
-    .filter(Boolean)
-}
-
-/** 全能模式：与后端 buildUniversalSegmentUserPromptBundle 一致的参考槽位。
- *  后端按「场景/角色/道具」分组各占一个槽（场景=@图片1，所有角色合并=@图片2，所有道具合并=@图片3），
- *  H3/多图参考时由后端把多角色/多道具横向拼成一张。前端此处同样合并，使 @ 选择器缩略图与显示名与真实提交一致。
- *  urlList 用于 @ 选择器把多图拼成一张预览（一次点击插入 该组对应的 @图片N）。 */
+/** 全能模式：与后端 buildUniversalSegmentUserPromptBundle 一致的参考槽位（逐张独立）。
+ *  场景、每个角色、每个道具各占一个槽（@图片1、@图片2…），<Picture N> 与 ref_image_0..N 顺序一致。
+ *  urlList 用于 @ 选择器逐张缩略图（单图直接显示）。 */
 function getSbUniversalOmniRefSlots(sb) {
   if (!sb?.id) return []
   const out = []
   let idx = 1
-
-  const scene = getSbSelectedScene(sb.id)
-  if (scene && hasAssetImage(scene)) {
+  const items = collectSbOmniReferenceItems(sb)
+  for (const it of items) {
     out.push({
       index: idx++,
-      kind: 'scene',
-      name: (scene.name || scene.location || '场景').toString(),
-      thumbUrl: assetImageUrl(scene),
-      urlList: [toAbsoluteImageUrl(assetImageUrl(scene))],
-    })
-  }
-
-  const charUrls = sbCharRefUrls(sb)
-  if (charUrls.length) {
-    const names = getSbSelectedCharacters(sb.id)
-      .filter((c) => hasAssetImage(c))
-      .map((c) => (c.name || '角色').toString())
-    out.push({
-      index: idx++,
-      kind: 'character',
-      name: names.join('、'),
+      kind: it.type,
+      name: (it.name || (it.type === 'scene' ? '场景' : it.type === 'character' ? '角色' : '物品')).toString(),
       thumbUrl: '',
-      urlList: charUrls,
+      urlList: [it.url],
     })
   }
-
-  const propUrls = sbPropRefUrls(sb)
-  if (propUrls.length) {
-    const names = getSbSelectedProps(sb.id)
-      .filter((p) => hasAssetImage(p))
-      .map((p) => (p.name || '物品').toString())
-    out.push({
-      index: idx++,
-      kind: 'prop',
-      name: names.join('、'),
-      thumbUrl: '',
-      urlList: propUrls,
-    })
-  }
-
   return out
 }
 
-/** 全能模式：场景/角色/物品 → 带类型的参考项 [{url, type}]（type: scene|character|prop；与 collectSbOmniReferenceAbsoluteUrls 同序） */
+/** 全能模式：场景/角色/物品 → 带类型的参考项 [{url, type, name}]（type: scene|character|prop；name 用于 H3 逐张说明头；与 collectSbOmniReferenceAbsoluteUrls 同序，逐张） */
 function collectSbOmniReferenceItems(sb) {
   if (!sb?.id) return []
   const items = []
   const seen = new Set()
-  function push(abs, type) {
+  function push(abs, type, name) {
     if (!abs || seen.has(abs)) return
     seen.add(abs)
-    items.push({ url: abs, type })
+    items.push({ url: abs, type, name: name || '' })
   }
   const scene = getSbSelectedScene(sb.id)
-  if (scene && hasAssetImage(scene)) push(toAbsoluteImageUrl(assetImageUrl(scene)), 'scene')
+  if (scene && hasAssetImage(scene)) push(toAbsoluteImageUrl(assetImageUrl(scene)), 'scene', (scene.name || scene.location || '场景'))
   for (const c of getSbSelectedCharacters(sb.id)) {
-    if (hasAssetImage(c)) push(toAbsoluteImageUrl(assetImageUrl(c)), 'character')
+    if (hasAssetImage(c)) push(toAbsoluteImageUrl(assetImageUrl(c)), 'character', (c.name || '角色'))
   }
   for (const p of getSbSelectedProps(sb.id)) {
-    if (hasAssetImage(p)) push(toAbsoluteImageUrl(assetImageUrl(p)), 'prop')
+    if (hasAssetImage(p)) push(toAbsoluteImageUrl(assetImageUrl(p)), 'prop', (p.name || '物品'))
   }
   return items.slice(0, 10)
+}
+
+/** 给参考项生成带名字的标签，供后端 applyH3RefsToApi 逐张生成 <Picture N> 中文说明头（含「for "名字"」供提取） */
+function omniRefLabel(item) {
+  if (!item) return ''
+  const type = String(item.type || '')
+  const name = String(item.name || '').trim()
+  if (type === 'scene') return 'scene background' + (name ? ` for "${name}"` : '')
+  if (type === 'character') return 'character appearance for "' + (name || '角色') + '"'
+  return 'prop appearance for "' + (name || '物品') + '"'
 }
 
 /** 全能模式：场景/角色/物品 → 绝对 URL 列表（不含经典分镜中间主图；供可灵 Omni / 火山多图参考，最多 10，方舟侧最多取 9 张） */
@@ -6820,7 +6841,7 @@ async function onGenerateSbVideo(sb) {
   }
   const omniItems = universalOmniApi ? collectSbOmniReferenceItems(sb) : []
   const omniRefs = omniItems.map(i => i.url)
-  const omniLabels = omniItems.map(i => i.type)
+  const omniLabels = omniItems.map(i => omniRefLabel(i))
   const sceneOnlyRefs = universal && !universalOmniApi ? collectSbSceneOnlyReferenceAbsoluteUrls(sb) : []
   const hasClassicFrame = !!getSbFirstFrameUrl(sb)
   let hasAnyImage = false
@@ -7302,7 +7323,7 @@ async function startBatchVideoGeneration() {
         const universal = isSbUniversalMode(sb.id)
         const omniItems = universal ? collectSbOmniReferenceItems(sb) : []
   const omniRefs = omniItems.map(i => i.url)
-  const omniLabels = omniItems.map(i => i.type)
+  const omniLabels = omniItems.map(i => omniRefLabel(i))
         if (!universal && !getSbFirstFrameUrl(sb)) {
           videoDoneCount++
           batchVideoProgress.value = { ...batchVideoProgress.value, current: videoDoneCount }
@@ -8040,7 +8061,7 @@ async function runOneClickPipeline(textOnly = false) {
             const universal = isSbUniversalMode(sb.id)
             const omniItems = universal ? collectSbOmniReferenceItems(sb) : []
   const omniRefs = omniItems.map(i => i.url)
-  const omniLabels = omniItems.map(i => i.type)
+  const omniLabels = omniItems.map(i => omniRefLabel(i))
             const firstFrameUrl = await getMainImageUrlForVideo(sb)
             const absoluteUrl = universal ? (omniRefs[0] || '') : toAbsoluteImageUrl(firstFrameUrl)
             const { first: vFirst, last: vLast } = sbVideoFirstLastUrls(sb, universal, null)
@@ -8384,7 +8405,7 @@ async function runRepairPipeline() {
             const universal = isSbUniversalMode(sb.id)
             const omniItems = universal ? collectSbOmniReferenceItems(sb) : []
   const omniRefs = omniItems.map(i => i.url)
-  const omniLabels = omniItems.map(i => i.type)
+  const omniLabels = omniItems.map(i => omniRefLabel(i))
             const firstFrameUrl = await getMainImageUrlForVideo(sb)
             const absoluteUrl = universal ? (omniRefs[0] || '') : toAbsoluteImageUrl(firstFrameUrl)
             const { first: vFirst, last: vLast } = sbVideoFirstLastUrls(sb, universal, null)

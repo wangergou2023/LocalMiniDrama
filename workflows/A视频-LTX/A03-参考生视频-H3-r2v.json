@@ -260,6 +260,42 @@
       "ref_images.ref_image_2": [
         "200",
         0
+      ],
+      "ref_images.ref_image_3": [
+        "201",
+        0
+      ],
+      "ref_images.ref_image_4": [
+        "202",
+        0
+      ],
+      "ref_images.ref_image_5": [
+        "203",
+        0
+      ],
+      "ref_images.ref_image_6": [
+        "204",
+        0
+      ],
+      "ref_images.ref_image_7": [
+        "205",
+        0
+      ],
+      "ref_images.ref_image_8": [
+        "206",
+        0
+      ],
+      "ref_audios.ref_audio_0": [
+        "207",
+        0
+      ],
+      "ref_audios.ref_audio_1": [
+        "208",
+        0
+      ],
+      "ref_audios.ref_audio_2": [
+        "209",
+        0
       ]
     },
     "class_type": "MiniMaxH3ReferenceToVideo",
@@ -301,6 +337,87 @@
     "class_type": "LoadImage",
     "_meta": {
       "title": "加载图像-物品"
+    }
+  },
+  "201": {
+    "inputs": {
+      "image": "h3_ref_4.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像-4"
+    }
+  },
+  "202": {
+    "inputs": {
+      "image": "h3_ref_5.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像-5"
+    }
+  },
+  "203": {
+    "inputs": {
+      "image": "h3_ref_6.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像-6"
+    }
+  },
+  "204": {
+    "inputs": {
+      "image": "h3_ref_7.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像-7"
+    }
+  },
+  "205": {
+    "inputs": {
+      "image": "h3_ref_8.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像-8"
+    }
+  },
+  "206": {
+    "inputs": {
+      "image": "h3_ref_9.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像-9"
+    }
+  },
+  "207": {
+    "inputs": {
+      "audio": "audio/h3_ref_audio_1.wav"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "加载音频-1"
+    }
+  },
+  "208": {
+    "inputs": {
+      "audio": "audio/h3_ref_audio_2.wav"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "加载音频-2"
+    }
+  },
+  "209": {
+    "inputs": {
+      "audio": "audio/h3_ref_audio_3.wav"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "加载音频-3"
     }
   },
   "141": {

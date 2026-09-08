@@ -260,6 +260,7 @@ function setupRouter(cfg, db, log) {
   // ---------- videos ----------
   r.get('/videos', videos.list);
   r.post('/videos', videos.create);
+  r.post('/videos/upload', uploadModule.multerVideoSingle, videos.uploadVideo);
   r.post('/videos/image/:image_gen_id', videos.fromImage);
   r.post('/videos/episode/:episode_id/batch', videos.episodeBatch);
   r.post('/videos/:id/resume-poll', videos.resumePoll);

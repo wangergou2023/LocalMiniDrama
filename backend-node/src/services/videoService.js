@@ -599,6 +599,80 @@ function deleteById(db, log, id) {
   return result.changes > 0;
 }
 
+/**
+ * 手动上传分镜视频：应用重启/生成中断导致轮询失败时，用户可自行上传视频文件绑定到分镜。
+ * 写入 video_generations（completed）并同步 storyboards.video_url/local_path，与 finalizeSuccessfulVideo 一致。
+ * @returns {{ ok: true, video_generation_id: number, video_url: string, local_path: string, storyboard_id: number|null } | { ok: false, error: string }}
+ */
+function saveManualVideoUpload(db, log, { dramaId, storyboardId, buffer, originalName, mimeType }) {
+  if (!buffer || !buffer.length) return { ok: false, error: '视频文件为空' };
+  try {
+    // storyboards 无 drama_id 列，需经 episode -> episodes.drama_id 解析归属剧集
+    let finalDramaId = Number(dramaId) || 0;
+    if (!finalDramaId && storyboardId) {
+      try {
+        const sbEp = db.prepare('SELECT episode_id FROM storyboards WHERE id = ? AND deleted_at IS NULL').get(storyboardId);
+        if (sbEp && sbEp.episode_id) {
+          const epRow = db.prepare('SELECT drama_id FROM episodes WHERE id = ? AND deleted_at IS NULL').get(sbEp.episode_id);
+          if (epRow && epRow.drama_id) finalDramaId = Number(epRow.drama_id);
+        }
+      } catch (_) {}
+    }
+
+    const cfg = require('../config').loadConfig();
+    const storagePath = resolveStoragePath(cfg);
+    const projectSubdir = finalDramaId > 0 ? storageLayout.getProjectStorageSubdir(db, finalDramaId) : null;
+    const { dir, relPrefix } = resolveVideosDir(storagePath, projectSubdir);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const ext = path.extname(originalName || '') || '.mp4';
+    const fsName = `vg_manual_${randomUUID().slice(0, 8)}${ext}`;
+    const filePath = path.join(dir, fsName);
+    fs.writeFileSync(filePath, buffer);
+    const relativePath = `${relPrefix}/${fsName}`.replace(/\\/g, '/');
+    const videoUrl = cfg?.storage?.base_url
+      ? `${String(cfg.storage.base_url).replace(/\/$/, '')}/${relativePath}`
+      : `/static/${relativePath}`;
+
+    const now = new Date().toISOString();
+    const insert = `
+      INSERT INTO video_generations
+        (drama_id, storyboard_id, provider, prompt, model, duration, aspect_ratio, image_url, first_frame_url, last_frame_url,
+         reference_image_urls, video_url, local_path, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    const info = db.prepare(insert).run(
+      finalDramaId,
+      storyboardId || null,
+      'manual',
+      '手动上传',
+      'manual',
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      videoUrl,
+      relativePath,
+      'completed',
+      now,
+      now
+    );
+    const videoGenId = Number(info.lastInsertRowid);
+
+    if (storyboardId) {
+      // 手动上传视频优先清掉该分镜的旧生成记录（避免右侧仍显示历史失败），并绑定新视频
+      db.prepare('UPDATE video_generations SET deleted_at = ? WHERE storyboard_id = ? AND deleted_at IS NULL AND id <> ?').run(now, storyboardId, videoGenId);
+      db.prepare('UPDATE storyboards SET video_url = ?, local_path = ?, updated_at = ? WHERE id = ?').run(videoUrl, relativePath, now, storyboardId);
+    }
+
+    log.info('[Video] 手动上传成功', { video_generation_id: videoGenId, storyboard_id: storyboardId || null, video_url: videoUrl, local_path: relativePath });
+    return { ok: true, video_generation_id: videoGenId, video_url: videoUrl, local_path: relativePath, storyboard_id: storyboardId || null };
+  } catch (e) {
+    log.error('[Video] 手动上传失败', { error: e.message });
+    return { ok: false, error: e.message || '手动上传失败' };
+  }
+}
+
 module.exports = {
   list,
   getById,
@@ -607,4 +681,5 @@ module.exports = {
   resumeProcessingVideoGenerations,
   resumeFailedVideoPoll,
   resumePollForVideoGeneration,
+  saveManualVideoUpload,
 };

@@ -45,6 +45,28 @@ const audioUpload = multer({
   },
 });
 
+// 分镜视频手动上传（支持常见视频格式；限制 500MB）
+const allowedVideoTypes = [
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/x-matroska',
+  'video/mpeg',
+];
+const videoMaxSize = 500 * 1024 * 1024; // 500MB
+const videoUpload = multer({
+  storage: memoryStorage,
+  limits: { fileSize: videoMaxSize },
+  fileFilter: (req, file, cb) => {
+    const ct = file.mimetype || 'application/octet-stream';
+    if (!allowedVideoTypes.includes(ct)) {
+      return cb(new Error('只支持视频格式 (mp4, webm, mov, avi, mkv)'));
+    }
+    cb(null, true);
+  },
+});
+
 function routes(cfg, log, db) {
   const singleUpload = upload.single('file');
   return {
@@ -100,5 +122,6 @@ module.exports = {
   upload,
   multerSingle: upload.single('file'),
   multerAudioSingle: audioUpload.single('file'),
+  multerVideoSingle: videoUpload.single('file'),
   MAX_IMAGE_SIZE_MB: MAX_SIZE_MB,
 };

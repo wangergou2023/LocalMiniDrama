@@ -221,8 +221,9 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     const brief = String(summary || '').trim() || kind;
     slots.push({ num, tag: `@图片${num}`, kind, summary: brief });
   };
-  // 参考槽位按「场景/角色/道具」分组，各占一个槽（@图片1/2/3），与 H3 r2v 的 3 通道对齐；
-  // 多个角色/多个道具合并进同槽，成片时由后端拼成一张（场景/角色拼图/道具拼图）。
+  // 逐张独立：场景、每个角色、每个道具各占一个槽（@图片1、@图片2、@图片3…），
+  // 与前端 collectSbOmniReferenceItems（场景→角色→道具，逐张）及视频 API 参考图顺序完全一致；
+  // 本地 H3 节点逐张接到 ref_image_0..N，正文 @图片N -> <Picture N>。
   if (sceneRow && hasMediaRef(sceneRow)) {
     pushSlot('场景', String(sceneRow.location || '').trim() || '场景环境');
   }
@@ -239,15 +240,20 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
         .get(Number(ent.key.slice(4)));
     }
     if (!hasMediaRef(row)) continue;
-    charNameArr.push(String(row.name || ent.nameHint || '角色').trim());
+    const nm = String(row.name || ent.nameHint || '角色').trim();
+    charNameArr.push(nm);
+    if (slots.length >= 9) break; // 视频 API / H3 节点最多 9 张
+    pushSlot('角色', nm);
   }
-  if (charNameArr.length) pushSlot('角色', charNameArr.join('、'));
   const propNameArr = [];
   for (const pr of propRows) {
     if (!hasMediaRef(pr)) continue;
-    propNameArr.push(String(pr.name || '道具').trim());
+    const nm = String(pr.name || '道具').trim();
+    if (slots.length >= 9) break;
+    propNameArr.push(nm);
+    pushSlot('道具', nm);
   }
-  if (propNameArr.length) pushSlot('道具', propNameArr.join('、'));
+  const propSlotTags = slots.filter((s) => s.kind === '道具').map((s) => s.tag);
 
   const charSlots = slots.filter((s) => s.kind === '角色');
   const sceneFirst = slots.length > 0 && slots[0].kind === '场景';
@@ -297,7 +303,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     ].join('\n');
     line3Required =
       slots[0].kind === '场景'
-        ? '环境、光影与陈设定性参考 @图片1。若 @图片1 为宫格或多画面拼图，禁止成片复刻其分格或并列布局，仅提取统一的室内空间与光线语义；须单镜头完整连续画面。'
+        ? `环境、光影与陈设定性参考 ${slots[0].tag}。若 ${slots[0].tag} 为宫格或多画面拼图，禁止成片复刻其分格或并列布局，仅提取统一的室内空间与光线语义；须单镜头完整连续画面。`
         : '本片段以首张参考图 @图片1 作为画面锚点展开。';
   }
 
@@ -334,6 +340,10 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     .filter(Boolean)
     .join('\n');
 
+  const propRule =
+    propSlotTags.length > 0
+      ? `- 若本镜绑定了道具（IMAGE_SLOT_MAP 中的「道具」槽：${propSlotTags.join('、')}）：凡在该镜头文案中出现的道具，**必须用其对应的道具槽位符显式引用**（例：${propSlotTags[0]} 帆布包、${propSlotTags[0]} 草图），不得只用文字描写而不引图占位符；道具名与顺序见 ORDERED_PROP_NAMES。若某道具不重要可省略，但重要道具必须指到对应道具槽位。`
+      : '- 若本镜未绑定任何道具图，文中禁止凭空写出「道具参考图」占位符。';
   const refContract = [
     'REFERENCE_RULE:',
     ...(slots.length === 0
@@ -346,7 +356,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
           '- 禁止用 @场景、@姓名、@林薇、@道具名 等形式指代参考图；需要指图时一律 @图片N。',
           '- 若 @图片1 为「场景」：只写环境/光影/陈设；人物外貌与动作按 CHARACTER_IMAGE_BINDING 从 @图片2 起。若首张参考图即角色，则以 MAP 为准。',
           '- 场景参考若为四宫格/九宫格等拼图：见 SCENE_REFERENCE_LAYOUT；成片须单镜头连续画面，禁止模仿拼图布局。',
-          '- 若本镜绑定了道具（IMAGE_SLOT_MAP 中的「道具」槽，通常为 @图片3）：凡在该镜头文案中出现的道具，**必须用 @图片3 显式引用**（例：@图片3 帆布包、@图片3 草图、@图片3 铅笔），不得只用文字描写而不引图占位符；道具名见 ORDERED_PROP_NAMES。若某道具不重要可省略，但重要道具必须指到 @图片3。',
+          propRule,
         ]),
     '- 每个 @图片N 与后随的中/英文字之间保留一个半角空格（后处理也会修正，但模型应直接写对）。',
     '- ORDERED_CHARACTER_NAMES 仅供理解剧情，不得当作图占位符。',

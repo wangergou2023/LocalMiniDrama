@@ -31,15 +31,8 @@
           @click="onPickSlot(s.index)"
         >
           <span class="omni-at-menu-thumb-wrap">
-            <RefStitchThumb
-              v-if="s.urlList && s.urlList.length > 1"
-              :urls="s.urlList"
-              :placeholder="(s.name || '?')[0]"
-              :title="s.name"
-              @preview="($e) => {}"
-            />
-            <img v-else-if="s.thumbUrl" :src="s.thumbUrl" class="omni-at-menu-thumb" alt="" />
-            <span v-else-if="s.urlList && s.urlList.length === 1" class="omni-at-menu-thumb"><img :src="s.urlList[0]" alt="" /></span>
+            <img v-if="s.thumbUrl" :src="s.thumbUrl" class="omni-at-menu-thumb" alt="" />
+            <img v-else-if="s.urlList && s.urlList.length === 1" class="omni-at-menu-thumb" :src="s.urlList[0]" alt="" />
             <span v-else class="omni-at-menu-thumb-ph">{{ (s.name || '?')[0] }}</span>
           </span>
           <span class="omni-at-menu-meta">
@@ -66,7 +59,6 @@
 import { ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { DocumentCopy } from '@element-plus/icons-vue'
-import RefStitchThumb from '@/components/RefStitchThumb.vue'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -640,16 +632,6 @@ html.light .omni-at-menu-thumb-wrap {
   height: 100%;
   object-fit: cover;
   display: block;
-}
-.omni-at-menu-thumb-wrap :deep(.ref-stitch-thumb) {
-  height: 44px;
-  max-width: 180px;
-  border: none;
-  background: transparent;
-}
-.omni-at-menu-thumb-wrap :deep(.ref-stitch-thumb-img) {
-  height: 44px;
-  max-width: 180px;
 }
 .omni-at-menu-thumb-ph {
   display: flex;

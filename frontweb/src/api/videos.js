@@ -14,4 +14,19 @@ export const videosAPI = {
   resumePoll(id) {
     return request.post(`/videos/${id}/resume-poll`)
   },
+  /** 手动上传分镜视频并绑定到分镜（应用重启/生成中断时使用） */
+  uploadVideo(file, opts = {}) {
+    const form = new FormData()
+    form.append('file', file)
+    const did = opts.dramaId
+    if (did != null && did !== '' && Number(did) > 0) {
+      form.append('drama_id', String(did))
+    }
+    if (opts.storyboardId != null && opts.storyboardId !== '') {
+      form.append('storyboard_id', String(opts.storyboardId))
+    }
+    return request.post('/videos/upload', form, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
 }

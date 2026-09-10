@@ -161,12 +161,20 @@ async function prepareReferenceAudios(referenceUrls, comfyuiInputDir, log, stora
       } else if (fs.existsSync(ref)) {
         fs.copyFileSync(ref, destPath);
         via = 'abs-path';
-      } else if (storageLocalPath && fs.existsSync(path.join(storageLocalPath, ref.replace(/^\//, '')))) {
-        fs.copyFileSync(path.join(storageLocalPath, ref.replace(/^\//, '')), destPath);
-        via = 'storage-rel';
       } else {
-        log.warn('[ComfyUI] 参考音频 ' + (i + 1) + '/' + referenceUrls.length + ' 未找到，跳过: ' + String(ref).slice(0, 160));
-        continue;
+        // 处理相对路径：优先 strip 掉 /static/ 或 /uploads/ 前缀，再按 storage 根目录解析，
+        // 兼容 seedance2_voice_asset.url 这类 /static/drama_X/characters/voice/xxx.mp3。
+        const stripped = String(ref).replace(/^\/?(static|uploads)\//, '');
+        if (storageLocalPath && stripped && fs.existsSync(path.join(storageLocalPath, stripped))) {
+          fs.copyFileSync(path.join(storageLocalPath, stripped), destPath);
+          via = 'storage-rel';
+        } else if (fs.existsSync(stripped)) {
+          fs.copyFileSync(stripped, destPath);
+          via = 'abs-path';
+        } else {
+          log.warn('[ComfyUI] 参考音频 ' + (i + 1) + '/' + referenceUrls.length + ' 未找到，跳过: ' + String(ref).slice(0, 160));
+          continue;
+        }
       }
       log.info('[ComfyUI] 参考音频 ' + (i + 1) + '/' + referenceUrls.length + ' 已就绪 (' + via + '): ' + String(ref).slice(0, 120) + ' -> ' + name);
       filenames.push(name);
@@ -578,7 +586,7 @@ function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles) 
 }
 
 async function callComfyUIVideoApi(config, log, opts) {
-  const { prompt, model, image_url, video_gen_id, files_base_url, storage_local_path, reference_image_urls, reference_labels, reference_audio_urls } = opts;
+  const { prompt, model, image_url, video_gen_id, files_base_url, storage_local_path, reference_image_urls, reference_labels, reference_audio_urls, voice_reference_url } = opts;
   const baseUrl = (config.base_url || "http://127.0.0.1:8188").replace(/\/$/, "");
 
   const fs = require("fs");
@@ -647,8 +655,11 @@ async function callComfyUIVideoApi(config, log, opts) {
           refImages = [];
         }
       }
-      // 参考音频：准备进 input 目录，逐段接 ref_audio_0..N
-      const audioUrls = Array.isArray(reference_audio_urls) ? reference_audio_urls.filter(Boolean) : [];
+      // 参考音频：准备进 input 目录，逐段接 ref_audio_0..N。
+      // voice_reference_url（角色音色参考 / 旁白 TTS）也作为一段参考音频并入，让本地 H3 能用到音色。
+      const audioUrls = (Array.isArray(reference_audio_urls) ? reference_audio_urls.filter(Boolean) : []);
+      const voiceUrl = voice_reference_url ? String(voice_reference_url).trim() : '';
+      if (voiceUrl && !audioUrls.includes(voiceUrl)) audioUrls.unshift(voiceUrl);
       if (audioUrls.length) {
         refAudios = await prepareReferenceAudios(audioUrls, inputDir, log, storage_local_path);
       }
@@ -836,4 +847,4 @@ async function callComfyUIVideoApi(config, log, opts) {
   return { video_url: videoUrl, first_frame_url: image_url || null };
 }
 
-module.exports = { callComfyUIImageApi, callComfyUIVideoApi, parseSize, hasH3ReferenceNode, applyH3RefsToApi };
+module.exports = { callComfyUIImageApi, callComfyUIVideoApi, parseSize, hasH3ReferenceNode, applyH3RefsToApi, prepareReferenceAudios };

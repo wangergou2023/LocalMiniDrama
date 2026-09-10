@@ -3760,10 +3760,12 @@ async function callVideoApi(db, log, opts) {
     opts = applySeedance2CertifiedAssetUrlsToVideoOpts(db, log, opts);
   }
 
-  // 自动注入角色音色参考（Seedance 2.0 / volcengine_omni，或 MiniMax H3 多模态参考；未显式指定 voice_reference_url 时）
+  // 自动注入角色音色参考（Seedance 2.0 / volcengine_omni，或 MiniMax H3 多模态参考；未显式指定 voice_reference_url 时）。
+  // 本地 comfyui 工作流（尤其 A03 H3 参考生视频）也走此注入，由 callComfyUIVideoApi 在有 H3 参考节点时才接 ref_audios；
+  // 其余 comfyui 工作流（纯图/视频）不接收音频，不受影响。
   const isSeedance2 =
     isSeedance2FamilyModel(model) || protocol === 'volcengine_omni';
-  const isMinimaxH3 = protocol === 'minimax_h3';
+  const isMinimaxH3 = protocol === 'minimax_h3' || protocol === 'comfyui' || (protocol === 'comfyui' && isMinimaxH3Model(model));
   if ((isSeedance2 || isMinimaxH3) && db && opts.drama_id && !opts.voice_reference_url) {
     const voiceMap = collectActiveCharacterVoiceRefs(db, opts.drama_id);
     if (voiceMap.size > 0) {
@@ -3831,6 +3833,7 @@ async function callVideoApi(db, log, opts) {
       reference_image_urls: opts.reference_urls,
       reference_labels: opts.reference_labels,
       reference_audio_urls: opts.reference_audio_urls,
+      voice_reference_url: opts.voice_reference_url,
       aspect_ratio,
       duration: opts.duration,
       files_base_url: opts.files_base_url,

@@ -295,7 +295,10 @@ function getUniversalOmniMultiBeatFormatSpec(cfg) {
 FORBIDDEN: SoulLens/SEEDANCE single-line rows (主体:/叙事动态:/空间:/[禁BGM]); FORBIDDEN @人物N — use @图片1, @图片2, … only.
 
 Field "universal_segment_text" is a **multi-line string** (use \\n in JSON). Structure:
-Line 1: 画面风格和类型: 真人写实, 电影风格, 高清画质, <short style from project>
+Line 1: 画面风格和类型: <project style. When STYLE_ZH is given, copy it VERBATIM and add NOTHING
+        else — never prepend 真人写实 / 电影风格 / 高清画质, they contradict a project style that
+        does not contain them (e.g. ink wash). Only when no project style is given may you use
+        the generic tags 真人写实, 电影风格, 高清画质.>
 Line 2: 生成一个由以下 1 个分镜组成的视频. (**exactly 1 — never emit 分镜2： or later**)
 Line 3 (copy verbatim): ${DEFAULT_LINE3}
 Line 4: 分镜1： T1秒: <cinematic Chinese prose for one continuous take; camera motion chain; light; emotion>
@@ -316,7 +319,9 @@ FORBIDDEN: 「切镜到」「镜头2」「第二个镜头」「随后切换到�
 **禁止**使用已废弃的灵境/SoulLens **单行**格式（含「主体：」「叙事动态：」「空间：」「镜头：」段标、行末 [禁BGM][禁字幕]、@人物N 指代参考图）。
 
 本字段为 **多行字符串**（JSON 中用 \\n 换行），结构固定：
-第1行：画面风格和类型: 真人写实, 电影风格, 高清画质, <可再加项目风格短语>
+第1行：画面风格和类型: <项目风格。已给 STYLE_ZH 时必须**逐字照抄**，句内**不得**再出现
+       「真人写实／电影风格／高清画质」——它们会与不含这些词的项目风格（如水墨）直接冲突。
+       仅当完全没有给定项目风格时，才可用通用标签「真人写实, 电影风格, 高清画质」>
 第2行：生成一个由以下 1 个分镜组成的视频。（**固定为 1，禁止出现「分镜2：」及之后的行**）
 第3行（必须逐字一致）：${DEFAULT_LINE3}
 第4行：分镜1： T1秒: <一个完整连续镜头的电影化中文长句>
@@ -334,8 +339,8 @@ FORBIDDEN: 「切镜到」「镜头2」「第二个镜头」「随后切换到�
 - **禁止**：概括式台词（如「他说了一句重要的话」）、@人物N、markdown、SoulLens 段标签
 - **禁止**：「切镜到」「镜头2」「第二个镜头」「随后切换到」「镜头切换」等任何多镜头描述
 
-范例结构（勿照抄剧情，仅学排版）：
-画面风格和类型: 真人写实, 电影风格, 高清画质, 日本动漫画风
+范例结构（勿照抄剧情与风格，仅学排版；第1行必须换成项目自己的风格）：
+画面风格和类型: <项目风格 STYLE_ZH 逐字照抄>
 生成一个由以下 1 个分镜组成的视频。
 ${DEFAULT_LINE3}
 分镜1： 15秒: 镜头从 @图片1 的雨夜街口缓缓推近，@图片2 撑伞立于积水倒影中，雨丝穿过侧逆光… @图片2 的嗓音低沉："台词原文"`;
@@ -1422,7 +1427,9 @@ into separate storyboard entries instead.
 Output structure (no lines before or after this block):
 
 Line 1 — exactly:
-画面风格和类型: <comma-separated tags; MUST include 真人写实, 电影风格, 高清画质; MAY add STYLE_HINT / DRAMA_GENRE phrase>
+画面风格和类型: <the project style. When STYLE_HINT / STYLE_ZH is present, copy it VERBATIM and append
+NOTHING — do NOT add 真人写实 / 电影风格 / 高清画质, they contradict a project style that does not
+contain them (e.g. 水墨/国画/动画). Use those generic tags ONLY when no project style is given at all.>
 
 Line 2 — exactly (one single shot, never 分镜2):
 生成一个由以下 1 个分镜组成的视频。

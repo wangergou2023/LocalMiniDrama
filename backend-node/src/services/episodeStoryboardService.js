@@ -7,8 +7,8 @@ const safeJson = require('../utils/safeJson');
 const { safeParseAIJSON, extractJsonCandidate, repairTruncatedJsonArray, extractFirstArray } = safeJson;
 const loadConfig = require('../config').loadConfig;
 const angleService = require('./angleService');
-const { checkDialogueCoverage } = require('../utils/dialogueCoverage');
-const { DEFAULT_LINE3, buildFallbackUniversalMultiBeatText, validateUniversalSegmentText } = require('./universalOmniMultiBeatFormat');
+const { checkDialogueCoverage, extractScriptDialogue } = require('../utils/dialogueCoverage');
+const { buildFallbackUniversalMultiBeatText, repairUniversalSegmentText } = require('./universalOmniMultiBeatFormat');
 
 /**
  * 分镜专用 generateText 包装：
@@ -358,16 +358,22 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
   const propIds = Array.isArray(sb.props) ? sb.props.map(Number).filter(Number.isFinite) : [];
   let universalSegmentText = '';
   let universalSegmentFormatProblems = [];
+  let universalSegmentFatal = false;
   if (sb.universal_segment_text != null && String(sb.universal_segment_text).trim()) {
     // 全能分镜是**多行块**格式（第1行风格 / 第2行「生成一个由以下 1 个分镜组成的视频。」/
     // 第3行 LINE3 / 第4行「分镜1： T秒: …」）。这里原先把换行压成空格，把块结构拍平成一行，
     // 与规范冲突；只规范换行符、保留行结构。
     const raw = String(sb.universal_segment_text).trim().replace(/\r\n?/g, '\n');
-    // 模型给的是不是块格式，此前完全没校验 —— 实测合规与否是抽签的，
-    // 不校验就会把已废弃的灵境/SoulLens 单行格式静默存库。
-    const v = validateUniversalSegmentText(raw, { styleZh: opts.styleZh || '' });
-    if (v.ok) universalSegmentText = raw;
-    else universalSegmentFormatProblems = v.problems;
+    // 格式合规此前完全没校验，而实测是抽签的（16 镜那轮全对、21 镜那轮全是废弃的灵境单行）。
+    // 不合规时**只换骨架那几行**，保住模型写的第4行长句 —— 整条替换会把好内容一起扔掉。
+    const rep = repairUniversalSegmentText(raw, { styleZh: opts.styleZh || '' });
+    if (!rep.fatal) {
+      universalSegmentText = rep.text;
+      if (rep.changes.length) universalSegmentFormatProblems = rep.changes;
+    } else {
+      universalSegmentFormatProblems = rep.changes;
+      universalSegmentFatal = true;
+    }
   }
   if (universalOmni && !universalSegmentText) {
     // 兜底必须是**块格式**，与正常产出同格式。
@@ -395,8 +401,13 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
       // 前端传的是英文 PromptEn，且拼上「真人写实, 电影风格, 高清画质」会与项目风格冲突。
       opts.styleZh || style
     );
-    if (universalSegmentFormatProblems.length) {
-      universalSegmentFormatProblems = universalSegmentFormatProblems.map((p) => `模型返回的正文不合规（${p}），已改用块格式兜底`);
+    // 走到这里说明整条换成了块格式兜底模板。两种来路都要报出来：
+    //   · 模型压根没返回 universal_segment_text（此前完全静默）—— 实测「真假美猴王」21 镜
+    //     那轮就是 21/21 没返回，用户只看到一堆模板文而日志里一行提示都没有
+    //   · 模型返回了但正文立不住（fatal=true）
+    universalSegmentFatal = true;
+    if (!universalSegmentFormatProblems.length) {
+      universalSegmentFormatProblems = ['模型未返回 universal_segment_text，已用块格式兜底模板生成'];
     }
   }
   const creationMode = universalOmni ? 'universal' : 'classic';
@@ -428,6 +439,7 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
     creationMode,
     universalSegmentText,
     universalSegmentFormatProblems,
+    universalSegmentFatal,
   };
 }
 
@@ -662,7 +674,7 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
       ).get(episodeIdNum, shotNumber);
       if (existing) {
         const d = deriveStoryboardFieldsFromAi(sb, style, videoRatio, deriveOptsEff);
-        if (d.universalSegmentFormatProblems?.length) fmtProblems.push({ id: existing.id, title: d.title, reasons: d.universalSegmentFormatProblems });
+        if (d.universalSegmentFormatProblems?.length) fmtProblems.push({ id: existing.id, title: d.title, fatal: !!d.universalSegmentFatal, reasons: d.universalSegmentFormatProblems });
         updateStoryboardRowFromDerived(db, existing.id, episodeIdNum, d, sb, now);
         log.info('Storyboard merged from final parse after incremental save', {
           episode_id: episodeIdNum,
@@ -721,7 +733,7 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
     }
 
     const d = deriveStoryboardFieldsFromAi(sb, style, videoRatio, deriveOptsEff);
-    if (d.universalSegmentFormatProblems?.length) fmtProblems.push({ id: null, title: d.title, reasons: d.universalSegmentFormatProblems });
+    if (d.universalSegmentFormatProblems?.length) fmtProblems.push({ id: null, title: d.title, fatal: !!d.universalSegmentFatal, reasons: d.universalSegmentFormatProblems });
 
     try {
       db.prepare(
@@ -797,16 +809,26 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
   }
   log.info('Storyboards saved', { episode_id: episodeId, count: saved.length });
 
-  // 全能分镜格式自检告警：模型返回的正文不符合块格式时已被兜底替换（见 deriveStoryboardFieldsFromAi）。
-  // 静默替换会掩盖「模型没按规范写」这件事，所以明确报出来 —— 兜底文案是模板化的，
-  // 出片质量明显低于模型正常产出，值得重跑这几条。
-  const fmtBad = fmtProblems;
-  if (fmtBad.length) {
-    log.warn('[分镜] 部分分镜的全能提示词不合规，已用块格式兜底替换（建议重新生成这几条）', {
+  // 全能分镜格式自检告警。两种情况：
+  //   · 骨架错但正文立得住 → 只把骨架几行换掉，模型写的第4行长句保留（常见，危害小）
+  //   · 正文根本不成块（灵境单行 / 多子分镜 / 混入 @人物N）→ 整条换成块格式模板兜底（危害大，出片质量明显下降）
+  // 后者必须单独报出来让人重跑，否则会被当成普通修复而被忽略。
+  const fmtFatal = fmtProblems.filter((x) => x.fatal);
+  const fmtRepaired = fmtProblems.length - fmtFatal.length;
+  if (fmtRepaired > 0) {
+    log.warn('[分镜] 部分分镜的全能提示词骨架不合规，已就地修复（正文保留）', {
       episode_id: episodeId,
-      count: fmtBad.length,
+      count: fmtRepaired,
       total: saved.length,
-      sample: fmtBad.slice(0, 3),
+      sample: fmtProblems.filter((x) => !x.fatal).slice(0, 3),
+    });
+  }
+  if (fmtFatal.length > 0) {
+    log.warn('[分镜] 部分分镜的全能提示词无法修复，已整条换成块格式兜底模板（建议重新生成这几条）', {
+      episode_id: episodeId,
+      count: fmtFatal.length,
+      total: saved.length,
+      sample: fmtFatal.slice(0, 3),
     });
   }
   return saved;
@@ -1331,6 +1353,49 @@ The user enabled narrator voice-over for the whole episode. Every shot object MU
       systemPrompt += `\n\n【最高优先级——解说旁白已开启】
 用户已开启全片解说：每个分镜的 narration 必须为非空字符串（至少一句）。第 1 镜必须有开场解说。第 1、2 镜禁止同时留空 narration。本模式下不允许 narration 为空。`;
     }
+  }
+
+  // ── 必须逐字保留的台词清单（最高优先级）──────────────────────────────────────
+  //
+  // 这一步此前**从没把台词清单交给模型** —— 只有后续单镜「全能提示词」那一步才有
+  // DIALOGUE_VERBATIM 约束，可那时分镜的 dialogue 字段早已定型，丢了就找不回来。
+  //
+  // 后果实测：「三打白骨精」21 句丢 10 句、「真假美猴王」10 句丢 2 句，而且丢失是静默的
+  // —— 不止 dialogue 字段，连 universal_segment_text / video_prompt / action / result 里
+  // 都没有，等于整个剧情点不存在。三打白骨精丢的正是「你连杀三人，佛门慈悲何在？」
+  // 这类台词，把「唐僧为什么最后要赶走悟空」的因果链挖空了。
+  //
+  // 成因是容量（实测分镜能承载的台词数 ≈ 1 句/镜）**叠加没被告知台词不可删**：模型合并
+  // 节拍时把台词当成了可选项。所以这里把清单摆出来，并明确「不够装就加镜，不许删台词」。
+  try {
+    const mustKeepDialogue = extractScriptDialogue(scriptContent);
+    if (mustKeepDialogue.length > 0) {
+      const isEn = systemPrompt.includes('[Role]');
+      const items = mustKeepDialogue
+        .map((d, i) => `  ${i + 1}. ${d.speaker ? d.speaker + '：' : ''}"${d.line}"`)
+        .join('\n');
+      systemPrompt += isEn
+        ? `\n\n[HIGHEST PRIORITY — VERBATIM DIALOGUE CHECKLIST]
+The script contains exactly ${mustKeepDialogue.length} spoken lines. **Every one of them MUST appear verbatim**
+(character-for-character) inside some shot's "dialogue" field. Do not reword, summarise, merge or drop any:
+${items}
+- A line may NOT be paraphrased into narration or action. If you are tempted to summarise it, keep the original words.
+- If the shot count is too small to hold them all, **split dialogue-heavy beats into more shots** — that is the
+  correct fix. Dropping a line is a hard error.`
+        : `\n\n【最高优先级——必须逐字保留的台词清单】
+剧本中共有 ${mustKeepDialogue.length} 句对白。**每一句都必须原样（逐字）出现在某一条分镜的 "dialogue" 字段里**，
+不得改写、不得概括、不得合并、不得遗漏：
+${items}
+- 台词**不允许**被改写成 narration 或 action 里的转述。想概括的时候，请保留原话。
+- 若分镜数量不足以容纳全部台词，**把对白密集的节拍拆成更多分镜** —— 这才是正确做法；
+  删掉台词属于严重错误。`;
+      log.info('[分镜] 已注入必保台词清单', {
+        episode_id: episodeId,
+        dialogue_lines: mustKeepDialogue.length,
+      });
+    }
+  } catch (e) {
+    log.warn('[分镜] 注入必保台词清单失败（不影响生成）', { episode_id: episodeId, error: e.message });
   }
 
   const wantUniversalOmni =

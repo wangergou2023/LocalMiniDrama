@@ -95,6 +95,25 @@ function buildFallbackUniversalMultiBeatText(sb, d, styleHint) {
 }
 
 /**
+ * LINE3 的**第二种**合法形态：本镜没有场景参考图时（`scene_id` 为空，@图片1 是角色/道具），
+ * 提示词里的 LINE3_REQUIRED 就是这一句（见 universalSegmentPromptBundle 的 line3Required）。
+ * 校验时必须认它，否则会把完全正确的正文误判为不合规。
+ */
+const LINE3_NO_SCENE = '本片段以首张参考图 @图片1 作为画面锚点展开。';
+
+/** LINE3 是否属于任一合法形态 */
+function isUniversalLine3(text) {
+  const t = String(text || '');
+  if (!t) return false;
+  if (t.includes(DEFAULT_LINE3) || t.includes(LINE3_NO_SCENE)) return true;
+  // 场景槽位不一定是 @图片1（极少见），按句式认
+  return /环境、光影与陈设定性参考 @图片\d+。若 @图片\d+ 为宫格或多画面拼图[^\n]*须单镜头完整连续画面。/.test(t)
+    || /本片段以首张参考图 @图片\d+ 作为画面锚点展开。/.test(t);
+}
+
+const SINGLE_SHOT_DECL_RE = /生成一个由以下\s*1\s*个分镜组成的视频/;
+
+/**
  * 校验 universal_segment_text 是否符合当前规范的**块格式**。
  *
  * 为什么需要：格式合规此前完全靠模型自觉，实测是**抽签**的 —— 同样两轮生成，
@@ -115,8 +134,8 @@ function validateUniversalSegmentText(text, opts = {}) {
   const head = lines[0] || '';
   if (lines.length < 4) problems.push(`行数 ${lines.length} < 4`);
   if (!/^画面风格和类型\s*[:：]/.test(head)) problems.push('第1行不是「画面风格和类型:」');
-  if (!/生成一个由以下\s*1\s*个分镜组成的视频/.test(t)) problems.push('第2行不是单分镜声明（应为「生成一个由以下 1 个分镜组成的视频。」）');
-  if (!t.includes(DEFAULT_LINE3)) problems.push('第3行与 LINE3_REQUIRED 不逐字一致');
+  if (!SINGLE_SHOT_DECL_RE.test(t)) problems.push('第2行不是单分镜声明（应为「生成一个由以下 1 个分镜组成的视频。」）');
+  if (!isUniversalLine3(t)) problems.push('第3行不是任一合法形态的 LINE3');
 
   const beats = t.match(/分镜\s*\d+\s*[:：]/g) || [];
   if (beats.length !== 1) problems.push(`分镜行数 ${beats.length} ≠ 1`);
@@ -134,11 +153,93 @@ function validateUniversalSegmentText(text, opts = {}) {
   return { ok: problems.length === 0, problems };
 }
 
+/**
+ * 就地把不合规的块**修好**，而不是整条丢掉用模板兜底。
+ *
+ * 为什么不能一丢了之：块格式的前 3 行是**固定骨架**，而第 4 行（分镜1 的长句）是模型写的
+ * 真正有价值的部分 —— 上百字的电影化描写、@图片N 绑定、运镜链。只要骨架错了就整条替换，
+ * 等于把模型写的好东西也一起扔了，换回模板句子（实测就是这样：23 条因为第1行多了「真人写实」
+ * 被全部替换成模板，全靠后续润色步骤才救回来；如果没跑润色，用户拿到的就是 23 条模板文）。
+ *
+ * 所以：骨架错 → 只换骨架那几行；只有结构根本立不住（灵境单行 / 没有分镜行）才判 fatal，
+ * 交由调用方走完整兜底。
+ *
+ * @param {string} text
+ * @param {{styleZh?: string}} [opts]
+ * @returns {{ fatal: boolean, text: string, changes: string[] }}
+ */
+function repairUniversalSegmentText(text, opts = {}) {
+  const raw = String(text || '');
+  const changes = [];
+  if (!raw.trim()) return { fatal: true, text: '', changes: ['内容为空'] };
+
+  const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+  const beatIdx = lines.findIndex((l) => /^分镜\s*1\s*[:：]/.test(l));
+  const extraBeats = lines.filter((l) => /^分镜\s*[2-9]\s*[:：]/.test(l));
+  // 结构立不住：没有分镜行，或出现多个子分镜（H3 单镜头模型不支持）
+  if (beatIdx < 0 || extraBeats.length > 0) {
+    return { fatal: true, text: raw, changes: [beatIdx < 0 ? '缺少「分镜1：」行' : '出现多个子分镜行'] };
+  }
+  // 灵境单行格式：整条都是废弃格式，救不了
+  if (lines.length < 3 && (/叙事动态\s*[:：]/.test(raw) || /^主体\s*[:：]/.test(raw))) {
+    return { fatal: true, text: raw, changes: ['疑似已废弃的灵境/SoulLens 单行格式'] };
+  }
+
+  const styleZh = String(opts.styleZh || '').trim();
+  const beatLine = lines[beatIdx];
+  // 第4行之前的都算骨架。按**位置**定位第1/2/3行（不能用值比较 —— 第2行被替换后，
+  // 原值就不再等于新值，用值比较会错位把真正的第3行当成第2行丢掉）。
+  const skeleton = lines.slice(0, beatIdx);
+  const i1 = skeleton.findIndex((l) => /^画面风格和类型\s*[:：]/.test(l));
+  const i2 = skeleton.findIndex((l) => /生成一个由以下/.test(l));
+  const usedIdx = new Set([i1, i2].filter((i) => i >= 0));
+  const i3 = skeleton.findIndex((_, i) => !usedIdx.has(i));
+  usedIdx.add(i3);
+  // 骨架里多余的说明行不算错误，原样保留（不丢模型写的东西）
+  const extras = skeleton.filter((_, i) => !usedIdx.has(i));
+
+  let line1 = i1 >= 0 ? skeleton[i1] : '';
+  if (!line1) {
+    line1 = `画面风格和类型: ${styleZh || '真人写实, 电影风格, 高清画质'}`;
+    changes.push('补齐第1行风格句');
+  } else if (styleZh) {
+    const cur = line1.replace(/^画面风格和类型\s*[:：]\s*/, '').trim();
+    // 项目给了风格：与项目风格不一致（例如多了「真人写实」这类冲突词）就整行换成项目风格。
+    // 判定用「去掉所有标点后是否相等」，避免模型只改了标点就被误换。
+    const stripPunct = (s) => s.replace(/[，,、。；;\s]/g, '');
+    if (stripPunct(cur) !== stripPunct(styleZh)) {
+      line1 = `画面风格和类型: ${styleZh}`;
+      changes.push('第1行风格句与项目风格不一致，已替换为项目风格');
+    }
+  }
+
+  let line2 = i2 >= 0 ? skeleton[i2] : '';
+  if (!SINGLE_SHOT_DECL_RE.test(line2)) {
+    line2 = '生成一个由以下 1 个分镜组成的视频。';
+    changes.push('第2行不是单分镜声明，已规范化');
+  }
+
+  let line3 = i3 >= 0 ? skeleton[i3] : '';
+  if (!isUniversalLine3(line3)) {
+    line3 = DEFAULT_LINE3;
+    changes.push('第3行不是合法 LINE3，已替换为规范原文');
+  }
+
+  const fixed = [line1, line2, line3, ...extras, ...lines.slice(beatIdx)].join('\n').replace(/\r\n?/g, '\n');
+  // 修完还不合规（例如正文里混进了 @人物N 或 [禁BGM]）就交给调用方走兜底
+  const after = validateUniversalSegmentText(fixed, { styleZh });
+  if (!after.ok) return { fatal: true, text: raw, changes: after.problems };
+  return { fatal: false, text: fixed, changes };
+}
+
 module.exports = {
   DEFAULT_LINE3,
+  LINE3_NO_SCENE,
+  isUniversalLine3,
   normalizeUniversalSegmentTextNewlines,
   chooseBeatCount,
   splitDurationSeconds,
   buildFallbackUniversalMultiBeatText,
   validateUniversalSegmentText,
+  repairUniversalSegmentText,
 };

@@ -9,6 +9,53 @@ const promptI18n = require('../services/promptI18n');
 const angleService = require('../services/angleService');
 const { buildUniversalSegmentUserPromptBundle } = require('../services/universalSegmentPromptBundle');
 const { normalizeUniversalSegmentShotDurations } = require('../services/universalSegmentDurationNormalize');
+const { repairUniversalSegmentText } = require('../services/universalOmniMultiBeatFormat');
+
+/**
+ * 取项目**中文**画风（与提示词里的 STYLE_ZH 同源），供全能片段骨架修复用。
+ * 取不到返回空串，修复函数会跳过第 1 行的风格归一化。
+ */
+function resolveDramaStyleZh(db, storyboardId) {
+  try {
+    const row = db.prepare(
+      'SELECT d.style AS style, d.metadata AS metadata FROM dramas d JOIN episodes e ON e.drama_id = d.id JOIN storyboards s ON s.episode_id = e.id WHERE s.id = ?'
+    ).get(Number(storyboardId));
+    if (!row) return '';
+    const { mergeCfgStyleWithDrama } = require('../utils/dramaStyleMerge');
+    const cfg = mergeCfgStyleWithDrama(require('../config').loadConfig() || {}, row);
+    return String(cfg?.style?.default_style_zh || '').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+/**
+ * 全能片段落库前的最后一道骨架校验 + 就地修复。
+ *
+ * 生成/润色两条路都会调它。此前两条路都是「拿到什么就存什么」——
+ * 实测模型输出过：已废弃的灵境单行格式、`分镜2：`多子分镜、以及被
+ * aiClient 流式解码切断汉字产生的 U+FFFD（`1 个分镜` → `1 ���分镜`）静默落库。
+ * 修复只换骨架行（风格/单分镜声明/LINE3），模型写的第 4 行长句原样保留。
+ */
+function saveUniversalSegmentText(db, log, sbId, text, tag) {
+  const styleZh = resolveDramaStyleZh(db, sbId);
+  const rep = repairUniversalSegmentText(text, { styleZh });
+  if (rep.fatal) {
+    log.warn('[分镜] 全能片段骨架不合规且无法就地修复，原样保存', {
+      storyboard_id: sbId, tag, reasons: rep.changes,
+    });
+    return { text, repaired: false, reasons: rep.changes };
+  }
+  if (rep.changes.length) {
+    log.warn('[分镜] 全能片段骨架已就地修复', { storyboard_id: sbId, tag, changes: rep.changes });
+  }
+  db.prepare('UPDATE storyboards SET universal_segment_text = ?, universal_segment_text_en = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL').run(
+    rep.text,
+    new Date().toISOString(),
+    sbId
+  );
+  return { text: rep.text, repaired: rep.changes.length > 0, reasons: rep.changes };
+}
 
 /** 润色接口：邻镜结构化摘要（含全能片段与其它提示词字段） */
 function formatNeighborShotPolishContext(row) {
@@ -637,13 +684,9 @@ function routes(db, log) {
       let text = String(finalRaw).trim();
       text = normalizeUniversalSegmentShotDurations(text, durationLabel, durationSec);
       text = normalizeUniversalSegmentAtImageSpacing(text);
-      const nowIso = new Date().toISOString();
-      db.prepare('UPDATE storyboards SET universal_segment_text = ?, universal_segment_text_en = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL').run(
-        text,
-        nowIso,
-        sbId
-      );
-      log.info('[分镜] generateUniversalSegmentStream 完成', { id: sbId, len: text.length, duration_sec: durationSec });
+      const saved = saveUniversalSegmentText(db, log, sbId, text, 'generateUniversalSegmentStream');
+      text = saved.text;
+      log.info('[分镜] generateUniversalSegmentStream 完成', { id: sbId, len: text.length, duration_sec: durationSec, repaired: saved.repaired });
       writeNd({ type: 'done', universal_segment_text: text });
       res.end();
     },
@@ -759,13 +802,9 @@ function routes(db, log) {
       let text = String(finalRaw).trim();
       text = normalizeUniversalSegmentShotDurations(text, durationLabel, durationSec);
       text = normalizeUniversalSegmentAtImageSpacing(text);
-      const nowIso = new Date().toISOString();
-      db.prepare('UPDATE storyboards SET universal_segment_text = ?, universal_segment_text_en = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL').run(
-        text,
-        nowIso,
-        sbId
-      );
-      log.info('[分镜] polishUniversalSegmentStream 完成', { id: sbId, len: text.length, duration_sec: durationSec });
+      const saved = saveUniversalSegmentText(db, log, sbId, text, 'polishUniversalSegmentStream');
+      text = saved.text;
+      log.info('[分镜] polishUniversalSegmentStream 完成', { id: sbId, len: text.length, duration_sec: durationSec, repaired: saved.repaired });
       writeNd({ type: 'done', universal_segment_text: text });
       res.end();
     },

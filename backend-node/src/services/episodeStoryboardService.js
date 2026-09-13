@@ -658,6 +658,8 @@ function repairRefBindingForRecord(db, sb, d, log, episodeIdNum) {
 
 function insertOneStoryboard(db, episodeIdNum, sb, style, videoRatio, now, deriveOpts = {}) {
   const d = deriveStoryboardFieldsFromAi(sb, style, videoRatio, deriveOpts);
+  // 流式增量保存这条路也必须修正参考图绑定，否则只在最终合并路径修 → 漏掉一整批
+  repairRefBindingForRecord(db, sb, d, log, episodeIdNum);
   const shotNumber = d.shotNumber;
   try {
     db.prepare(

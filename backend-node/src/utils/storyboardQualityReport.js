@@ -94,15 +94,20 @@ function buildStoryboardQualityReport(opts = {}) {
       `有 ${universalRepaired} 条全能提示词骨架被自动修正（例如风格句写成了「真人写实」与项目风格冲突）——正文已保留，出片不受影响`
     );
   }
-  // 打斗镜没切拍：不是格式错误（正文完全合规），但它会让打斗**看不出来** ——
-  // 实测单镜打斗把约 8/9 秒花在定场与运镜上，真正的交锋只挤在最后 0.8 秒。所以降 warn 并点名。
+  // 打斗镜「定场挤压」：不是格式错误（正文完全合规），但它会让打斗**看不出来** ——
+  // 实测问题镜是 9 秒里 8 秒定场、交锋只在最后 0.8 秒（正文里第一个交锋动作出现在 70% 处）。
+  //
+  // 注意这里**不是**「打斗镜没切拍就报警」。初版就是那样写的，在 drama4 的 65 镜上产生了
+  // 8 条假警、0 条真问题：短交锋（1-2 拍）本来就该单镜；已在分镜层面拆成连续镜的打斗段
+  // 也不需要镜内切拍。假警比不检查更糟 —— 它会让用户重写本来正确的分镜，
+  // 并教会用户忽略这份报告。判定规则见 checkFightPacing。
   if (fightsWithoutCuts > 0) {
     if (verdict === 'ok') verdict = 'warn';
     hasFightsWithoutCuts = true;
     reasons.push(
-      `有 ${fightsWithoutCuts} 个打斗镜没有镜内切拍（仍是「一条连续运镜」）——本地 H3 支持在一次生成内用 ` +
-      `[Shot N] At MM:SS.mmm, 切镜；不切拍时打斗多半会退化成「大半时长在介绍环境、交锋只在最后一瞬」。` +
-      `可在这些镜上点「生成全能提示词」重写一次`
+      `有 ${fightsWithoutCuts} 个打斗镜把大部分时长花在定场与运镜上（正文里第一个交锋动作出现在 ` +
+      `55% 之后，镜头又不短）——这样渲染出来多半是「大半时长在介绍环境、交锋只挤在最后一瞬」。` +
+      `可在这些镜上点「生成全能提示词」重写一次（会按拍切成 [Shot N] 多镜）`
     );
   }
   if (cutsWithoutFight > 0) {
@@ -128,7 +133,7 @@ function buildStoryboardQualityReport(opts = {}) {
   } else if (hasMissingBeats) {
     headline = '可出片，但有节拍缺失待确认';
   } else if (hasFightsWithoutCuts) {
-    headline = '可出片（打斗镜建议切拍）';
+    headline = '可出片（有打斗镜定场过长待修）';
   } else if (hasRepairs || hasCutsWithoutFight) {
     headline = '可出片（有自动修正）';
   } else {
@@ -168,8 +173,13 @@ function buildStoryboardQualityReport(opts = {}) {
       beat_covered: beatCoverage ? Number(beatCoverage.covered) || 0 : 0,
       beat_missing: missingBeats.length,
       multi_shot: multiShot,
+      // fights_without_cuts = **定场挤压**的镜数（真问题），不是「所有没切拍的打斗镜」
       fights_without_cuts: fightsWithoutCuts,
       cuts_without_fight: cutsWithoutFight,
+      fight_total: formatReport ? Number(formatReport.fight_total) || 0 : 0,
+      fight_cut: formatReport ? Number(formatReport.fight_cut) || 0 : 0,
+      fight_split_sequence: formatReport ? Number(formatReport.fight_split_sequence) || 0 : 0,
+      fight_single_beat: formatReport ? Number(formatReport.fight_single_beat) || 0 : 0,
     },
     missing_dialogue: missingDialogue.map((m) => ({ speaker: m.speaker || '', line: m.line || '' })),
     missing_beats: missingBeats.map((b) => ({ beat: b.beat || '', reason: b.reason || '' })),

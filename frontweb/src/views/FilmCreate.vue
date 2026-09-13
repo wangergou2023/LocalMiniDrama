@@ -2861,12 +2861,15 @@
             </span>
             <span v-else style="color: #67c23a">全部合规</span>
           </el-descriptions-item>
-          <el-descriptions-item label="镜内切拍">
+          <el-descriptions-item label="打斗镜节奏">
             <span v-if="qualityReport.stats.fights_without_cuts" style="color: #e6a23c">
-              {{ qualityReport.stats.fights_without_cuts }} 个打斗镜未切拍
+              {{ qualityReport.stats.fights_without_cuts }} 个定场过长
             </span>
-            <span v-else-if="qualityReport.stats.multi_shot" style="color: #67c23a">
-              {{ qualityReport.stats.multi_shot }} 镜已切拍
+            <span v-else-if="qualityReport.stats.fight_total" style="color: #67c23a">
+              {{ qualityReport.stats.fight_total }} 个打斗镜均正常
+              <span style="color: #909399">
+                （切拍 {{ qualityReport.stats.fight_cut || 0 }} · 拆连续镜 {{ qualityReport.stats.fight_split_sequence || 0 }} · 单拍 {{ qualityReport.stats.fight_single_beat || 0 }}）
+              </span>
             </span>
             <span v-else style="color: #909399">无打斗镜</span>
           </el-descriptions-item>
@@ -2895,16 +2898,17 @@
 
         <div v-if="qualityReport.fights_without_cuts && qualityReport.fights_without_cuts.length" style="margin-top: 14px">
           <div style="font-weight: 600; margin-bottom: 6px; color: #e6a23c">
-            以下打斗镜没有镜内切拍（仍是一条连续运镜）：
+            以下打斗镜把大部分时长花在定场与运镜上（交锋只剩最后一瞬）：
           </div>
           <div v-for="(f, i) in qualityReport.fights_without_cuts" :key="i" style="line-height: 1.7; font-size: 13px">
             · 镜{{ f.storyboard_number != null ? f.storyboard_number : '?' }} {{ f.title }}
-            <span v-if="f.hits && f.hits.length" style="color: #909399">（命中打斗词：{{ f.hits.join('、') }}）</span>
+            <span style="color: #909399">（正文里第一个交锋动作出现在 {{ f.combat_at_percent }}% 处）</span>
           </div>
           <div style="margin-top: 6px; font-size: 12px; color: #909399">
-            本地 H3 支持一次生成内切镜（<code>[Shot N] At MM:SS.mmm,</code>）。不切拍时打斗多半会退化成
-            「大半时长在介绍环境、真正的交锋只挤在最后一瞬」（实测 9 秒的打斗镜只有最后约 0.8 秒在打）。
-            在这些镜上点「生成全能提示词」重写一次即可自动切成按拍的多镜头。
+            本地 H3 支持一次生成内切镜（<code>[Shot N] At MM:SS.mmm,</code>），把定场压进第一拍、其余时长留给交锋。
+            实测问题镜是 9 秒里 8 秒定场、交锋只在最后 0.8 秒。在这些镜上点「生成全能提示词」重写一次即可。
+            <br />
+            注：短交锋（1-2 拍）与已在分镜层面拆成连续镜的打斗段**不算问题**，不会列在这里。
           </div>
         </div>
 

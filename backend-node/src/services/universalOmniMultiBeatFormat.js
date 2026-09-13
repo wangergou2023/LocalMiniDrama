@@ -141,17 +141,119 @@ function parseBeatDurationSec(text) {
  * @param {{action?:string, description?:string, title?:string, result?:string}} sb
  * @returns {{ fight: boolean, hits: string[] }}
  */
-const FIGHT_PAIR_RE = /(打斗|交手|交锋|厮杀|对打|恶战|混战|斗法|招架|迎战|迎击|格挡|过招|拳脚|激战|鏖战|打到|就打|开打|相迎|相交|举棒|挥棒|抡起|一棒|火花|打死|击中|受伤|负伤)/g;
+const FIGHT_PAIR_RE = /(打斗|交手|交锋|厮杀|对打|恶战|混战|斗法|招架|迎战|迎击|格挡|过招|拳脚|激战|鏖战|打到|打上|打出|追打|厮打|乱斗|对战|交战|苦战|缠斗|就打|开打|相迎|相交|举棒|挥棒|抡起|一棒|火花|打死|击中|受伤|负伤)/g;
 const FIGHT_VERB_RE = /(劈|砍|斩|刺|抡|砸|扫|架住|横架|挡|撞|踢|踹|捣|戳|猛击|出拳|一掌|兵器)/g;
 
+/** 判定用的字段。**故意不含 description 与 dialogue**：
+ *  description 是「镜头类型/运镜/动作/对话/结果」的合并文本，把 dialogue 也抄了进去 ——
+ *  实测 drama4 镜16《八戒举耙对准悟空》本身只是举耙对峙，因 dialogue 里有一句
+ *  「你一棒打昏师父」被 description 带进来，于是被判成打斗镜并报了「未切拍」的假警。
+ *  dialogue 里的「一棒」是**别人在说发生过的事**，不代表本镜有打斗。 */
 function detectFightShot(sb) {
-  const src = [sb && sb.title, sb && sb.action, sb && sb.description, sb && sb.result]
+  const src = [sb && sb.title, sb && sb.action, sb && sb.result]
     .filter(Boolean).join(' ');
   if (!src.trim()) return { fight: false, hits: [] };
   const pairs = src.match(FIGHT_PAIR_RE) || [];
   const verbs = Array.from(new Set(src.match(FIGHT_VERB_RE) || []));
   const hits = pairs.concat(verbs);
   return { fight: pairs.length > 0 || verbs.length >= 2, hits: Array.from(new Set(hits)) };
+}
+
+/**
+ * 本镜正文里**第一个交锋动作**出现的位置（占正文长度的比例）。
+ *
+ * 这才是「打斗被定场吃掉」的可测特征。实测问题镜（drama2 镜10「花果山对峙」9 秒）的正文是
+ * 一整段定场与运镜描写，直到 **91% 处**才出现「抡圆了当头劈下」——
+ * 也就是说那次渲染把 8/9 秒花在介绍环境上，交锋只挤在最后 0.8 秒。
+ *
+ * 与之对照：正常打斗镜的正文在第一句就进入动作（比值约 0.2-0.35）。
+ *
+ * @param {string} text ust 正文（或整条 ust）
+ * @returns {number|null} 0-1 的比例；正文里找不到交锋动作时返回 null
+ */
+function firstCombatRatio(text) {
+  const t = String(text || '');
+  const beat = (t.split('\n').find((l) => /^\s*分镜\s*1\s*[:：]/.test(l)) || t)
+    .replace(/^\s*分镜\s*1\s*[:：]\s*[\d.]+\s*秒\s*[:：]\s*/, '');
+  const body = beat.trim();
+  if (body.length < 12) return null;
+  // 复用打斗词表，但按「第一个命中的位置」取
+  const re = new RegExp(FIGHT_PAIR_RE.source + '|' + FIGHT_VERB_RE.source.replace(/^\(|\)$/g, ''), 'g');
+  const m = re.exec(body);
+  if (!m) return null;
+  return m.index / body.length;
+}
+
+/** 超过这个比例就认为「本镜大部分时长花在定场，交锋只在最后一瞬」 */
+const FIGHT_TAIL_CRUSH_RATIO = 0.55;
+/** 低于这个时长的镜头不报「定场挤压」——太短，藏不住多少定场（实测问题镜是 9 秒） */
+const FIGHT_TAIL_CRUSH_MIN_SECONDS = 7;
+
+/**
+ * 打斗镜节奏自检：分清「真的坏了」和「本来就该单镜」。
+ *
+ * 初版规则是「打斗镜没有镜内切拍就报警」，实测在 drama4 上产生 **8 条假警**（真问题 0 条）：
+ *   · 镜10 一棒打昏唐僧、镜12 扫翻行李、镜29 举棒格挡 —— 本就 1-2 拍的短交锋，单镜正确
+ *   · 镜24-27 水帘洞/花果山连打 —— 分镜层面已拆成**连续 7 镜**（镜24-30），
+ *     每镜一拍、同空间连续，比在同一次生成里切拍更专业（还能有景别变化）。
+ *     这种「已在分镜层面拆开」的打斗**不需要**再镜内切拍。
+ *   · 镜16 举耙对峙 —— 假警，见 detectFightShot 注释
+ * 假警比不检查更糟：它会让用户去重写本来正确的分镜，并教会用户忽略这个报告。
+ *
+ * 所以规则改成：
+ *   ① 已切拍（≥2 个剪辑点）→ 通过
+ *   ② 相邻镜（±1）也是打斗镜且同地点 → 说明这场打斗已在分镜层面拆成连续镜 → 通过
+ *   ③ 否则看正文节奏：第一个交锋动作出现在正文 55% 之后 → **定场挤压**（真问题）
+ *   ④ 其余（短交锋、单拍）→ 通过
+ *
+ * @param {Array<object>} rows storyboards（需含 storyboard_number/action/result/title/universal_segment_text）
+ * @returns {{fights:number, cut:number, split_sequence:number, single_beat:number, tail_crushed:Array, cuts_without_fight:Array}}
+ */
+function checkFightPacing(rows) {
+  const list = (Array.isArray(rows) ? rows : []).filter(Boolean);
+  const info = list.map((r) => ({
+    row: r,
+    n: Number(r.storyboard_number) || 0,
+    loc: String(r.location || '').trim(),
+    fight: detectFightShot(r),
+    cuts: parseCutMarkers(r.universal_segment_text).length,
+  }));
+  const byN = new Map(info.map((x) => [x.n, x]));
+  const isFightSeqNeighbour = (x) => {
+    for (const d of [-1, 1]) {
+      const nb = byN.get(x.n + d);
+      if (nb && nb.fight.fight && (!x.loc || !nb.loc || nb.loc === x.loc)) return true;
+    }
+    return false;
+  };
+
+  const out = { fights: 0, cut: 0, split_sequence: 0, single_beat: 0, tail_crushed: [], cuts_without_fight: [] };
+  for (const x of info) {
+    if (x.fight.fight) {
+      out.fights += 1;
+      if (x.cuts >= 2) { out.cut += 1; continue; }
+      if (isFightSeqNeighbour(x)) { out.split_sequence += 1; continue; }
+      const ratio = firstCombatRatio(x.row.universal_segment_text);
+      // 只有**够长的镜头**才可能把交锋挤到最后：实测的问题镜是 9 秒（8 秒定场 + 0.8 秒交锋）。
+      // 5-6 秒的镜头就算前面铺垫多，剩下的时间也不至于「交锋只在一瞬」，
+      // 对它们报警只会制造假警（drama4 镜26「洞外追至山顶」6 秒、比值 0.63 就是这种）。
+      const dur = Number(x.row.duration) || 0;
+      if (ratio != null && ratio > FIGHT_TAIL_CRUSH_RATIO && dur >= FIGHT_TAIL_CRUSH_MIN_SECONDS) {
+        out.tail_crushed.push({
+          id: x.row.id ?? null,
+          storyboard_number: x.n || null,
+          title: x.row.title || '',
+          combat_at_percent: Math.round(ratio * 100),
+          hits: x.fight.hits.slice(0, 4),
+        });
+      } else {
+        out.single_beat += 1;
+      }
+    } else if (x.cuts >= 2) {
+      out.cuts_without_fight.push({ id: x.row.id ?? null, storyboard_number: x.n || null, title: x.row.title || '', cuts: x.cuts });
+    }
+  }
+  return out;
 }
 
 /** 打斗镜的目标镜内镜头数（3 拍：起势/交锋/结果。官方示例也都是 2-3 镜） */
@@ -453,41 +555,35 @@ function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
   const samples = [];
   let multiShot = 0;
   let cutTotal = 0;
-  // 打斗镜与镜内切拍的一致性：**打斗镜没切拍**是最该被点出来的问题 ——
-  // 实测单镜打斗会把 ~90% 的时长花在定场与运镜上，真正的交锋只挤在最后一瞬。
-  // 只有调用方给的 row 里带 action/title 时才能判（saveStoryboards 的概要路径不一定带）。
-  const fightsWithoutCuts = [];
-  const cutsWithoutFight = [];
+  // 打斗节奏自检（见 checkFightPacing）：只报**真的坏了**的 —— 定场挤压。
+  // 初版规则「打斗镜没切拍就报警」在 drama4 上产生 8 条假警、0 条真问题，已废弃。
+  let pacing = { fights: 0, cut: 0, split_sequence: 0, single_beat: 0, tail_crushed: [], cuts_without_fight: [] };
   for (const r of rows) {
     const v = validateUniversalSegmentText(r.universal_segment_text, opts);
     if (!v.ok) samples.push({ id: r.id ?? null, title: r.title || '', problems: v.problems });
     const cuts = parseCutMarkers(r.universal_segment_text).length;
     if (cuts >= 2) multiShot += 1;
     cutTotal += cuts;
-    if (r.action || r.title) {
-      const f = detectFightShot(r);
-      if (f.fight && cuts < 2) {
-        fightsWithoutCuts.push({
-          id: r.id ?? null, title: r.title || '', storyboard_number: r.storyboard_number ?? null,
-          hits: f.hits.slice(0, 4),
-        });
-      } else if (!f.fight && cuts >= 2) {
-        cutsWithoutFight.push({
-          id: r.id ?? null, title: r.title || '', storyboard_number: r.storyboard_number ?? null, cuts,
-        });
-      }
-    }
   }
+  try {
+    pacing = checkFightPacing(rows);
+  } catch (_) { /* 自检失败不影响格式复核 */ }
   return {
     checked: rows.length,
     noncompliant: samples.length,
     samples: samples.slice(0, 5),
     multi_shot: multiShot,
     cut_total: cutTotal,
-    fights_without_cuts: fightsWithoutCuts.length,
-    fights_without_cuts_samples: fightsWithoutCuts.slice(0, 5),
-    cuts_without_fight: cutsWithoutFight.length,
-    cuts_without_fight_samples: cutsWithoutFight.slice(0, 5),
+    // 打斗统计：fights 全部打斗镜 / cut 已切拍 / split_sequence 已被分镜层面拆成连续镜 /
+    // single_beat 短交锋单镜正确 / tail_crushed **定场挤压（真问题）**
+    fight_total: pacing.fights,
+    fight_cut: pacing.cut,
+    fight_split_sequence: pacing.split_sequence,
+    fight_single_beat: pacing.single_beat,
+    fights_without_cuts: pacing.tail_crushed.length,
+    fights_without_cuts_samples: pacing.tail_crushed.slice(0, 5),
+    cuts_without_fight: pacing.cuts_without_fight.length,
+    cuts_without_fight_samples: pacing.cuts_without_fight.slice(0, 5),
   };
 }
 
@@ -503,6 +599,10 @@ module.exports = {
   MAX_INTRA_SHOTS,
   FIGHT_INTRA_SHOTS,
   detectFightShot,
+  firstCombatRatio,
+  FIGHT_TAIL_CRUSH_RATIO,
+  FIGHT_TAIL_CRUSH_MIN_SECONDS,
+  checkFightPacing,
   parseCutMarkers,
   checkCutMarkers,
   parseBeatDurationSec,

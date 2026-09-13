@@ -1318,10 +1318,19 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
       });
     }
     if (stored.fights_without_cuts > 0) {
-      log.warn('[分镜] 有打斗镜没有镜内切拍（会退化成「大半时长在定场、交锋只挤在最后一瞬」）', {
+      log.warn('[分镜] 有打斗镜把大部分时长花在定场（交锋只在最后一瞬）——见 checkFightPacing', {
         episode_id: episodeIdNum,
         count: stored.fights_without_cuts,
         sample: stored.fights_without_cuts_samples,
+      });
+    }
+    if (stored.fight_total > 0) {
+      log.info('[分镜] 打斗镜构成', {
+        episode_id: episodeIdNum,
+        fight_total: stored.fight_total,
+        cut: stored.fight_cut,
+        split_sequence: stored.fight_split_sequence,
+        single_beat: stored.fight_single_beat,
       });
     }
   } catch (e) {

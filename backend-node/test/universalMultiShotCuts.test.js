@@ -31,6 +31,8 @@ const {
   isUniversalLine3,
   isMultiShotLine3,
   detectFightShot,
+  firstCombatRatio,
+  FIGHT_TAIL_CRUSH_RATIO,
   FIGHT_INTRA_SHOTS,
   summarizeUniversalSegmentFormat,
   validateUniversalSegmentText,
@@ -215,32 +217,71 @@ describe('H3 镜内剪辑点：打斗镜判定', () => {
   });
 });
 
-describe('H3 镜内剪辑点：格式汇总的自检项', () => {
+describe('H3 镜内剪辑点：打斗节奏自检（只报真问题）', () => {
   const row = (over) => ({ creation_mode: 'universal', universal_segment_text: makeUst(fightBody()), ...over });
+  /** 造一条「定场很长、交锋在最后面」的 9 秒 ust —— 实测问题镜的形态 */
+  const tailCrushed = () => {
+    const preamble = '单镜头连续画幅，参考拼图只用于把握空间层次与明亮日光走向；' +
+      '承接上一镜腾云破空而去的余势，云头墨气尚未散尽，@图片2 已落在 @图片1 石台之前，' +
+      '机位自石阶下缘缓缓向前推近，暖阳斜照，洞口瀑布如帘垂落，水雾被光切成细碎银点；' +
+      '@图片3 高坐石台之上，正闭目教小猴诵经，众小猴环坐两侧，见生人闯入纷纷惊叫四散；' +
+      '@图片2 定睛一看，怒从心起，掌中 @图片4 金箍棒抡圆了当头劈下。无对白。';
+    return makeUst(preamble, { line3: DEFAULT_LINE3 });
+  };
 
-  it('点出「打斗镜没切拍」', () => {
-    const single = makeUst('@图片2 抡起金箍棒当头就打，@图片3 举棒相迎。', { line3: DEFAULT_LINE3 });
-    const s = summarizeUniversalSegmentFormat([row({ id: 1, title: '花果山对峙', action: '抡起金箍棒当头就打', universal_segment_text: single })]);
+  it('打斗镜定场挤压（交锋在正文 55% 之后、且镜头够长）→ 报出来', () => {
+    const s = summarizeUniversalSegmentFormat([
+      row({ id: 1, storyboard_number: 10, title: '花果山对峙', duration: 9, action: '抡起金箍棒当头就打', result: '两棒相交迸出火花', universal_segment_text: tailCrushed() }),
+    ]);
     assert.equal(s.fights_without_cuts, 1);
-    assert.equal(s.multi_shot, 0);
+    assert.ok(s.fights_without_cuts_samples[0].combat_at_percent > 55, JSON.stringify(s.fights_without_cuts_samples));
   });
 
-  it('点出「非打斗镜却切了拍」', () => {
-    const s = summarizeUniversalSegmentFormat([row({ id: 2, title: '如来嘱托', action: '如来端坐莲台，缓缓开口嘱托。' })]);
+  it('短交锋单镜**不报**（1-2 拍本来就该单镜）——初版规则在这里报过 8 条假警', () => {
+    // 注意 ust 必须是**单镜**写法：默认的 row() 用的是 3 镜打斗正文，那会被算成「已切拍」
+    const single = makeUst('镜头甩拍，@图片2 假悟空抡起 @图片4 铁棒狠狠朝 @图片3 唐僧肩头砸去，@图片3 应声落马。无对白。', { durationSec: 6, line3: DEFAULT_LINE3 });
+    const s = summarizeUniversalSegmentFormat([
+      row({ id: 10, storyboard_number: 10, title: '一棒打昏唐僧', duration: 6, action: '假悟空抡起铁棒，狠狠朝唐僧肩头砸去，唐僧应声落马。', result: '唐僧昏死过去。', universal_segment_text: single }),
+      row({ id: 12, storyboard_number: 12, title: '假猴扫翻行李腾云', duration: 6, action: '假悟空一棒扫翻行李担子，腾云而去。', result: '身影没入暮色云层。', universal_segment_text: single }),
+    ]);
+    assert.equal(s.fights_without_cuts, 0);
+    assert.equal(s.fight_single_beat, 2);
+  });
+
+  it('已在分镜层面拆成连续镜的打斗段**不报**（相邻镜也是打斗镜且同地点）', () => {
+    const loc = '花果山水帘洞内';
+    const single = makeUst('镜头甩拍，@图片2 悟空一棒砸向 @图片3 假猴肩头，@图片3 矮身避过。无对白。', { durationSec: 6, line3: DEFAULT_LINE3 });
+    const fights = [24, 25, 26].map((n, i) => row({
+      id: n, storyboard_number: n, location: loc, duration: 6,
+      title: '连打' + (i + 1), action: '悟空一棒砸向假猴肩头，假猴矮身避过。', result: '两棒相交迸出火花。',
+      universal_segment_text: single,
+    }));
+    const s = summarizeUniversalSegmentFormat(fights);
+    assert.equal(s.fights_without_cuts, 0, '分镜层面已拆开就不需要镜内切拍');
+    assert.ok(s.fight_split_sequence >= 2);
+  });
+
+  it('非打斗镜却切了拍 → 仍然报（可能是模型自行加的）', () => {
+    const s = summarizeUniversalSegmentFormat([row({ id: 2, title: '如来嘱托', duration: 8, action: '如来端坐莲台，缓缓开口嘱托。', result: '悟空躬身行礼。' })]);
     assert.equal(s.cuts_without_fight, 1);
     assert.equal(s.multi_shot, 1);
   });
 
-  it('打斗镜切了拍 → 两项都不报', () => {
-    const s = summarizeUniversalSegmentFormat([row({ id: 3, title: '花果山对峙', action: '抡起金箍棒当头就打', result: '两棒相交迸出火花' })]);
-    assert.equal(s.fights_without_cuts, 0);
-    assert.equal(s.cuts_without_fight, 0);
-    assert.equal(s.cut_total, 3);
+  it('description 里抄进去的台词语不能当成打斗（drama4 镜16 的假警来源）', () => {
+    const sb = {
+      title: '八戒举耙对准悟空',
+      action: '八戒举起钉耙对准悟空胸口，满脸怒容。',
+      result: '钉耙尖齿抵近悟空胸前，悟空愣住。',
+      dialogue: '八戒：你还装！方才你一棒打昏师父，抢了行李就跑！',
+      description: '【动作】八戒举起钉耙对准悟空胸口。【对话】八戒：你还装！方才你一棒打昏师父！',
+    };
+    assert.equal(detectFightShot(sb).fight, false, 'dialogue 是在说「发生过的事」，不代表本镜有打斗');
   });
 
-  it('没有 action/title 时不做打斗判定（不误报）', () => {
-    const s = summarizeUniversalSegmentFormat([row({ id: 4 })]);
-    assert.equal(s.fights_without_cuts, 0);
-    assert.equal(s.cuts_without_fight, 0);
+  it('firstCombatRatio 能定位交锋出现的相对位置', () => {
+    assert.ok(firstCombatRatio(tailCrushed()) > FIGHT_TAIL_CRUSH_RATIO);
+    const early = makeUst('镜头甩拍，@图片2 假悟空抡起铁棒狠狠朝 @图片3 唐僧肩头砸去。无对白。');
+    assert.ok(firstCombatRatio(early) < FIGHT_TAIL_CRUSH_RATIO);
+    assert.equal(firstCombatRatio('没有动作的纯风景镜。'), null);
   });
 });

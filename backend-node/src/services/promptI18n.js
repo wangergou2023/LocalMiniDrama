@@ -308,6 +308,15 @@ WHY EXACTLY ONE: the local MiniMax H3 model shoots a **single continuous take** 
 not support cuts, montage or split screens. Multiple beats corrupt the picture. To show several shots,
 emit several storyboard entries instead of stacking them in one universal_segment_text.
 
+STATE CONSISTENCY — HARD RULE (violating it fails the task):
+- The ENDING state of the 分镜1 line MUST agree with this shot's own ACTION and RESULT fields.
+- Never write a "the place is empty" phrase (空无一人 / 不见人影 / 人影全无 / no one in sight) about a person or
+  object that this shot's RESULT says stays on screen. An empty-scene ending while RESULT keeps someone lying
+  there makes the NEXT shot re-introduce that person — and the video model then stages the fall again.
+- A state that already happened in an EARLIER shot and merely persists now must use STATIC wording
+  (横卧 / 静置 / 散落 / 已倒 / 昏迷不醒). Never use motion wording (倒下 / 倒地 / 栽倒 / 扑倒) for it — the video
+  model reads motion wording as an instruction to perform the action, and you get the same beat twice.
+
 Reference tokens: @图片1 = scene/environment only; @图片2+ = characters in characters[] order; then props if any.
 Dialogue: @图片2 says:"verbatim line" or …嗓音…："line". No speech: end with 无对白。
 Narration: 旁白（画面无声）："verbatim narration"
@@ -326,6 +335,14 @@ FORBIDDEN: 「切镜到」「镜头2」「第二个镜头」「随后切换到�
 第3行（必须逐字一致）：${DEFAULT_LINE3}
 第4行：分镜1： T1秒: <一个完整连续镜头的电影化中文长句>
 **硬性约束**：T1 必须严格等于本镜 JSON 的 duration（秒）；只允许 1 条子分镜行，禁止额外说明行。
+
+**状态一致性（硬性，违反即失败）**：
+- 正文的**收尾状态**必须与本镜自己的 ACTION / RESULT 一致。
+- 不得把 RESULT 里明确**留在画面内**的人或物，写成「空无一人」「不见人影」「人影全无」这类**清场措辞**。
+  收尾写成空场，而 RESULT 说有人还躺在那儿 —— 下一镜只能把这个人**重新摆进画面**，视频模型于是把
+  「倒地」这个动作**又演一遍**（实测就是这样出的错）。
+- 在**更早的镜头里已经发生、现在只是持续**的状态，只用**静态措辞**（横卧／静置／散落／已倒／昏迷不醒）；
+  **禁止**用动作措辞（倒下／倒地／栽倒／扑倒）—— 视频模型会据此再演一次。
 
 **为什么只能有 1 条**：本地 MiniMax H3 是**单镜头连续画面**模型，一次生成只拍一个连续镜头，
 不支持切镜、拼贴、分屏。写多个子分镜会让画面崩坏。需要多个镜头时，请**拆成多个分镜条目**，
@@ -1414,7 +1431,7 @@ function getUniversalOmniSegmentPrompt() {
 
 The USER message includes MULTI_BEAT_OUTPUT, TOTAL_CLIP_SECONDS, SHOT_PACING_AND_POSITION, EPISODE_SCRIPT, NEIGHBOR_* detail, IMAGE_SLOT_MAP, LINE3_REQUIRED, STYLE_HINT, and storyboard fields.
 
-FORBIDDEN output styles: SoulLens single-line (主体:/叙事动态:/[禁BGM]); @人物N as image tokens. Use ONLY the multi-beat block below — same as「全能分镜模式」batch storyboard output.
+FORBIDDEN output styles: SoulLens single-line (主体:/叙事动态:/禁BGM tag); @人物N as image tokens. Use ONLY the multi-beat block below — same as「全能分镜模式」batch storyboard output.
 ${specZh}
 
 This is **one** API clip whose wall-clock length is TOTAL_CLIP_SECONDS. It is a **single continuous take** —
@@ -1475,6 +1492,15 @@ ADDITIONAL_POLISH_MODE (short drama enhancement — still MUST obey MULTI_BEAT_O
 - **Short drama rhythm**: vertical-drama density — stakes, micro-expressions, blocking, camera motion; express it inside the single continuous take.
 - **Inner monologue & dialogue**: brief 心想 / 「」 only when supported by DIALOGUE / NARRATION / SCRIPT / draft. When DIALOGUE_VERBATIM is present, **every** listed line must remain verbatim in 「」 after polish; rephrase motion/camera text freely but **not** quoted dialogue.
 - **Neighbors**: align entry/exit with NEIGHBOR_* ; no redundant retelling of the previous shot.
+- **State consistency (HARD)**: the body line's ENDING state MUST agree with this shot's ACTION / RESULT, and its
+  OPENING state MUST agree with the PREVIOUS shot's ACTION / RESULT. Never write 空无一人 / 不见人影 about someone
+  that RESULT keeps on screen; write persisting states with STATIC wording (横卧 / 静置 / 已倒 / 昏迷不醒), never
+  motion wording (倒下 / 倒地) — motion wording makes the video model re-enact what already happened.
+- **Neighbor truth priority**: the neighbor's ACTION / RESULT are authoritative for "what state the previous shot
+  ended in"; its UNIVERSAL_SEGMENT_TEXT (and the N_ENDING_BEAT excerpt) is only wording. **If they disagree, follow
+  ACTION / RESULT.** Real case: the previous shot's RESULT was 「唐僧倒在枯草中昏迷不醒」 while its text ended with
+  「光圈内空无一人」; the next shot must continue from "Tang Seng is already lying there", never from "empty" — and
+  must not stage the fall again.
 - Language: Chinese for the beat prose; lines 1–3 format as in base prompt; exactly one「分镜1：」line (never 分镜2).`;
 }
 

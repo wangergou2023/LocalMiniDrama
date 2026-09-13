@@ -69,6 +69,9 @@ function formatNeighborShotPolishContext(row) {
     chunk('TITLE', row.title),
     chunk('DESCRIPTION', row.description),
     chunk('ACTION', row.action),
+    // 权威结束状态。此前只给 ACTION 没给 RESULT，写手只能从对方 ust 结尾措辞推断承接状态，
+    // 实测因此把「上一镜光圈内空无一人」当成事实、让唐僧在本镜又倒了一次。
+    chunk('RESULT', row.result),
     chunk('DIALOGUE', row.dialogue),
     chunk('NARRATION', row.narration),
     chunk('VIDEO_PROMPT', row.video_prompt),
@@ -774,14 +777,14 @@ function routes(db, log) {
       try {
         prevRow = db
           .prepare(
-            `SELECT storyboard_number, title, description, action, dialogue, narration, video_prompt, universal_segment_text
+            `SELECT storyboard_number, title, description, action, result, dialogue, narration, video_prompt, universal_segment_text
              FROM storyboards WHERE episode_id = ? AND storyboard_number < ? AND deleted_at IS NULL
              ORDER BY storyboard_number DESC LIMIT 1`
           )
           .get(episodeId, storyboardNumber);
         nextRow = db
           .prepare(
-            `SELECT storyboard_number, title, description, action, dialogue, narration, video_prompt, universal_segment_text
+            `SELECT storyboard_number, title, description, action, result, dialogue, narration, video_prompt, universal_segment_text
              FROM storyboards WHERE episode_id = ? AND storyboard_number > ? AND deleted_at IS NULL
              ORDER BY storyboard_number ASC LIMIT 1`
           )
@@ -922,14 +925,14 @@ function routes(db, log) {
         const eid = sbRow.episode_id;
         prevRow = db
           .prepare(
-            `SELECT storyboard_number, title, description, action, dialogue, narration, video_prompt, universal_segment_text
+            `SELECT storyboard_number, title, description, action, result, dialogue, narration, video_prompt, universal_segment_text
              FROM storyboards WHERE episode_id = ? AND storyboard_number < ? AND deleted_at IS NULL
              ORDER BY storyboard_number DESC LIMIT 1`
           )
           .get(eid, num);
         nextRow = db
           .prepare(
-            `SELECT storyboard_number, title, description, action, dialogue, narration, video_prompt, universal_segment_text
+            `SELECT storyboard_number, title, description, action, result, dialogue, narration, video_prompt, universal_segment_text
              FROM storyboards WHERE episode_id = ? AND storyboard_number > ? AND deleted_at IS NULL
              ORDER BY storyboard_number ASC LIMIT 1`
           )

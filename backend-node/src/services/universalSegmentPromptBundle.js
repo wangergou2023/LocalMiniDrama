@@ -433,13 +433,13 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     // 取出相邻分镜的完整文案（含 universal_segment_text，用于判断上一镜结尾/下一镜开头的实际动作，避免跨镜重复）
     const prevFull = db
       .prepare(
-        `SELECT storyboard_number, title, segment_title, action, dialogue, narration, shot_type, movement, atmosphere, universal_segment_text
+        `SELECT storyboard_number, title, segment_title, action, result, dialogue, narration, shot_type, movement, atmosphere, universal_segment_text
          FROM storyboards WHERE episode_id = ? AND storyboard_number < ? AND deleted_at IS NULL ORDER BY storyboard_number DESC LIMIT 1`
       )
       .get(sb.episode_id, sb.storyboard_number);
     const nextFull = db
       .prepare(
-        `SELECT storyboard_number, title, segment_title, action, dialogue, narration, shot_type, movement, atmosphere, universal_segment_text
+        `SELECT storyboard_number, title, segment_title, action, result, dialogue, narration, shot_type, movement, atmosphere, universal_segment_text
          FROM storyboards WHERE episode_id = ? AND storyboard_number > ? AND deleted_at IS NULL ORDER BY storyboard_number ASC LIMIT 1`
       )
       .get(sb.episode_id, sb.storyboard_number);
@@ -456,6 +456,11 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
         chunk('N_TITLE', row.title),
         chunk('N_SEGMENT', row.segment_title),
         chunk('N_ACTION', row.action),
+        // 上一镜/下一镜的**权威结束状态**。此前只给了 N_ACTION，没给 N_RESULT —— 而
+        // 「这一镜结束时到底是什么状态」恰恰写在 result 里。缺了它，写手只能从对方 ust 的
+        // 结尾措辞去推断；实测就出过事：镜4 的 result 是「唐僧倒在枯草中昏迷不醒」，
+        // 但它的 ust 收尾写成「光圈内空无一人」，镜5 照着 ust 承接，于是把唐僧又演倒了一次。
+        chunk('N_RESULT', row.result),
         chunk('N_DIALOGUE', row.dialogue),
         chunk('N_NARRATION', row.narration),
         chunk('N_SHOT_TYPE', row.shot_type),
@@ -477,6 +482,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
         '- 本分镜应在上一镜**结束后的新状态**上继续推进：先一句承接上一镜结果（如「寒光散去/蓄势后」），随即进入本镜自己的新动作，而不是把上一镜的动作再演一次。',
         '- 本分镜结尾也不得提前演出 NEIGHBOR_NEXT_DETAIL 中下一镜的核心动作；相邻两镜的「结束→开始」只做状态承接，不重复同一动作或同一情景整段。',
         '- 若本镜与上一镜题材连续（如「分身围攻」接「破分身」），明确把「上一镜的结果」作为本镜起点，再从该结果派生新动作，避免两镜都在演同一个挥刀/相撞/抛刀的瞬间。',
+        '- **衔接依据的优先级（重要）**：判断「上一镜结束时是什么状态」以对方的 **N_ACTION / N_RESULT** 为准（N_RESULT 是权威的结束状态）；N_ENDING_BEAT / N_OPENING_BEAT 只是对方 ust 的**措辞**。两者矛盾时**一律以 N_RESULT 为准**，并按它来承接。例：上一镜 N_RESULT 是「唐僧倒在枯草中昏迷不醒」，而对方 ust 结尾写了「光圈内空无一人」——本镜必须按「唐僧已倒在原地」承接，**不得按「无人」承接，更不得让唐僧再倒一次**。',
       ].join('\n');
   } catch (_) {}
 
@@ -490,6 +496,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     `- 约束：T1 必须严格等于 TOTAL_CLIP_SECONDS（=${durationLabel}）；**禁止出现「分镜2：」及之后的任何行**。`,
     '- **禁止**：「切镜到」「镜头2」「第二个镜头」「随后切换到」「镜头切换」等任何多镜头描述；需要多个镜头时应拆成多个分镜条目，而不是在同一条里切镜。',
     '- 本镜不得重演上一分镜结尾已完成的情景（见 NEIGHBOR_SEQUENCE_RULE），应从上一镜结果后的新状态推进并派生本镜新动作；本镜结尾留给下一分镜做状态承接。',
+    '- **状态一致性（硬性，违反即失败）**：正文的**收尾状态**必须与本镜 ACTION / RESULT 一致。① 不得把 RESULT 里明确留在画面内的人或物写成「空无一人」「不见人影」「人影全无」这类**清场措辞**；② 描述「在更早的镜头里已经发生、现在只是持续」的状态，只用**静态措辞**（横卧／静置／散落／已倒／昏迷不醒），**禁止用会让人以为正在发生的动作措辞**（倒下／倒地／栽倒／扑倒）——视频模型会据此把已经演过的动作**再演一遍**。',
     '- 禁止额外说明行、markdown、英文小标题。',
   ].join('\n');
 

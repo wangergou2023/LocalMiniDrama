@@ -596,6 +596,41 @@ function updateStoryboardRowFromDerived(db, existingId, episodeIdNum, d, sb, now
  * 将单个分镜对象插入 DB，供增量流式保存使用。
  * 返回插入后的 id，出错则返回 null（不抛异常）。
  */
+/**
+ * 全能提示词的**参考图绑定**修正（见 utils/segmentRefBinding 顶部注释）。
+ * 不调模型、纯确定性：补漏引、改错序号、去掉指向不存在槽位的引用。
+ */
+function repairRefBindingForRecord(db, sb, d, log, episodeIdNum) {
+  try {
+    const { buildSlotsForStoryboard, checkSegmentRefBinding, repairSegmentRefBinding } = require('../utils/segmentRefBinding');
+    const text = d && d.universalSegmentText;
+    if (!text) return;
+    const slots = buildSlotsForStoryboard(db, sb, { propIds: d.propIds, characterIds: Array.isArray(sb.characters) ? sb.characters : undefined });
+    if (!slots.length) return;
+    let knownNames = [];
+    try {
+      for (const r of db.prepare(
+        `SELECT name FROM characters WHERE drama_id = (SELECT drama_id FROM episodes WHERE id = ?) AND deleted_at IS NULL
+         UNION SELECT name FROM props WHERE drama_id = (SELECT drama_id FROM episodes WHERE id = ?) AND deleted_at IS NULL`
+      ).all(episodeIdNum, episodeIdNum)) knownNames.push(r.name);
+    } catch (_) {}
+    const before = checkSegmentRefBinding(text, slots, { knownNames });
+    const bad = before.missing.length + before.unknown.length + before.mismatched.length;
+    if (!bad) return;
+    const rep = repairSegmentRefBinding(text, slots, { knownNames });
+    const after = checkSegmentRefBinding(rep.text, slots, { knownNames });
+    d.universalSegmentText = rep.text;
+    if (rep.changes.length && log && typeof log.info === 'function') {
+      log.info('[分镜] 参考图绑定已就地修正', {
+        episode_id: episodeIdNum, shot_number: d.shotNumber, title: d.title,
+        changes: rep.changes, remaining: after.missing.length + after.unknown.length + after.mismatched.length,
+      });
+    }
+  } catch (e) {
+    if (log && typeof log.warn === 'function') log.warn('[分镜] 参考图绑定修正失败（不影响出片）', { error: e.message });
+  }
+}
+
 function insertOneStoryboard(db, episodeIdNum, sb, style, videoRatio, now, deriveOpts = {}) {
   const d = deriveStoryboardFieldsFromAi(sb, style, videoRatio, deriveOpts);
   const shotNumber = d.shotNumber;
@@ -774,6 +809,7 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
       ).get(episodeIdNum, shotNumber);
       if (existing) {
         const d = deriveStoryboardFieldsFromAi(sb, style, videoRatio, deriveOptsEff);
+        repairRefBindingForRecord(db, sb, d, log, episodeIdNum);
         if (d.universalSegmentFormatProblems?.length) fmtProblems.push({ id: existing.id, title: d.title, fatal: !!d.universalSegmentFatal, reasons: d.universalSegmentFormatProblems });
         updateStoryboardRowFromDerived(db, existing.id, episodeIdNum, d, sb, now);
         log.info('Storyboard merged from final parse after incremental save', {
@@ -1442,6 +1478,52 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
     }
   } catch (e) {
     log.warn('[分镜] 提示词格式复核失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
+  }
+
+  // 3.5) 参考图绑定：槽位存在、正文提到角色却没引用 → 该角色拿不到参考图，身份一致性丢失
+  //（用户实测：镜1 四人只引了唐僧；镜3 把 @图片4=金箍棒 写成「八戒」）
+  try {
+    const { buildSlotsForStoryboard, checkSegmentRefBinding } = require('../utils/segmentRefBinding');
+    let knownNames = [];
+    try {
+      const dramaRow = db.prepare('SELECT drama_id FROM episodes WHERE id = ?').get(episodeIdNum);
+      const did = dramaRow && dramaRow.drama_id;
+      if (did) {
+        knownNames = db.prepare(
+          `SELECT name FROM characters WHERE drama_id = ? AND deleted_at IS NULL
+           UNION SELECT name FROM props WHERE drama_id = ? AND deleted_at IS NULL`
+        ).all(did, did).map((r) => r.name);
+      }
+    } catch (_) {}
+    const samples = [];
+    let checked = 0;
+    for (const r of storyboards) {
+      if (r.creation_mode !== 'universal') continue;
+      const slots = buildSlotsForStoryboard(db, r);
+      if (!slots.length) continue;
+      checked++;
+      const c = checkSegmentRefBinding(r.universal_segment_text, slots, { knownNames });
+      const n = c.missing.length + c.unknown.length + c.mismatched.length;
+      if (n) {
+        samples.push({
+          id: r.id ?? null, title: r.title || '', storyboard_number: r.storyboard_number ?? null,
+          missing: c.missing.map((x) => `${x.tag}=${x.name}`),
+          mismatched: c.mismatched.map((x) => `${x.tag} 后随「${x.written}」`),
+        });
+      }
+    }
+    if (formatReport) {
+      formatReport.ref_binding_checked = checked;
+      formatReport.ref_binding_bad = samples.length;
+      formatReport.ref_binding_sample = samples.slice(0, 5);
+    }
+    if (samples.length) {
+      log.warn('[分镜] 有分镜的参考图绑定不全（提到的角色/道具没被 @图片N 引用，或引用了不对的槽位）', {
+        episode_id: episodeIdNum, bad: samples.length, checked, sample: samples.slice(0, 3),
+      });
+    }
+  } catch (e) {
+    log.warn('[分镜] 参考图绑定自检失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
   }
 
   // 4) 汇总报告

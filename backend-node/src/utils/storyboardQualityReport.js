@@ -63,6 +63,7 @@ function buildStoryboardQualityReport(opts = {}) {
   let hasMissingBeats = false;
   let hasRepairs = false;
   let hasSmallDialogueGap = false;
+  let hasRefBindingBad = false;
   let hasFightsWithoutCuts = false;
   let hasCutsWithoutFight = false;
 
@@ -100,6 +101,16 @@ function buildStoryboardQualityReport(opts = {}) {
     hasMissingBeats = true;
     reasons.push(
       `语义判定认为有 ${missingBeats.length} 个剧本节拍没落到任何分镜（这是理解式判定、不是字符串比对，可能有误）——请对照下方清单确认，确属缺失就加大「分镜数」重新生成`
+    );
+  }
+  // 参考图绑定不全：不是格式错误，但会让角色**拿不到参考图**（身份一致性丢失）——全能模式的核心价值。
+  const refBindingBad = formatReport ? Number(formatReport.ref_binding_bad) || 0 : 0;
+  if (refBindingBad > 0) {
+    if (verdict === 'ok') verdict = 'warn';
+    hasRefBindingBad = true;
+    reasons.push(
+      `有 ${refBindingBad} 个分镜的参考图绑定不全：正文提到的角色/道具没有用 @图片N 引用（拿不到参考图，长相会飘），` +
+      `或引用了不对的槽位（把别的参考图绑到这个人身上）。可在这些镜上点「生成全能提示词」重写，或用修正脚本补齐`
     );
   }
   if (universalRepaired > 0) {
@@ -148,6 +159,8 @@ function buildStoryboardQualityReport(opts = {}) {
     headline = '可出片，但有节拍缺失待确认';
   } else if (hasFightsWithoutCuts) {
     headline = '可出片（有打斗镜定场过长待修）';
+  } else if (hasRefBindingBad) {
+    headline = '可出片（参考图绑定待补）';
   } else if (hasRepairs || hasCutsWithoutFight) {
     headline = '可出片（有自动修正）';
   } else {
@@ -190,6 +203,7 @@ function buildStoryboardQualityReport(opts = {}) {
       // fights_without_cuts = **定场挤压**的镜数（真问题），不是「所有没切拍的打斗镜」
       fights_without_cuts: fightsWithoutCuts,
       cuts_without_fight: cutsWithoutFight,
+      ref_binding_bad: refBindingBad,
       fight_total: formatReport ? Number(formatReport.fight_total) || 0 : 0,
       fight_cut: formatReport ? Number(formatReport.fight_cut) || 0 : 0,
       fight_split_sequence: formatReport ? Number(formatReport.fight_split_sequence) || 0 : 0,
@@ -197,6 +211,7 @@ function buildStoryboardQualityReport(opts = {}) {
     },
     missing_dialogue: missingDialogue.map((m) => ({ speaker: m.speaker || '', line: m.line || '' })),
     missing_beats: missingBeats.map((b) => ({ beat: b.beat || '', reason: b.reason || '' })),
+    ref_binding_bad: formatReport && Array.isArray(formatReport.ref_binding_sample) ? formatReport.ref_binding_sample : [],
     fights_without_cuts: formatReport && Array.isArray(formatReport.fights_without_cuts_sample)
       ? formatReport.fights_without_cuts_sample
       : [],

@@ -37,7 +37,15 @@ function splitDurationSeconds(dur, m) {
 }
 
 /**
- * 分镜批量生成时模型未返回 universal_segment_text 时的多行兜底
+ * 分镜批量生成时模型未返回 universal_segment_text 时的**块格式**兜底。
+ *
+ * 历史教训：这里原先的对应实现在 episodeStoryboardService 里叫
+ * buildFallbackUniversalSeedanceLine，产出的是**已废弃的灵境/SoulLens 单行格式**
+ *   （主体：@人物1… 叙事动态：… 空间：前景-[…] 光影：… 镜头：… 音效：… [禁BGM][禁字幕]）
+ * 而当前规范明令禁止该格式、也禁止 @人物N（见 promptI18n 的 universal spec）。
+ * 实测「真假美猴王」重生成 21 镜时模型 21/21 都没返回 universal_segment_text，
+ * 于是全部落到那个老兜底上 —— 用户拿到的「全能分镜」全是灵境单行格式，与预期完全不符。
+ * 兜底的输出必须与正常产出**同格式**，否则兜底本身就变成脏数据来源。
  */
 function buildFallbackUniversalMultiBeatText(sb, d, styleHint) {
   const dur = Math.max(1, Number(d.durationSec) || 5);
@@ -49,10 +57,15 @@ function buildFallbackUniversalMultiBeatText(sb, d, styleHint) {
   const dia = trim(d.dialogue);
   const narr = trim(d.narration);
   const atm = trim(sb?.atmosphere);
-  const styleTail = trim(styleHint) || '电影感叙事';
-  const styleLine = `画面风格和类型: 真人写实, 电影风格, 高清画质, ${styleTail}`;
+  const styleTail = trim(styleHint);
+  // 项目给了风格就**只用它** —— 规范要求风格句内部自洽，禁止再叠加「真人写实/电影风格/高清画质」
+  // 这类与项目风格（如水墨）冲突的修饰词。没有风格时才退回通用标签。
+  const styleLine = styleTail
+    ? `画面风格和类型: ${styleTail}`
+    : '画面风格和类型: 真人写实, 电影风格, 高清画质';
 
-  const lines = [styleLine, `生成一个由以下${M}个分镜组成的视频。`, DEFAULT_LINE3];
+  // 第 2 行的措辞必须与规范逐字一致（数字两侧有空格）
+  const lines = [styleLine, `生成一个由以下 ${M} 个分镜组成的视频。`, DEFAULT_LINE3];
 
   for (let k = 0; k < M; k++) {
     const tk = secs[k];
@@ -81,10 +94,51 @@ function buildFallbackUniversalMultiBeatText(sb, d, styleHint) {
   return lines.join('\n');
 }
 
+/**
+ * 校验 universal_segment_text 是否符合当前规范的**块格式**。
+ *
+ * 为什么需要：格式合规此前完全靠模型自觉，实测是**抽签**的 —— 同样两轮生成，
+ * 「真假美猴王」16 镜那轮 16/16 合规，21 镜那轮 21/21 全变成已废弃的灵境/SoulLens
+ * 单行格式（主体：/叙事动态：/空间：/@人物1/[禁BGM]）。不校验就会把脏格式静默存库，
+ * 用户拿到的「全能分镜」根本不是全能分镜。
+ *
+ * @param {string} text
+ * @param {{styleZh?: string}} [opts] styleZh 给定时，第 1 行不得再叠加与它冲突的通用标签
+ * @returns {{ ok: boolean, problems: string[] }}
+ */
+function validateUniversalSegmentText(text, opts = {}) {
+  const t = String(text || '');
+  const problems = [];
+  if (!t.trim()) return { ok: false, problems: ['内容为空'] };
+
+  const lines = t.split('\n').map((l) => l.trim()).filter(Boolean);
+  const head = lines[0] || '';
+  if (lines.length < 4) problems.push(`行数 ${lines.length} < 4`);
+  if (!/^画面风格和类型\s*[:：]/.test(head)) problems.push('第1行不是「画面风格和类型:」');
+  if (!/生成一个由以下\s*1\s*个分镜组成的视频/.test(t)) problems.push('第2行不是单分镜声明（应为「生成一个由以下 1 个分镜组成的视频。」）');
+  if (!t.includes(DEFAULT_LINE3)) problems.push('第3行与 LINE3_REQUIRED 不逐字一致');
+
+  const beats = t.match(/分镜\s*\d+\s*[:：]/g) || [];
+  if (beats.length !== 1) problems.push(`分镜行数 ${beats.length} ≠ 1`);
+
+  // 已废弃格式的指纹
+  if (/@人物\s*\d/.test(t)) problems.push('使用了禁止的 @人物N（应用 @图片N）');
+  if (/叙事动态\s*[:：]/.test(t) || /^主体\s*[:：]/.test(t)) problems.push('疑似已废弃的灵境/SoulLens 单行格式');
+  if (/\[禁BGM\]|\[禁字幕\]/.test(t)) problems.push('含灵境格式的 [禁BGM]/[禁字幕] 标记');
+
+  // 项目已给中文风格时，第 1 行不得再叠加与它冲突的通用写实标签
+  const styleZh = String(opts.styleZh || '').trim();
+  if (styleZh && !/真人写实/.test(styleZh) && /真人写实/.test(head)) {
+    problems.push('第1行含「真人写实」，与项目风格冲突');
+  }
+  return { ok: problems.length === 0, problems };
+}
+
 module.exports = {
   DEFAULT_LINE3,
   normalizeUniversalSegmentTextNewlines,
   chooseBeatCount,
   splitDurationSeconds,
   buildFallbackUniversalMultiBeatText,
+  validateUniversalSegmentText,
 };

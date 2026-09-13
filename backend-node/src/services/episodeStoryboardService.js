@@ -8,6 +8,7 @@ const { safeParseAIJSON, extractJsonCandidate, repairTruncatedJsonArray, extract
 const loadConfig = require('../config').loadConfig;
 const angleService = require('./angleService');
 const { checkDialogueCoverage } = require('../utils/dialogueCoverage');
+const { DEFAULT_LINE3, buildFallbackUniversalMultiBeatText, validateUniversalSegmentText } = require('./universalOmniMultiBeatFormat');
 
 /**
  * 分镜专用 generateText 包装：
@@ -154,87 +155,6 @@ function logDebugStoryboardPrompts(log, tag, userPrompt, systemPrompt) {
   for (let i = 0; i < up.length; i += _SB_PROMPT_LOG_CHUNK) {
     log.info(`[StoryboardPrompt:${tag}] user_part_${Math.floor(i / _SB_PROMPT_LOG_CHUNK) + 1}\n${up.slice(i, i + _SB_PROMPT_LOG_CHUNK)}`);
   }
-}
-
-/** 将 lighting_style 枚举转为中文布光提示（兜底用） */
-function lightingStyleHintZh(code) {
-  const m = {
-    natural: '自然窗光或环境散射光',
-    front: '正面柔光面部受光均匀',
-    side: '侧光约45°勾勒轮廓',
-    backlit: '逆光轮廓光发丝边缘发亮',
-    top: '顶光压暗眼窝',
-    under: '底光或脚光非常规氛围',
-    soft: '软光低反差过渡柔和',
-    dramatic: '戏剧高反差主辅分明',
-    golden_hour: '金色时刻暖斜阳',
-    blue_hour: '蓝调时刻冷环境光',
-    night: '夜景人工点光源',
-    neon: '霓虹混合色温',
-  };
-  return m[String(code || '').trim()] || '主光方向明确侧光或窗光';
-}
-
-/** 按时长与已有运镜字段拼灵境式「运镜链」（至少两步，强调摄影机在动） */
-function buildCameraMotionChain(movement, shotType, durationSec) {
-  const dur = Math.max(1, Number(durationSec) || 5);
-  const mv = String(movement || '').trim();
-  const st = String(shotType || '').trim();
-  const parts = [];
-  if (dur >= 12) {
-    parts.push('定镜约1秒建立空间');
-    if (/跟|追随|尾随/.test(mv)) parts.push('侧后方跟拍主体位移');
-    else if (/摇/.test(mv)) parts.push(`${mv || '轻摇'}拓展画幅信息`);
-    else parts.push('缓推轨贴近动作核心');
-    parts.push('横移从前景遮挡或门框一侧滑出拓宽视野带出纵深与环境细节');
-  } else if (dur >= 8) {
-    parts.push('定镜');
-    parts.push(mv && !/^固定|^定镜/.test(mv) ? mv : '缓推轨由远及近');
-    parts.push('微横移或轻摇让背景纵深与环境细节可读');
-  } else if (dur >= 5) {
-    parts.push('定镜起幅');
-    parts.push(mv || '缓推轨或短跟拍强化动线');
-  } else {
-    parts.push(mv || '短跟拍或微推');
-  }
-  if ((st.includes('远') || st.includes('全景')) && !parts.some((p) => /推|移|跟|摇/.test(p))) {
-    parts.push('缓推轨向事件中心');
-  }
-  const chain = [...new Set(parts)].filter(Boolean).join('，');
-  return chain || '定镜，缓推轨';
-}
-
-/** 全能分镜：模型未返回 universal_segment_text 时的灵境式高密度单行（视频时间轴 + 运镜链） */
-function buildFallbackUniversalSeedanceLine(sb, d, styleHint) {
-  const act = (d.action || '').replace(/\s+/g, ' ').trim().slice(0, 220);
-  const res = (d.result || '').replace(/\s+/g, ' ').trim().slice(0, 120);
-  const emo = (d.emotion || sb.emotion || '').replace(/\s+/g, ' ').trim().slice(0, 24);
-  const atm = (sb.atmosphere || '').replace(/\s+/g, ' ').trim().slice(0, 100);
-  const shotBits = [d.shotType, d.angle].filter(Boolean).join('，').trim();
-  const loc = [sb.location, sb.time].filter(Boolean).join('，').trim() || '叙事空间';
-  const dur = Math.max(1, Number(d.durationSec) || normalizeDuration(sb.duration) || 5);
-  const lightZh = lightingStyleHintZh(d.lightingStyle);
-  const dof = d.depthOfField === 'extreme_shallow' ? '浅景深前景虚化明显' : d.depthOfField === 'shallow' ? '浅景深背景柔化' : d.depthOfField === 'deep' ? '深焦前后景均清晰' : d.depthOfField === 'medium' ? '景深适中' : '景深随景别可感';
-  const shotNum = Math.max(1, Number(d.shotNumber) || 1);
-  const link = shotNum <= 1 ? '开篇情绪奠基' : '延续上一镜动势与视线';
-  const motionCore =
-    act ||
-    '在镜内时长里完成一段可感知的动作阶段变化，含走位或身体重心的转移，避免单姿势摆拍';
-  const emoParen = emo ? `（${emo}）` : '（专注投入）';
-  const fg = atm ? `${atm.slice(0, 42)}与主体相关的虚化层次` : '与动作相关的近景细节或桌面器物';
-  const mg = act ? '主体动作与表情核心区' : '主体占据画面叙事中心';
-  const bg = loc ? `${loc}的环境延展与氛围层次` : '环境纵深与空间气氛';
-  const lightBlock = `[${lightZh}；结合${loc}，建议色温具象化如4500K-5600K区间择一；明暗比约2:1至3:1；${dof}]`;
-  const camChain = buildCameraMotionChain(d.movement, d.shotType, dur);
-  const narrDyn = `约${dur}秒内——在${loc}，@人物1${act ? `先后：${act}` : '持续推进戏内动作'}，${res ? `阶段收束为：${res}` : '动作与视线随时间有阶段推进'}；镜头以「${camChain}」配合人物动线，读出空间纵深与时间流逝`;
-  const lensBlock = `运镜链：${camChain}；景别机位：${shotBits || '中景，平视'}，三分法或对角线择一（结尾动势：[${res || '视线或身体动线指向下一个节拍，动势渐收可衔接下镜'}]）`;
-  const sfx = `环境层-[与${loc}一致的环境声底与远处细节] 动作层-[与动作同步的物理接触声] 情绪层-[无旋律仅以空间混响与材质细微声烘托情绪张力]`;
-  const styleTail = (styleHint && String(styleHint).trim()) || '电影感叙事光色';
-  const dia = (d.dialogue || '').trim().replace(/"/g, "'");
-  let line = `主体：@人物1${emoParen}[朝向：依轴线面向戏中对象或画左/画右择一并保持统一] 正在 ${motionCore}（与上镜衔接：${link}） 叙事动态：${narrDyn} 空间：前景-[${fg}] 中景-[${mg}] 背景-[${bg}] 光影：${lightBlock} 镜头：${lensBlock}`;
-  if (dia) line += ` 台词：第1秒 @人物1："${dia.slice(0, 120)}"`;
-  line += ` 音效：${sfx} ${styleTail} [禁BGM][禁字幕]`;
-  return line.replace(/\r?\n/g, ' ');
 }
 
 function getStoryboardsForEpisode(db, episodeId) {
@@ -437,11 +357,25 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
   const charactersJson = Array.isArray(sb.characters) ? JSON.stringify(sb.characters) : (sb.characters ? JSON.stringify([].concat(sb.characters)) : '[]');
   const propIds = Array.isArray(sb.props) ? sb.props.map(Number).filter(Number.isFinite) : [];
   let universalSegmentText = '';
+  let universalSegmentFormatProblems = [];
   if (sb.universal_segment_text != null && String(sb.universal_segment_text).trim()) {
-    universalSegmentText = String(sb.universal_segment_text).trim().replace(/\r?\n/g, ' ');
+    // 全能分镜是**多行块**格式（第1行风格 / 第2行「生成一个由以下 1 个分镜组成的视频。」/
+    // 第3行 LINE3 / 第4行「分镜1： T秒: …」）。这里原先把换行压成空格，把块结构拍平成一行，
+    // 与规范冲突；只规范换行符、保留行结构。
+    const raw = String(sb.universal_segment_text).trim().replace(/\r\n?/g, '\n');
+    // 模型给的是不是块格式，此前完全没校验 —— 实测合规与否是抽签的，
+    // 不校验就会把已废弃的灵境/SoulLens 单行格式静默存库。
+    const v = validateUniversalSegmentText(raw, { styleZh: opts.styleZh || '' });
+    if (v.ok) universalSegmentText = raw;
+    else universalSegmentFormatProblems = v.problems;
   }
   if (universalOmni && !universalSegmentText) {
-    universalSegmentText = buildFallbackUniversalSeedanceLine(
+    // 兜底必须是**块格式**，与正常产出同格式。
+    // 原先用的是本文件里的 buildFallbackUniversalSeedanceLine —— 产出已废弃的灵境/SoulLens
+    // 单行格式（「主体：@人物1… 叙事动态：… [禁BGM][禁字幕]」），而规范明令禁止该格式与
+    // @人物N。实测「真假美猴王」21 镜重生成时模型 21/21 都未返回 universal_segment_text，
+    // 全部落到那个老兜底，用户拿到的「全能分镜」全是灵境单行格式。
+    universalSegmentText = buildFallbackUniversalMultiBeatText(
       sb,
       {
         shotNumber,
@@ -451,13 +385,19 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
         angle,
         action,
         dialogue,
+        narration,
         result,
         emotion,
         lightingStyle,
         depthOfField,
       },
-      style
+      // 项目**中文**风格（与提示词里的 STYLE_ZH 同源）。不能把入参 style 直接拼进来 ——
+      // 前端传的是英文 PromptEn，且拼上「真人写实, 电影风格, 高清画质」会与项目风格冲突。
+      opts.styleZh || style
     );
+    if (universalSegmentFormatProblems.length) {
+      universalSegmentFormatProblems = universalSegmentFormatProblems.map((p) => `模型返回的正文不合规（${p}），已改用块格式兜底`);
+    }
   }
   const creationMode = universalOmni ? 'universal' : 'classic';
   if (!universalOmni) universalSegmentText = null;
@@ -487,6 +427,7 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
     propIds,
     creationMode,
     universalSegmentText,
+    universalSegmentFormatProblems,
   };
 }
 
@@ -678,6 +619,22 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
   const videoRatio = cfg?.style?.default_video_ratio || '16:9';
   const now = new Date().toISOString();
 
+  // 项目**中文**画风，供全能分镜兜底文案的第 1 行使用（与提示词里的 STYLE_ZH 同源，
+  // 走同一套 mergeCfgStyleWithDrama）。不能拿上面的 style 顶替 —— 前端传的是英文
+  // PromptEn，直接当风格句会把英文混进中文正文。
+  let styleZh = '';
+  try {
+    const { mergeCfgStyleWithDrama } = require('../utils/dramaStyleMerge');
+    const dramaRow = db.prepare(
+      'SELECT d.style AS style, d.metadata AS metadata FROM dramas d JOIN episodes e ON e.drama_id = d.id WHERE e.id = ?'
+    ).get(episodeIdNum);
+    const merged = mergeCfgStyleWithDrama(cfg || {}, dramaRow || {});
+    styleZh = String(merged?.style?.default_style_zh || '').trim();
+  } catch (_) { /* 取不到就退回英文 style，不影响出片 */ }
+  const deriveOptsEff = styleZh ? { ...deriveOpts, styleZh } : deriveOpts;
+  /** 全能提示词格式不合规的分镜（模型返回的正文不是块格式，已用兜底替换），供末尾告警 */
+  const fmtProblems = [];
+
   // 仅在非增量模式下才删除旧数据（增量模式时已在流式开始前删除）
   if (skipShotNumbers === null) {
     const existing = db.prepare('SELECT id FROM storyboards WHERE episode_id = ? AND deleted_at IS NULL').all(episodeIdNum);
@@ -704,7 +661,8 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
         'SELECT * FROM storyboards WHERE episode_id = ? AND storyboard_number = ? AND deleted_at IS NULL'
       ).get(episodeIdNum, shotNumber);
       if (existing) {
-        const d = deriveStoryboardFieldsFromAi(sb, style, videoRatio, deriveOpts);
+        const d = deriveStoryboardFieldsFromAi(sb, style, videoRatio, deriveOptsEff);
+        if (d.universalSegmentFormatProblems?.length) fmtProblems.push({ id: existing.id, title: d.title, reasons: d.universalSegmentFormatProblems });
         updateStoryboardRowFromDerived(db, existing.id, episodeIdNum, d, sb, now);
         log.info('Storyboard merged from final parse after incremental save', {
           episode_id: episodeIdNum,
@@ -762,7 +720,8 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
       }
     }
 
-    const d = deriveStoryboardFieldsFromAi(sb, style, videoRatio, deriveOpts);
+    const d = deriveStoryboardFieldsFromAi(sb, style, videoRatio, deriveOptsEff);
+    if (d.universalSegmentFormatProblems?.length) fmtProblems.push({ id: null, title: d.title, reasons: d.universalSegmentFormatProblems });
 
     try {
       db.prepare(
@@ -837,6 +796,19 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
     if (shotNumber > 0) processedInSave.add(shotNumber);
   }
   log.info('Storyboards saved', { episode_id: episodeId, count: saved.length });
+
+  // 全能分镜格式自检告警：模型返回的正文不符合块格式时已被兜底替换（见 deriveStoryboardFieldsFromAi）。
+  // 静默替换会掩盖「模型没按规范写」这件事，所以明确报出来 —— 兜底文案是模板化的，
+  // 出片质量明显低于模型正常产出，值得重跑这几条。
+  const fmtBad = fmtProblems;
+  if (fmtBad.length) {
+    log.warn('[分镜] 部分分镜的全能提示词不合规，已用块格式兜底替换（建议重新生成这几条）', {
+      episode_id: episodeId,
+      count: fmtBad.length,
+      total: saved.length,
+      sample: fmtBad.slice(0, 3),
+    });
+  }
   return saved;
 }
 

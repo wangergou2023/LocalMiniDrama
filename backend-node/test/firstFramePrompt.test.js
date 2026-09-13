@@ -102,4 +102,24 @@ describe('首帧提示词：必须是静止画面', () => {
   it('extractInitialPose 对纯运镜描述返回空（不把镜头语言当画面）', () => {
     assert.equal(svc.extractInitialPose('镜头从远处山脊缓缓横摇。'), '');
   });
+
+  it('整句都是动作时返回空，而不是把整段动作当首帧', () => {
+    // 兜底曾把整句放回来（只排除了运镜、没排除运动），于是「悟空驾云来到花果山」整句进了首帧
+    assert.equal(svc.extractInitialPose('悟空驾云来到花果山'), '');
+  });
+
+  it('词表不带 g 标志，且同一输入重复调用结果一致', () => {
+    // 带 g 的正则用 .test() 是**有状态**的（lastIndex 会推进），实测因此漏判过
+    // 「悟空驾云来到花果山」里的运动词，把动作整段留进了首帧提示词。
+    assert.equal(svc.MOTION_WORD_RE.global, false);
+    assert.equal(svc.CAMERA_MOTION_RE.global, false);
+    const inputs = ['悟空驾云来到花果山', '镜头从山脊缓缓横摇', '他落在水帘洞外', '师徒四人沿山路行进'];
+    const once = inputs.map((x) => svc.extractInitialPose(x));
+    const twice = inputs.map((x) => svc.extractInitialPose(x));
+    assert.deepEqual(once, twice);
+    // 连续 .test() 也必须稳定
+    const t = inputs.map((x) => svc.MOTION_WORD_RE.test(x));
+    const t2 = inputs.map((x) => svc.MOTION_WORD_RE.test(x));
+    assert.deepEqual(t, t2);
+  });
 });

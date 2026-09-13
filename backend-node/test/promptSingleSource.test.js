@@ -71,6 +71,18 @@ describe('提示词关键规则：打斗按拍（不许悄悄回退）', () => {
     assert.match(promptI18n.getUniversalOmniPolishPrompt(), /Cut markers are structural/);
   });
 
+  it('用户提示词的 JSON 字段清单覆盖系统提示词定义的所有必要字段', () => {
+    // 这份 JSON 清单才是模型照着填的那份；漏写的字段模型就不返回，而且**静默为空**。
+    // 实测：emotion_intensity 三个项目 0/99、layout_description 在 drama2 那批 0/21、
+    // drama4 新批次连 lighting_style / depth_of_field 也一起丢了（0/65）。
+    const zh = promptI18n.getStoryboardUserPromptSuffix(ZH, 8);
+    const en = promptI18n.getStoryboardUserPromptSuffix(EN, 8);
+    for (const f of ['lighting_style', 'depth_of_field', 'narration', 'emotion_intensity', 'layout_description']) {
+      assert.match(zh, new RegExp('\\b' + f + '\\b'), 'zh 清单缺 ' + f);
+      assert.match(en, new RegExp('\\b' + f + '\\b'), 'en 清单缺 ' + f);
+    }
+  });
+
   it('multiline 块格式没被压成单行（历史回归：曾被 replace(/\\r?\\n/g," ") 压平）', () => {
     const spec = promptI18n.getUniversalOmniMultiBeatFormatSpec(ZH);
     assert.ok(spec.split('\n').length > 20, '规范必须仍是多行');

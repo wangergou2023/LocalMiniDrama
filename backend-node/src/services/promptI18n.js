@@ -531,6 +531,18 @@ function formatUserPrompt(cfg, key, ...args) {
   return t.replace(/%[sd]/g, () => (args[i] != null ? String(args[i++]) : ''));
 }
 
+/**
+ * 分镜用户提示词的【输出格式】字段清单**必须与系统提示词里定义的字段一一对应**。
+ *
+ * 为什么：这份 JSON 清单才是模型实际照着填的那份（系统提示词只是「可填哪些」的说明）。
+ * 清单里漏写的字段，模型就不返回 —— 而且**不报错、静默为空**。实测：
+ *   · `emotion_intensity` 从来没进过库（三个项目 0/99）
+ *   · `layout_description`（系统提示词里写明「必填、最高优先级空间合同」）在 drama2 那批 0/21
+ *   · drama4 新批次连 `lighting_style` / `depth_of_field` 也一起丢了（0/65），而 ep1/ep2 那两批
+ *     模型「顺手」返回过 —— 也就是说这属于**抽签**：全靠模型自觉，提示词一长就全丢。
+ * 本项目已经为「同一件事写两份、其中一份过期」吃过多次亏，字段清单同理：以系统提示词的字段表为准，
+ * 这里必须写全。
+ */
 /** 分镜用户提示词后缀：详细输出格式与要求
  * @param {object} cfg - 配置对象
  * @param {number|null} shotDuration - 单镜建议时长（秒），由后端从项目配置或总时长/数量推算后注入
@@ -554,7 +566,7 @@ function getStoryboardUserPromptSuffix(cfg, shotDuration) {
 
 **Audio rule**: bgm_prompt MUST be an empty string or "No BGM". Do not design background music per shot. Put only diegetic ambience, foley, and voice/timbre details in sound_effect, so audio remains consistent across clips.
 
-**Output**: JSON with "storyboards" array. Each item: shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters (array of IDs), props (array of prop IDs), is_primary. Return ONLY valid JSON, no markdown.`;
+**Output**: JSON with "storyboards" array. Each item: shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, lighting_style, depth_of_field, action, dialogue, narration, result, atmosphere, emotion, emotion_intensity, duration, bgm_prompt, sound_effect, characters (array of IDs), props (array of prop IDs), is_primary, layout_description (blocking + character positions; highest-priority spatial contract). Return ONLY valid JSON, no markdown.`;
   }
   const _sbUserLocked = `\n\n【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary, **layout_description（画面布局与人物站位描述，必填，最高优先级空间合同）**。**必须只返回纯JSON，不要markdown。**`;
   const _sbUserOverride = _overrideCache['storyboard_user_suffix'];
@@ -594,7 +606,7 @@ function getStoryboardUserPromptSuffix(cfg, shotDuration) {
 **duration时长**：${durationInstruction}。
 **声音一致性**：所有镜头默认无BGM；若有对白/旁白，sound_effect 必须补充音色与情绪强度，并与动作节奏、环境声保持一致。
 
-【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary。**必须只返回纯JSON，不要markdown。**`;
+【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, lighting_style, depth_of_field, action, dialogue, narration, result, atmosphere, emotion, emotion_intensity, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary, layout_description（画面布局与人物站位，最高优先级空间合同）。**必须只返回纯JSON，不要markdown。**`;
 }
 
 /**

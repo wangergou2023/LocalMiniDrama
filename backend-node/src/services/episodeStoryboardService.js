@@ -852,13 +852,32 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
  * 关键：必须把所有已生成分镜的 shot_number + segment_title + title 全部列出，
  * 防止 AI 因不知道哪些情节已覆盖而重复生成相同内容。
  */
-function buildContinuationPrompt(originalUserPrompt, alreadySaved, lastShotNum, attempt, includeNarration, universalOmni = false) {
+function buildContinuationPrompt(originalUserPrompt, alreadySaved, lastShotNum, attempt, includeNarration, universalOmni = false, cfg = null, requestedCount = null) {
   const narrLine = includeNarration
     ? '\n- 每条新增分镜必须含非空字符串 narration（至少一句解说，与首次任务一致；禁止留空）'
     : '';
+  // 全能模式下续写的格式要求，必须与**首轮完全同一套**。
+  //
+  // 这里原先是一句写死的旧文案：「非空 universal_segment_text（单行：须含「叙事动态」时间线+
+  // 「镜头」运镜链至少两步如定镜/缓推轨/横移从遮挡后滑出）」—— 那是**已废弃的灵境/SoulLens
+  // 单行格式**，正是 universalOmniMultiBeatFormat 明令禁止、并会被校验器判为脏格式的那一种
+  // （实测「真假美猴王」21 镜重生成时就是 21/21 落到该格式）。
+  //
+  // 本来首轮基本不会触发续写，所以这句一直没暴露；但镜数一多（例如 65 镜）续写是**必然**发生的：
+  // 单次响应 16384 token 只够约 24 个分镜（实测 24 镜的原始响应 22684 字），
+  // 其余 40 多镜全部走续写 —— 也就是说**大部分分镜**会按这句旧文案去写，跑完才发现格式全是脏的。
+  // 现在改为直接复用首轮那份规范，杜绝两处描述再分歧。
   const uniLine = universalOmni
-    ? '\n- 每条新增分镜必须含 creation_mode:"universal" 与非空 universal_segment_text（单行：须含「叙事动态」时间线+「镜头」运镜链至少两步如定镜/缓推轨/横移从遮挡后滑出；按 duration 秒写视频动势，禁止静帧式描写；与首轮要求一致）'
+    ? require('./promptI18n').getStoryboardUniversalOmniModeSuffix(cfg || {})
     : '';
+
+  // 还要写多少个：65 镜必须靠 1 次首轮 + 2 次续写凑齐，明确告诉模型剩余数量，
+  // 否则它容易只补几个就收尾，最后镜数远少于请求值。
+  const remaining = Number(requestedCount) > 0 ? Math.max(0, Number(requestedCount) - alreadySaved.length) : null;
+  const remainLine = remaining != null
+    ? `\n- 本次请求总镜数为 ${Number(requestedCount)}，已生成 ${alreadySaved.length} 个，**还需约 ${remaining} 个**（不要只补几个就收尾）`
+    : '';
+
   // 全量已生成分镜摘要（每行一个，仅 shot_number + segment + title）
   const allSummary = alreadySaved.map((sb) => {
     const num = sb.shot_number ?? sb.storyboard_number ?? 0;
@@ -891,9 +910,9 @@ ${lastCtx}
 请从 shot_number ${lastShotNum + 1} 继续生成剩余分镜，直至剧本全部场景覆盖完毕。
 要求：
 - 仅返回新增分镜（JSON数组），shot_number 从 ${lastShotNum + 1} 开始递增
-- 格式与之前完全相同，字段保持一致${narrLine}${uniLine}
+- 格式与之前完全相同，字段保持一致${narrLine}${remainLine}
 - 严禁重复已生成列表中的任何情节或场景
-- 不要输出任何解释文字，直接输出 JSON
+- 不要输出任何解释文字，直接输出 JSON${uniLine}
 
 原始剧本与任务说明：
 ${originalUserPrompt}`;
@@ -1041,7 +1060,7 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
       taskService.updateTaskStatus(db, taskId, 'processing', 50 + contAttempt * 5,
         `已生成 ${storyboards.length} 个分镜，正在续写剩余部分（第${contAttempt}次）...`);
 
-      const contPrompt = buildContinuationPrompt(userPrompt, storyboards, lastShot, contAttempt, !!includeNarration, !!universalOmni);
+      const contPrompt = buildContinuationPrompt(userPrompt, storyboards, lastShot, contAttempt, !!includeNarration, !!universalOmni, cfg, requestedCount);
       logDebugStoryboardPrompts(log, `task-${taskId}-continuation-${contAttempt}`, contPrompt, systemPrompt);
       streamThrottle = 0; // 重置节流，让续写段落也能增量保存
 
@@ -1897,4 +1916,8 @@ module.exports = {
   saveStoryboards,
   /** 按需重算自检 + 质量报告（「重新自检」按钮 / 润色完成后的复核都走它） */
   runStoryboardSelfChecks,
+  /** 续写提示词（供测试验证「续写的格式要求 == 首轮」——镜数多时续写是必然发生的） */
+  buildContinuationPrompt,
+  /** 单次响应的 token 上限与它换算出的分镜数上限（供测试锁住「65 镜必须靠续写凑齐」这个前提） */
+  DEFAULT_STORYBOARD_MAX_TOKENS,
 };

@@ -14,16 +14,19 @@ async function generateStory(db, log, body) {
   const cfg = loadConfig();
   const style = body.style || body.genre || null;
   const type = body.type || null;
-  const episodeCount = Math.max(1, Math.floor(Number(body.episode_count) || 1));
+  // 自动分集：集数由模型按内容决定（每集容量固定，见 promptI18n 的 EPISODE_TARGET_SHOTS）。
+  // 手填与自动两条路都保留 —— 手填时按该集数分配，自动时模型自己分。
+  const autoEpisodes = !!body.auto_episodes && type !== 'promo';
+  const episodeCount = autoEpisodes ? 0 : Math.max(1, Math.floor(Number(body.episode_count) || 1));
 
   const isPromo = type === 'promo';
-  const segmentCount = Math.max(3, episodeCount);
+  const segmentCount = Math.max(3, episodeCount || 1);
   const systemPrompt = isPromo
     ? promptI18n.getPromoVideoSystemPrompt(cfg, segmentCount)
-    : promptI18n.getStoryExpansionSystemPrompt(cfg, episodeCount);
+    : promptI18n.getStoryExpansionSystemPrompt(cfg, episodeCount || 1, { autoEpisodes });
   const userPrompt = isPromo
     ? promptI18n.buildPromoVideoUserPrompt(cfg, premise, style, type, segmentCount)
-    : promptI18n.buildStoryExpansionUserPrompt(cfg, premise, style, type, episodeCount);
+    : promptI18n.buildStoryExpansionUserPrompt(cfg, premise, style, type, episodeCount || 1, { autoEpisodes });
 
   // 单次**输出**上限（max_tokens）。注意它与模型的上下文窗口（本项目 1M）是两回事：
   // 上下文再大，max_tokens 仍决定"一次最多吐多少"。
@@ -34,13 +37,18 @@ async function generateStory(db, log, body) {
   //
   // 多集注意：当前实现把 episodeCount 集放在**一次调用**里生成，集数一多单次输出上限必然不够。
   // 这里按单次调用的现实上限封顶并告警，而不是发一个不可能的 max_tokens 让接口报错。
-  const perEpisodeTokens = 4500;
-  const wantTokens = episodeCount * perEpisodeTokens;
+  // 每集按「约 850 字上限 + JSON 包装」估 token：1.45 token/字 → 850 字 ≈ 1230 token，
+  // 取 2000 留足余量（原先按 1200-1600 字估的 4500 已明显偏大）。
+  const perEpisodeTokens = 2000;
   const singleCallCap = 8000;
+  // 自动分集时集数未知（模型自己定，上限受单次输出约束），直接给足单次上限、不做「集数过多」告警 ——
+  // 按 6 集去估会稳定产生一条无意义的告警（实测就是这样）。
+  const wantTokens = autoEpisodes ? singleCallCap : episodeCount * perEpisodeTokens;
   const minTokensNeeded = Math.max(perEpisodeTokens, Math.min(wantTokens, singleCallCap));
-  if (wantTokens > singleCallCap && log && typeof log.warn === 'function') {
+  if (!autoEpisodes && wantTokens > singleCallCap && log && typeof log.warn === 'function') {
     log.warn('剧本生成：集数过多，单次输出上限不足，可能被截断（建议减少单次集数）', {
       episode_count: episodeCount,
+      auto_episodes: autoEpisodes,
       want_tokens: wantTokens,
       capped_to: minTokensNeeded,
     });
@@ -58,6 +66,7 @@ async function generateStory(db, log, body) {
   log && log.info && log.info('Story raw response', {
     text_length: (rawText || '').length,
     episode_count: episodeCount,
+    auto_episodes: autoEpisodes,
     text_preview: (rawText || '').slice(0, 200),
   });
 
@@ -133,7 +142,8 @@ async function generateStory(db, log, body) {
  *
  * 为什么需要：实测模型会**自己写短** —— 提示词要「每集约 800 字」，它给了 716 字；
  * 而日志里当时只记了原始响应总长（785 字符，含 JSON 包装），看不出正文到底多少字。
- * 现在目标提到「约 1200-1600 字」，低于 1000 字即视为未达目标并告警。
+ * 阈值直接取单集容量（见 promptI18n 的 EPISODE_CHARS_MIN/MAX，由「每集目标镜数」推出）：
+ * 明显偏短会丢过渡，明显偏长会让一集的分镜数过多（渲染时间与成片长度都超）。
  * 注意这与 max_tokens 截断是两回事：截断会中途断句，这里记录的是模型主动收尾的情况。
  */
 function logScriptLengths(log, episodes) {
@@ -142,10 +152,17 @@ function logScriptLengths(log, episodes) {
     for (const ep of (episodes || [])) {
       const len = String((ep && ep.content) || '').trim().length;
       if (len <= 0) continue;
-      if (len < 1000) {
+      // 与提示词里的单集容量同源：明显偏短/偏长都告警（别再用写死的 1000）
+      // 0.7 而不是 0.8：模型实测稳定写在 500-600 字（略低于 630 的目标下限），
+      // 用 0.8 会几乎每集都告警，反而把真正的偏短淹没掉。
+      const lo = Math.round(promptI18n.EPISODE_CHARS_MIN * 0.7);
+      const hi = Math.round(promptI18n.EPISODE_CHARS_MAX * 1.3);
+      if (len < lo || len > hi) {
         if (typeof log.warn === 'function') {
-          log.warn('剧本偏短，未达长度目标（模型自己收尾，非截断）', {
-            episode: ep.episode, chars: len, target: '约 1200-1600 字',
+          log.warn(len < lo ? '剧本偏短，未达单集容量（模型自己收尾，非截断）' : '剧本偏长，一集分镜会过多（建议自动分集或缩小单集容量）', {
+            episode: ep.episode,
+            chars: len,
+            target: `${promptI18n.EPISODE_CHARS_MIN}-${promptI18n.EPISODE_CHARS_MAX} 字（约 ${promptI18n.EPISODE_TARGET_SHOTS} 个分镜）`,
           });
         }
       } else {

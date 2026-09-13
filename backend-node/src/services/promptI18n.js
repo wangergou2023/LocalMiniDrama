@@ -998,6 +998,23 @@ Each element: location, time, prompt (English image generation prompt for pure b
 }
 
 /**
+ * 单集容量：由「每集目标镜数」推出每集字数。
+ *
+ * 为什么用镜数而不是直接写字数：用户真正在意的是**一集有多少个分镜**（65 镜一集太长了）。
+ * 换算链是固定的 —— 镜数 × 规划单镜秒数(8s) × 中文语速(4.2 字/秒) = 字数。
+ * 22 镜 ≈ 740 字 ≈ 3 分钟成片 ≈ 本地 H3 渲染 2.4 小时。
+ *
+ * 「自动分集」时，这个容量就是**每集的上限**：内容超过一集的量就拆到下一集，
+ * 集数由模型按内容需要自己定。否则只是让模型自由发挥，它又会写出一集 2000 字（65 镜）。
+ */
+const EPISODE_TARGET_SHOTS = 22;
+const EPISODE_TARGET_CHARS = Math.round(EPISODE_TARGET_SHOTS * 8 * 4.2);            // ≈ 739
+const EPISODE_CHARS_MIN = Math.round(EPISODE_TARGET_CHARS * 0.85 / 10) * 10;        // ≈ 630
+const EPISODE_CHARS_MAX = Math.round(EPISODE_TARGET_CHARS * 1.15 / 10) * 10;        // ≈ 850
+/** 自动分集时模型的集数区间（受单次输出上限约束：8000 token ≈ 5500 字 ≈ 7 集） */
+const AUTO_EPISODE_RANGE = [3, 6];
+
+/**
  * 剧本创作提示词**正文**（不含末尾的输出格式说明）。
  *
  * 为什么单独抽出来：`getDefaultPromptBody('story_expansion_system')` 的返回值会在
@@ -1009,7 +1026,7 @@ Each element: location, time, prompt (English image generation prompt for pure b
  * @param {object} cfg
  * @param {number|string} nToken 集数；传字符串（如 '${n}'）时用于生成模板正文
  */
-function buildStoryExpansionBody(cfg, nToken) {
+function buildStoryExpansionBody(cfg, nToken, autoEpisodes = false) {
   const n = nToken;
   if (isEnglish(cfg)) {
     return `You are a professional screenwriter. Your task is to expand the user's story premise into ${n} episode(s) of a short-film script.
@@ -1017,21 +1034,25 @@ function buildStoryExpansionBody(cfg, nToken) {
 Requirements:
 1. Write in clear, fluent English suitable for later storyboard breakdown.
 2. Include scene descriptions, character actions and dialogue. Do NOT use shot numbers, "INT./EXT." headings, or screenplay formatting marks.
-3. Each episode: approximately 800 words. Episodes must be connected in story continuity — each episode picks up from where the previous one ended.
+3. Each episode: ${EPISODE_CHARS_MIN}-${EPISODE_CHARS_MAX} characters (Chinese count; the target is about ${EPISODE_TARGET_CHARS} characters ≈ ${EPISODE_TARGET_SHOTS} storyboard shots ≈ 3 minutes of finished video). Episodes must be connected in story continuity — each episode picks up from where the previous one ended.
 4. **One event per sentence**: each sentence must describe exactly ONE filmable event. Never pack a move + an arrival + a discovery into a single sentence. Bad: "Sha Wujing went to Huaguo Mountain to confront Wukong, only to find him sitting in the Water Curtain Cave with a fake Tang Seng beside him." Good — split it: "Sha Wujing rode the clouds to Huaguo Mountain." / "He landed outside the Water Curtain Cave and pushed through the falling water." / "On the stone platform sat a 'Wukong', and beside him sat a 'Tang Seng' and a 'Zhu Bajie' — all of them fakes."
 5. **Write the transitions**: show HOW a character gets from place A to place B (walks / rides a cloud / pushes the door / parts the curtain) and how the location changes — as filmable action. Never skip to the result with words like "only to find" or "suddenly saw".
 6. **Write fights beat by beat**: break a fight into **one beat per sentence**, each sentence a single moment of contact. The target video model supports cuts inside one generation ("[Shot N]"), and **the beats come from the script** — if the script packs a whole exchange into one sentence, the storyboard has nothing to cut on and the finished shot degenerates into "most of the runtime spent establishing the space, the clash in the last instant".
    Bad (four beats in one sentence, uncuttable): "Wukong and the fake monkey fought from the mountain hollow to the ridge and then up into the clouds, neither gaining the upper hand."
    Good (one beat per sentence, each can be a cut inside one clip): "Wukong swings his cudgel down at the fake's head." / "The fake raises his own cudgel to block; the two staves collide and throw sparks." / "The fake reverses into a sweeping blow at Wukong's waist." / "Wukong twists aside and the blow shatters the rock behind him."
    Keep a fight going for **at least three or four beats** before it resolves; weapon contact, blocking, dodging, staggering back and gasping for breath each count as one beat.
-7. Each episode should have a clear beginning, development, and a hook or turning point at the end.`;
+7. Each episode should have a clear beginning, development, and a hook or turning point at the end.${autoEpisodes ? `
+8. **YOU decide the episode count (auto-split)**: tell the whole story, splitting it naturally according to the per-episode capacity above (${EPISODE_CHARS_MIN}-${EPISODE_CHARS_MAX} characters per episode); ${AUTO_EPISODE_RANGE[0]}-${AUTO_EPISODE_RANGE[1]} episodes recommended.
+   - Do not pad to reach a count, and do not squeeze two episodes' worth of content into one: **if an episode exceeds the capacity, move the rest into the next episode**
+   - Every episode must stand on its own and end on a hook
+   - Consecutive episodes must advance time/place clearly — do not linger in the same scene` : ''}`;
   }
   return `你是一位专业的编剧。你的任务是根据用户提供的故事梗概，创作 ${n} 集完整的短片剧本。
 
 要求：
 1. 用中文写作，叙事清晰流畅，适合后续拆分为分镜。
 2. 可以包含场景描述、角色动作与对话，但不要输出分镜格式、镜头编号或「内景/外景」等场次标记。
-3. **每集严格控制在 1200-1600 字**（含标点）。这是**硬性范围**：少于 1200 字分镜会不够、过渡会被砍；超过 1600 字成片会过长。写细的方式是「把动作、走位、表情、环境、过渡写成可拍摄的具体动作」，**不是**堆形容词、重复叙述、加支线或另起一集。
+3. **每集严格控制在 ${EPISODE_CHARS_MIN}-${EPISODE_CHARS_MAX} 字**（含标点）。这是**硬性范围**：字数不足分镜会不够、过渡会被砍；超出则一集的分镜数过多（成片过长、渲染太久）。写细的方式是「把动作、走位、表情、环境、过渡写成可拍摄的具体动作」，**不是**堆形容词、重复叙述、加支线。
 4. **一句一事**：每个句子只写**一个**可拍摄的事件，禁止把多个节拍挤进同一句。
    ✗ 反例（三个节拍挤在一句）：「沙僧去花果山找悟空理论，却见悟空正坐在水帘洞中，身边还有一个"唐僧"和"八戒""沙僧"」
    ✓ 正例（拆成三句，每句一镜）：「沙僧驾云赶往花果山。」「他落在水帘洞外，掀帘而入。」「洞中石台上端坐着一个"悟空"，身边还坐着"唐僧""八戒""沙僧"——全是假的！」
@@ -1040,22 +1061,31 @@ Requirements:
    ✗ 反例（四拍挤成一句，无法切镜）：「悟空与假猴从山坳打到山巅，又从山巅打到云端，难分胜负」
    ✓ 正例（一拍一句，每句都能成为一个镜头内的一个切点）：「悟空抡起金箍棒当头劈下。」「假猴抄棒横架相迎，两棒相交迸出火星。」「假猴反手一棒扫向悟空腰际。」「悟空侧身闪过，一棒击碎了身后的山石。」
    打斗**至少连续三到四拍**再分出结果，别一拍就完；兵器相交、格挡、闪避、踉跄后退、力竭喘息都各算一拍。
-7. 每集有清晰的起承转合，结尾留有悬念或转折，吸引观众看下一集。`;
+7. 每集有清晰的起承转合，结尾留有悬念或转折，吸引观众看下一集。${autoEpisodes ? `
+8. **集数由你决定（自动分集）**：把整个故事讲完，按上面的**每集容量**（${EPISODE_CHARS_MIN}-${EPISODE_CHARS_MAX} 字）自然分集，建议 ${AUTO_EPISODE_RANGE[0]}-${AUTO_EPISODE_RANGE[1]} 集。
+   - 不要为了凑集数注水，也不要为了少写而把两集的内容挤进一集 —— **一集超出容量就必须拆到下一集**
+   - 每一集都要能被单独看懂，并在结尾留一个钩子
+   - 相邻集之间要有明确的时间/地点推进，不要在同一场景里反复打转` : ''}`;
 }
 
 /**
  * 故事扩展：根据梗概生成短片剧本正文（中英文系统提示词）
  */
-function getStoryExpansionSystemPrompt(cfg, episodeCount) {
+function getStoryExpansionSystemPrompt(cfg, episodeCount, opts = {}) {
+  const autoEpisodes = !!opts.autoEpisodes;
   const n = Number(episodeCount) > 1 ? Number(episodeCount) : 1;
-  const jsonNote = `\n\n**输出格式（必须严格遵守）**：\n返回一个 JSON 数组，包含 ${n} 个对象，每个对象格式如下：\n[\n  {\n    "episode": 1,\n    "title": "第一集标题（5-10字，概括本集核心内容）",\n    "content": "本集剧本正文（约1200-1600字）"\n  }\n]\n**必须只返回纯 JSON 数组，不要任何 markdown 代码块、说明文字。直接以 [ 开头，以 ] 结尾。**`;
+  const jsonNote = autoEpisodes
+    ? `\n\n**输出格式（必须严格遵守）**：\n返回一个 JSON 数组，**集数由你根据内容决定**（建议 ${AUTO_EPISODE_RANGE[0]}-${AUTO_EPISODE_RANGE[1]} 集，每集都要有完整的起承转合与结尾钩子），每个对象格式如下：\n[\n  {\n    "episode": 1,\n    "title": "第一集标题（5-10字，概括本集核心内容）",\n    "content": "本集剧本正文（约${EPISODE_CHARS_MIN}-${EPISODE_CHARS_MAX}字）"\n  },\n  {\n    "episode": 2,\n    "title": "第二集标题",\n    "content": "第二集正文…"\n  }\n]\n**必须只返回纯 JSON 数组，不要任何 markdown 代码块、说明文字。直接以 [ 开头，以 ] 结尾。**`
+    : `\n\n**输出格式（必须严格遵守）**：\n返回一个 JSON 数组，包含 ${n} 个对象，每个对象格式如下：\n[\n  {\n    "episode": 1,\n    "title": "第一集标题（5-10字，概括本集核心内容）",\n    "content": "本集剧本正文（约${EPISODE_CHARS_MIN}-${EPISODE_CHARS_MAX}字）"\n  }\n]\n**必须只返回纯 JSON 数组，不要任何 markdown 代码块、说明文字。直接以 [ 开头，以 ] 结尾。**`;
   if (isEnglish(cfg)) {
-    const enNote = `\n\n**Output format (STRICTLY required)**:\nReturn a JSON array with ${n} object(s), each in this format:\n[\n  {\n    "episode": 1,\n    "title": "Episode title (5-15 words)",\n    "content": "Episode script body (~800 words)"\n  }\n]\n**Return ONLY the JSON array. No markdown, no explanation. Start directly with [ and end with ].**`;
+    const enNote = autoEpisodes
+      ? `\n\n**Output format (STRICTLY required)**:\nReturn a JSON array whose **length (episode count) YOU decide** based on how much the story needs (${AUTO_EPISODE_RANGE[0]}-${AUTO_EPISODE_RANGE[1]} episodes recommended; every episode needs its own arc and an ending hook), each in this format:\n[\n  {\n    "episode": 1,\n    "title": "Episode title (5-15 words)",\n    "content": "Episode script body (${EPISODE_CHARS_MIN}-${EPISODE_CHARS_MAX} characters)"\n  }\n]\n**Return ONLY the JSON array. No markdown, no explanation. Start directly with [ and end with ].**`
+      : `\n\n**Output format (STRICTLY required)**:\nReturn a JSON array with ${n} object(s), each in this format:\n[\n  {\n    "episode": 1,\n    "title": "Episode title (5-15 words)",\n    "content": "Episode script body (${EPISODE_CHARS_MIN}-${EPISODE_CHARS_MAX} characters)"\n  }\n]\n**Return ONLY the JSON array. No markdown, no explanation. Start directly with [ and end with ].**`;
     // 注意：英文分支不走 _overrideCache（覆盖内容是中文，套到英文正文上会串味）——保持原行为
-    return buildStoryExpansionBody(cfg, n) + enNote;
+    return buildStoryExpansionBody(cfg, n, autoEpisodes) + enNote;
   }
   const _storyOverride = _overrideCache['story_expansion_system'];
-  const base = _storyOverride || buildStoryExpansionBody(cfg, n);
+  const base = _storyOverride || buildStoryExpansionBody(cfg, n, autoEpisodes);
   return base + jsonNote;
 }
 
@@ -1099,32 +1129,37 @@ const STORY_TYPE_LABELS = {
 /**
  * 故事扩展：构建用户侧提示（梗概 + 可选风格/类型/集数），中英文
  */
-function buildStoryExpansionUserPrompt(cfg, premise, style, type, episodeCount) {
+function buildStoryExpansionUserPrompt(cfg, premise, style, type, episodeCount, opts = {}) {
   const lang = isEnglish(cfg) ? 'en' : 'zh';
+  const autoEpisodes = !!opts.autoEpisodes;
   const n = Number(episodeCount) > 1 ? Number(episodeCount) : 1;
   const styleLabels = STORY_STYLE_LABELS[lang];
   const typeLabels = STORY_TYPE_LABELS[lang];
   if (lang === 'en') {
-    let prompt = `Please create ${n} episode(s) of a short-film script based on the following story premise:\n\n${premise}`;
+    let prompt = autoEpisodes
+      ? `Please adapt the story premise below into a short-film script, **splitting it into as many episodes as the story needs** (${AUTO_EPISODE_RANGE[0]}-${AUTO_EPISODE_RANGE[1]} recommended; ${EPISODE_CHARS_MIN}-${EPISODE_CHARS_MAX} characters per episode):\n\n${premise}`
+      : `Please create ${n} episode(s) of a short-film script based on the following story premise:\n\n${premise}`;
     if (style && styleLabels[style]) {
       prompt += `\n\nStyle: ${styleLabels[style]}`;
     }
     if (type && typeLabels[type]) {
       prompt += `\nGenre: ${typeLabels[type]}`;
     }
-    if (n > 1) {
+    if (!autoEpisodes && n > 1) {
       prompt += `\nEpisodes: ${n}`;
     }
     return prompt;
   }
-  let prompt = `请根据以下故事梗概，创作 ${n} 集短片剧本：\n\n${premise}`;
+  let prompt = autoEpisodes
+    ? `请把下面的故事梗概改编成短片剧本，**按故事需要自动分集**（建议 ${AUTO_EPISODE_RANGE[0]}-${AUTO_EPISODE_RANGE[1]} 集，每集 ${EPISODE_CHARS_MIN}-${EPISODE_CHARS_MAX} 字）：\n\n${premise}`
+    : `请根据以下故事梗概，创作 ${n} 集短片剧本：\n\n${premise}`;
   if (style && styleLabels[style]) {
     prompt += `\n\n故事风格：${styleLabels[style]}`;
   }
   if (type && typeLabels[type]) {
     prompt += `\n剧本类型：${typeLabels[type]}`;
   }
-  if (n > 1) {
+  if (!autoEpisodes && n > 1) {
     prompt += `\n生成集数：${n} 集`;
   }
   return prompt;
@@ -1825,6 +1860,12 @@ module.exports = {
   getStoryboardUserPromptSuffix,
   getStoryboardNarrationExtraInstructions,
   getStoryExpansionSystemPrompt,
+  /** 单集容量（由每集目标镜数推出）——前端展示「每集约 N 镜 / 约 X 字」时复用 */
+  EPISODE_TARGET_SHOTS,
+  EPISODE_TARGET_CHARS,
+  EPISODE_CHARS_MIN,
+  EPISODE_CHARS_MAX,
+  AUTO_EPISODE_RANGE,
   buildStoryExpansionUserPrompt,
   getPromoVideoSystemPrompt,
   buildPromoVideoUserPrompt,

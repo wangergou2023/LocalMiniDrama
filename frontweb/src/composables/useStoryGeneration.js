@@ -14,6 +14,7 @@ export async function runGenerateStoryFromPremise({
   storyStyle,
   storyType,
   storyEpisodeCount,
+  autoEpisodes,
   scriptTitle,
   generationStyle,
   customStylePrompt,
@@ -80,6 +81,8 @@ export async function runGenerateStoryFromPremise({
         style: storyStyle || undefined,
         type: storyType || undefined,
         episode_count: storyEpisodeCount || 1,
+        // 自动分集：集数交给模型按内容决定（每集容量固定，见后端 promptI18n）
+        auto_episodes: !!autoEpisodes,
         title: scriptTitle || undefined,
         summary: text,
         genre: storyType || undefined,

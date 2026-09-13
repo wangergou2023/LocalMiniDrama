@@ -234,9 +234,15 @@
                       :min="1"
                       :step="1"
                       :precision="0"
+                      :disabled="storyType !== 'promo' && autoEpisodes"
                       controls-position="right"
                       style="width: 100px"
                     />
+                    <el-checkbox
+                      v-if="storyType !== 'promo'"
+                      v-model="autoEpisodes"
+                      title="按故事内容自动决定集数；每集约 22 个分镜（约 740 字），避免一集分镜过多"
+                    >自动分集</el-checkbox>
                   </div>
                   <el-button type="primary" :loading="isStoryGenRunning" @click="onGenerateStory">
                     生成剧本
@@ -3043,6 +3049,12 @@ const storyInput = ref('')
 const storyStyle = ref('')
 const storyType = ref('')
 const storyEpisodeCount = ref(1)
+/**
+ * 自动分集：勾上后「集数」交给模型按内容决定（每集容量固定 ≈22 个分镜 ≈740 字）。
+ * 动机：一集塞满整段故事会产出 65 个分镜（成片近 8 分钟、本地 H3 渲染 7-8 小时），
+ * 自动分集把它拆成每集 20 出头个分镜，可以逐集检查、逐集出片。
+ */
+const autoEpisodes = ref(false)
 // 切换类型时自动调整集数/幕数，并清空风格
 watch(storyType, (val) => {
   storyStyle.value = '' // 切换类型时清空风格，避免跨类残留
@@ -5566,6 +5578,7 @@ async function onGenerateStory() {
     storyStyle: storyStyle.value,
     storyType: storyType.value,
     storyEpisodeCount: storyEpisodeCount.value,
+    autoEpisodes: autoEpisodes.value,
     scriptTitle: scriptTitle.value,
     generationStyle: generationStyle.value,
     customStylePrompt: customStylePrompt.value,

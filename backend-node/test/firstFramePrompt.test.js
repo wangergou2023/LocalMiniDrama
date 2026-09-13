@@ -55,6 +55,13 @@ describe('首帧提示词：必须是静止画面', () => {
     assert.match(p, /大远景·平视·正面/);
   });
 
+  it('机位角度标签（俯拍/仰拍）不算运镜 —— 那是静帧本来就该有的信息', () => {
+    // CAMERA_MOTION_RE 里含 俯拍/仰拍 时，每一镜的首帧自检都会误报
+    const p = buildPrompt({ shot_type: '远景', angle: '俯视', action: '悟空抱头滚地。' });
+    assert.match(p, /远景·俯拍·正面/);
+    assert.equal(svc.CAMERA_MOTION_RE.test(p), false, p);
+  });
+
   it('中景/近景/特写的标签不受影响', () => {
     assert.match(buildPrompt({ shot_type: '中景', angle: '侧面', action: '唐僧勒住缰绳。' }), /中景·平视·左侧/);
     assert.match(buildPrompt({ shot_type: '近景', angle: '俯视', action: '唐僧低头。' }), /近景·俯拍·正面/);

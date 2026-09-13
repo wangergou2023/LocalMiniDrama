@@ -3,6 +3,7 @@ const aiConfigService = require('./aiConfigService');
 const { applyDeepSeekChatOptions } = require('./deepseekConfig');
 const https = require('https');
 const http = require('http');
+const { StringDecoder } = require('string_decoder');
 
 /**
  * 非流式 POST，发送 JSON body，等待完整 HTTP 响应后返回。
@@ -157,11 +158,18 @@ function postJSONStream(url, headers, body, silenceTimeoutMs = 60000, onProgress
       let accumulated = '';
       let sseBuffer = '';
       let firstToken = true;
+      // 必须用 StringDecoder 而不是 chunk.toString('utf-8')：
+      // 一个汉字是 3 字节，TCP 分片边界可能正好落在汉字中间。对每个 chunk 单独
+      // toString('utf-8') 时，被切断的那半个序列会各变成一个 U+FFFD（�），
+      // 于是「生成一个由以下 1 个分镜组成的视频。」里的「个」会变成「���」。
+      // 实测这条脏数据真的落进了 storyboards.universal_segment_text。
+      // StringDecoder 会把不完整的多字节序列留到下一个 chunk 再拼，不会产生替换字符。
+      const decoder = new StringDecoder('utf8');
       resetSilenceTimer();
 
       res.on('data', (chunk) => {
         resetSilenceTimer();
-        sseBuffer += chunk.toString('utf-8');
+        sseBuffer += decoder.write(chunk);
         // 按行解析 SSE
         const lines = sseBuffer.split('\n');
         sseBuffer = lines.pop(); // 保留不完整的最后一行
@@ -187,6 +195,9 @@ function postJSONStream(url, headers, body, silenceTimeoutMs = 60000, onProgress
 
       res.on('end', () => {
         clearTimeout(silenceTimer);
+        // 冲掉 StringDecoder 里可能残留的尾字节，避免最后一行 SSE 被丢掉
+        const tail = decoder.end();
+        if (tail) sseBuffer += tail;
         resolve({ status: statusCode, body: accumulated });
       });
       res.on('error', (e) => { clearTimeout(silenceTimer); reject(e); });

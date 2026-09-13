@@ -61,14 +61,23 @@ describe('提示词关键规则：打斗按拍（不许悄悄回退）', () => {
   it('分镜要素后缀与全能片段规范都带着镜内剪辑点写法', () => {
     assert.match(promptI18n.getStoryboardUserPromptSuffix(ZH, 8), /打斗\/追击\/连招镜可按拍镜内切镜/);
     const spec = promptI18n.getUniversalOmniMultiBeatFormatSpec(ZH);
-    assert.match(spec, /镜内剪辑点/);
+    assert.match(spec, /subject_definitions/);
     assert.match(spec, /\[Shot N\] At MM:SS\.mmm/);
-    assert.match(spec, /禁止出现「分镜2：」及之后的\*\*行\*\*/);
+    // 官方六段结构：必须写明六段顺序与 retention 固定标记
+    assert.match(spec, /subject_definitions/);
+    assert.match(spec, /fully_preserved/);
+    assert.match(spec, /不要\*\*为它单列/);
   });
 
-  it('全能片段/润色提示词都要求保留剪辑记号', () => {
-    assert.match(promptI18n.getUniversalOmniSegmentPrompt(), /Intra-shot cuts/);
-    assert.match(promptI18n.getUniversalOmniPolishPrompt(), /Cut markers are structural/);
+  it('全能片段/润色提示词都要求保留结构记号（六段 + 标签 + 时间戳）', () => {
+    const seg = promptI18n.getUniversalOmniSegmentPrompt();
+    assert.match(seg, /subject_definitions/);
+    assert.match(seg, /retention_analysis/);
+    assert.match(seg, /<Subject N>/);
+    assert.match(seg, /\[Shot N\] At MM:SS\.mmm/);
+    const pol = promptI18n.getUniversalOmniPolishPrompt();
+    assert.match(pol, /Structure is untouchable/);
+    assert.match(pol, /six section names in order/);
   });
 
   it('用户提示词的 JSON 字段清单覆盖系统提示词定义的所有必要字段', () => {

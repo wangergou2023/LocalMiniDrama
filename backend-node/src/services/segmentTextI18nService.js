@@ -59,7 +59,9 @@ function addSpeakingAction(zhText) {
  * 改成确定性做法：翻译只负责散文，标签与对白**物理上**不参与翻译。
  * 占位符用不会被翻译的短 ASCII 串（#R7# / #D0#）。
  */
-const MASK_REF = /(?:@图片|参考图|<Picture)\s*(\d+)>?/g;
+// 参考标签的三种等价写法：@图片N（旧）、参考图N（MiniMax 官方 r2va 用词）、<Picture N>（Ref2VA 官方）
+// 另外 <Subject N>/<Audio j>/<Video k> 也是**结构性标签**，必须原样带回（翻译改了 = 参考绑定丢失）
+const MASK_REF = /(?:@图片|参考图)<\s*(\d+)>?|<(Picture|Subject|Audio|Video)\s+(\d+)>/g;
 const MASK_DLG = /<d>([\s\S]*?)<\/d>/g;
 /**
  * H3 镜内剪辑记号（`[Shot 1]` / `[Shot 2] At 00:03.200,`）。
@@ -69,19 +71,28 @@ const MASK_DLG = /<d>([\s\S]*?)<\/d>/g;
  * 又变成前 8 秒定场、最后 0.8 秒交锋。所以整个记号（含时间戳）物理上不参与翻译，翻完原样填回。
  */
 const MASK_CUT = /\[Shot\s+(\d+)\](?:\s*At\s+(?:\d{1,2}:)?\d{2}:\d{2}\.\d{3})?(?:\s*,?\s*(?:the camera cuts to|the camera cut to|the shot cuts to|the shot cut to|we cut to|cutting to))?/g;
+/**
+ * Ref2VA 官方六段结构的**结构记号**，一律掩码、翻完原样带回：
+ *   段名（subject_definitions / summary / retention_analysis / detailed_description /
+ *        overall_soundscape / non_diegetic_music）、retention 的固定英文标记、
+ *   `<scenetrans>` / `<cutoff>`、说话人编号 (S1)。
+ * 这些只要被译成中文，格式校验就会失败或参考关系丢失。
+ */
+const MASK_STRUCT = /(subject_definitions|summary|retention_analysis|detailed_description|overall_soundscape|non_diegetic_music)\s*[:：]|\b(fully_preserved|partially_preserved|attribute_transfer|weak_reference|fully_copy|partially_copy|reference)\b|<\/?(?:scenetrans|cutoff)>|\(S\d+\)/g;
 
 function maskSegmentText(text) {
   const refs = [];
   const dlgs = [];
   const cuts = [];
+  const structs = [];
   let out = String(text || '');
   // 先挖对白（对白里可能含标签，必须先保护）
   out = out.replace(MASK_DLG, (_m, inner) => {
     dlgs.push(inner);
     return '#D' + (dlgs.length - 1) + '#';
   });
-  out = out.replace(MASK_REF, (_m, n) => {
-    refs.push(n);
+  out = out.replace(MASK_REF, (_m, n, kind, kn) => {
+    refs.push(kind ? '<' + kind + ' ' + kn + '>' : n);
     return '#R' + (refs.length - 1) + '#';
   });
   // 剪辑记号放在标签之后挖，避免与 #Rn# 冲突
@@ -89,15 +100,22 @@ function maskSegmentText(text) {
     cuts.push(m);
     return '#C' + (cuts.length - 1) + '#';
   });
-  return { masked: out, refs, dlgs, cuts };
+  // 结构记号（段名 / retention 标记 / scenetrans / (Sx)）最后挖
+  out = out.replace(MASK_STRUCT, (m) => {
+    structs.push(m);
+    return '#S' + (structs.length - 1) + '#';
+  });
+  return { masked: out, refs, dlgs, cuts, structs };
 }
 
 /** 还原占位符；参考标签统一规范成 <Picture N>（comfyuiClient 认这个形式） */
-function unmaskSegmentText(text, refs, dlgs, cuts) {
+function unmaskSegmentText(text, refs, dlgs, cuts, structs) {
   let out = String(text || '');
   out = out.replace(/#R(\d+)#/g, (_m, i) => {
-    const n = refs[Number(i)];
-    return n == null ? _m : '<Picture ' + n + '>';
+    const v = refs[Number(i)];
+    if (v == null) return _m;
+    // 原始形态是 <Subject N>/<Audio j> 时原样带回；纯数字（旧 @图片N）规范成 <Picture N>
+    return /^</.test(String(v)) ? String(v) : '<Picture ' + v + '>';
   });
   out = out.replace(/#D(\d+)#/g, (_m, i) => {
     const inner = dlgs[Number(i)];
@@ -105,6 +123,10 @@ function unmaskSegmentText(text, refs, dlgs, cuts) {
   });
   out = out.replace(/#C(\d+)#/g, (_m, i) => {
     const raw = (cuts || [])[Number(i)];
+    return raw == null ? _m : raw;
+  });
+  out = out.replace(/#S(\d+)#/g, (_m, i) => {
+    const raw = (structs || [])[Number(i)];
     return raw == null ? _m : raw;
   });
   return out;
@@ -195,7 +217,7 @@ async function ensureEnglishSegmentText(db, log, storyboardId, zhText, opts = {}
   // 标签与对白先挖成占位符，翻译只处理散文 → 翻完再填回，保证它们逐字不变。
   // 不能指望译模型自觉保留：实测它会时而保留 @图片N、时而规范成 <Picture N>、时而整段丢掉，
   // 导致校验对不上（labels:[0,14] / [14,0]）→ 误判失败 → 白回退中文正文。
-  const { masked, refs, dlgs, cuts } = maskSegmentText(marked);
+  const { masked, refs, dlgs, cuts, structs } = maskSegmentText(marked);
 
   let en = null;
   try {
@@ -218,11 +240,13 @@ async function ensureEnglishSegmentText(db, log, storyboardId, zhText, opts = {}
   const gotRef = (en.match(/#R\d+#/g) || []).length;
   const gotDlg = (en.match(/#D\d+#/g) || []).length;
   const gotCut = (en.match(/#C\d+#/g) || []).length;
-  if (gotRef !== refs.length || gotDlg !== dlgs.length || gotCut !== cuts.length) {
+  const gotStruct = (en.match(/#S\d+#/g) || []).length;
+  if (gotRef !== refs.length || gotDlg !== dlgs.length || gotCut !== cuts.length || gotStruct !== structs.length) {
     log.warn('[分镜英译] 占位符数量不符，回退中文正文', {
       storyboard_id: id, ref_expect: refs.length, ref_got: gotRef,
       dlg_expect: dlgs.length, dlg_got: gotDlg,
       cut_expect: cuts.length, cut_got: gotCut,
+      struct_expect: structs.length, struct_got: gotStruct,
     });
     return null;
   }
@@ -234,7 +258,7 @@ async function ensureEnglishSegmentText(db, log, storyboardId, zhText, opts = {}
     log.warn('[分镜英译] 译模型擅自添加了 <d> 标签，已剥除', { storyboard_id: id, stray: strayD });
     en = en.replace(/<\/?d>/g, '');
   }
-  en = unmaskSegmentText(en, refs, dlgs, cuts);
+  en = unmaskSegmentText(en, refs, dlgs, cuts, structs);
 
   // 4. 校验：参考标签与台词块必须原样保留，否则不采用（宁可回退中文也不要用坏的 prompt）
   //

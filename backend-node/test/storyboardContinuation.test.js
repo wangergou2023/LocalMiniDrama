@@ -40,14 +40,16 @@ describe('分镜续写提示词', () => {
     // 「叙事动态」只允许作为**被禁止的格式**出现在规范里（禁止清单那一条），不能作为要求
     const mentions = (prompt.match(/叙事动态/g) || []).length;
     assert.ok(mentions <= 1, '「叙事动态」最多在禁止清单里出现一次，实际 ' + mentions);
-    if (mentions === 1) assert.match(prompt, /禁止\*\*使用已废弃的灵境\/SoulLens/);
+    if (mentions === 1) assert.match(prompt, /禁止\*\*已废弃的灵境\/SoulLens/);
   });
 
-  it('续写的全能格式要求与首轮同一套（块格式 + 剪辑点写法）', () => {
-    assert.match(prompt, /生成一个由以下 1 个分镜组成的视频/);
+  it('续写的全能格式要求与首轮同一套（Ref2VA 官方六段结构）', () => {
     assert.match(prompt, /universal_segment_text/);
+    assert.match(prompt, /subject_definitions/);
+    assert.match(prompt, /retention_analysis/);
+    assert.match(prompt, /fully_preserved/);
     assert.match(prompt, /\[Shot N\] At MM:SS\.mmm/);
-    assert.match(prompt, /打斗／追击／连招／快速动作爆发/);
+    assert.match(prompt, /禁止成片复刻其分格或并列布局/);
   });
 
   it('写明还需多少个分镜（65 镜必须靠续写凑齐，不能只补几个就收尾）', () => {

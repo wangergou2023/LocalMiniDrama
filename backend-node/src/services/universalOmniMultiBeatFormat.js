@@ -5,7 +5,7 @@
 const DEFAULT_LINE3 =
   // 注意：措辞必须与场景类型无关。此处原为「仅提取统一的室内空间与光线语义」，
   // 系上游从室内样板沿用（f50a2ee），对户外山道/街景等场景会与剧本直接冲突。
-  '环境、光影与陈设定性参考 @图片1。若 @图片1 为宫格或多画面拼图，禁止成片复刻其分格或并列布局，仅提取统一的空间、光线与氛围语义；须单镜头完整连续画面。';
+  '环境、光影与陈设定性参考 <Picture 1>。若 <Picture 1> 为宫格或多画面拼图，禁止成片复刻其分格或并列布局，仅提取统一的空间、光线与氛围语义；须单镜头完整连续画面。';
 
 function trim(s) {
   return s != null && String(s).trim() ? String(s).trim() : '';
@@ -351,7 +351,7 @@ function buildFallbackUniversalMultiBeatText(sb, d, styleHint) {
  * 提示词里的 LINE3_REQUIRED 就是这一句（见 universalSegmentPromptBundle 的 line3Required）。
  * 校验时必须认它，否则会把完全正确的正文误判为不合规。
  */
-const LINE3_NO_SCENE = '本片段以首张参考图 @图片1 作为画面锚点展开。';
+const LINE3_NO_SCENE = '本片段以首张参考图 <Picture 1> 作为画面锚点展开。';
 
 /**
  * LINE3 的**多镜形态**：本镜正文里会出现 `[Shot N] At MM:SS.mmm,` 镜内剪辑点时使用。
@@ -362,10 +362,10 @@ const LINE3_NO_SCENE = '本片段以首张参考图 @图片1 作为画面锚点�
  * 换成多镜形态后，「禁止复刻参考图宫格/分屏」这个**原意**（防的是把参考拼图搬进成片）
  * 仍然保留，只是不再禁止镜内剪辑。
  */
-const LINE3_MULTI = '环境、光影与陈设定性参考 @图片1。若 @图片1 为宫格或多画面拼图，禁止成片复刻其分格或并列布局，仅提取统一的空间、光线与氛围语义；本条为一次生成内的连续多镜头剪辑，允许镜内切镜（见 [Shot N] 剪辑点），但禁止成片宫格、分屏与多画面并列。';
+const LINE3_MULTI = '环境、光影与陈设定性参考 <Picture 1>。若 <Picture 1> 为宫格或多画面拼图，禁止成片复刻其分格或并列布局，仅提取统一的空间、光线与氛围语义；本条为一次生成内的连续多镜头剪辑，允许镜内切镜（见 [Shot N] 剪辑点），但禁止成片宫格、分屏与多画面并列。';
 
 /** 多镜形态：本镜没有场景参考图时（scene_id 为空） */
-const LINE3_NO_SCENE_MULTI = '本片段以首张参考图 @图片1 作为画面锚点展开；本条为一次生成内的连续多镜头剪辑，允许镜内切镜（见 [Shot N] 剪辑点），但禁止成片宫格与分屏。';
+const LINE3_NO_SCENE_MULTI = '本片段以首张参考图 <Picture 1> 作为画面锚点展开；本条为一次生成内的连续多镜头剪辑，允许镜内切镜（见 [Shot N] 剪辑点），但禁止成片宫格与分屏。';
 
 /** 4 种合法 LINE3（单镜/多镜 × 有场景图/无场景图） */
 const LINE3_VARIANTS = [DEFAULT_LINE3, LINE3_NO_SCENE, LINE3_MULTI, LINE3_NO_SCENE_MULTI];
@@ -383,6 +383,8 @@ function isUniversalLine3(text) {
   if (!t) return false;
   // 参考图标签可能被写成「参考图N」（MiniMax 官方 r2va 用词，见 universalSegmentPromptBundle 的 imgRef）
   // 或 <Picture N>；比对前一律归一成 @图片N，否则完全正确的第3行会被误判为不合规。
+  // 参考图标签的三种等价写法都要认：@图片N（我们旧版）、参考图N（MiniMax 官方 r2va 用词）、
+  // <Picture N>（Ref2VA 官方六段结构）—— 比对前统一归一成 @图片N，否则正确的第3行会被误判。
   t = t.replace(/参考图\s*(\d+)/g, '@图片$1').replace(/<Picture\s*(\d+)>/g, '@图片$1');
   if (LINE3_VARIANTS.some((v) => t.includes(v))) return true;
   // 场景槽位不一定是 @图片1（极少见），按句式认

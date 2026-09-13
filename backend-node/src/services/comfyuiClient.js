@@ -794,6 +794,21 @@ function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles, 
 
   Object.assign(apiPrompt, addNodes);
 
+  // Ref2VA 官方六段结构：`subject_definitions` 里已经**逐条定义了** <Subject N> 与它的图片来源，
+  // 我们再加一遍 `<Picture N>: appearance reference for …` 就是重复定义（而且会与 subject 语义打架）。
+  // 这种情况下只保留一句「禁止复刻参考拼图宫格」的引导句。
+  const bodyText = String(promptText || '');
+  if (/^\s*subject_definitions\s*[:：]/im.test(bodyText)) {
+    const gridLeadEn = '\n\nDo not reproduce the reference images\' multi-panel/grid layout, split screen or side-by-side panels in the delivered clip.\n';
+    const gridLeadZh = '\n\n禁止在成片里复刻参考图的多宫格/分屏/并列布局。\n';
+    const lead = String(bodyText).replace(/<d>[\s\S]*?<\/d>/g, '').match(/[\u4e00-\u9fa5]/) ? gridLeadZh : gridLeadEn;
+    if (promptText !== undefined) h3.inputs.prompt = lead + boundPrompt;
+    if (log && typeof log.info === 'function') {
+      log.info('[ComfyUI/H3] 正文已是 Ref2VA 六段结构，跳过自动说明头（避免与 subject_definitions 重复定义标签）');
+    }
+    return '';
+  }
+
   const headerLead = useEnHeader
     ? '\n\nGenerate one continuous, complete single take (no collage, no split screen, no grid, no side-by-side panels; do not reproduce the reference images\' grid or multi-view layout):\n'
     : '\n\n生成一段连续、完整、单一镜头的画面（禁止拼贴、分屏、宫格、多画面并列、复刻参考图的网格/多视图布局）：\n';

@@ -215,22 +215,89 @@ function getStoryboardsForEpisode(db, episodeId) {
   });
 }
 
+/** 运镜词：这些内容属于**动态**，不能进静帧首帧提示词 */
+const CAMERA_MOTION_RE = /(镜头|横摇|推镜|拉镜|跟拍|跟镜|环绕|甩镜|摇镜|俯拍|仰拍|升降|升镜|降镜|变焦|旋转|缓推|缓拉|缓摇|推近|拉远|升起|拉开|横移|下压)/;
+/**
+ * 运动/过程词：首帧要的是**动作发生前的初始状态**，不是过程。
+ *
+ * 一律用**多字词**，单字（走/行/飞/打/翻）会把静态成语一起切坏 ——
+ * 实测「飞沙走石」被按「走」截成「飞沙」、「头戴金箍，手持铁棒」被整个丢掉。
+ * 副词（忽然/突然/猛然）也不算运动：镜6 的动作以「山路转角忽然刮起一阵黑风」开头，
+ * 那是**画面内容**而不是动作过程，首帧正需要它。
+ */
+const MOTION_WORD_RE = /(缓缓|徐徐|逐渐|慢慢|快速|飞快|纵身|腾空|跃起|跃上|降落|落下|落在|飞起|飞出|飞去|疾驰|疾飞|奔来|冲来|冲出|蹿出|走出|走向|前行|行走|转身|翻身|翻滚|就地一滚|捡起|回身|抡起|劈下|砸向|扫向|踢中|打死|倒地|倒下|扑向|逃去|追去|紧追|追出|跃下|直上|应声)/;
+
+/**
+ * 从 action 里裁出「首帧那一刻」的**静止初始状态**。
+ *
+ * 原实现（extractInitialPose）只按一小组过程词（然后/向下/开始/慢慢…）切断，实测在
+ * 「真假美猴王」65 镜上基本失效 —— 镜1《师徒行荒山》的 action 以运镜开头
+ *   「镜头从远处山脊缓缓横摇，展现荒山野岭全貌，师徒四人的渺小身影沿山路缓缓前行，…」
+ * 一个过程词都没命中，于是**整句照搬**进「首帧静止画面」，首帧提示词里出现了
+ * 「镜头…横摇」和「缓缓前行」这种动态描述，末尾却又写着「首帧静止画面」——自相矛盾；
+ * 而且它与同一镜 ust 的首拍（「开篇以大远景俯瞰荒山野岭」）机位也对不上。
+ * 65 镜里有 4 条混入运镜、10 条混入运动，都是同一个原因。
+ *
+ * 现在的规则：
+ *   ① 按逗号/分号切句；② 丢掉含运镜词的句子；③ 遇到第一个含运动/过程词的句子就停
+ *   （那之后的都是「过程」，不属于首帧）；④ 一句都没留下时退回「第一条非运镜句」，仍为空则不写。
+ *
+ * @param {string} action
+ * @returns {string} 首帧可用的静止状态描述（可能为空）
+ */
 function extractInitialPose(action) {
   if (!action || typeof action !== 'string') return '';
-  const processWords = [
-    '然后', '接着', '接下来', '随后', '紧接着',
-    '向下', '向上', '向前', '向后', '向左', '向右',
-    '开始', '继续', '逐渐', '慢慢', '快速', '突然', '猛然',
-  ];
-  let result = action;
-  for (const word of processWords) {
-    const idx = result.indexOf(word);
-    if (idx > 0) {
-      result = result.slice(0, idx);
-      break;
-    }
+  const clauses = String(action)
+    .split(/[，,；;。]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!clauses.length) return '';
+  const kept = [];
+  for (const c of clauses) {
+    if (CAMERA_MOTION_RE.test(c)) continue;        // 运镜不进静帧
+    const mm = c.match(MOTION_WORD_RE);
+    if (!mm || mm.index == null) { kept.push(c); continue; }  // 静态描述：保留
+    // 含运动：只保留动作起点**之前**的部分（主体 + 位置），那才是首帧那一刻的画面。
+    // 注意是「过滤」而不是「遇到就停」—— 停会把后面的静态描述（头戴金箍、手持铁棒、
+    // 蟹竹摇曳、海浪拍岸）一起丢掉，而那些正是首帧需要的画面内容。
+    // 截断处会留下悬空的介词短语（「…猴子从风中」「…身影沿山路」），只在这个被截断的句子里去尾。
+    const head = c
+      .slice(0, mm.index)
+      .replace(/[从向往朝在沿被把将对跟][^，,]*$/, '')
+      .replace(/[，。、；;\s]+$/, '')
+      .trim();
+    // 截得太短就只剩残词（「一脚」「身形」），宁可不写
+    if (head.length >= 3) kept.push(head);
   }
-  return result.replace(/[，。,.]\s*$/, '').trim();
+  const out = kept.length ? kept.join('，') : (clauses.find((c) => !CAMERA_MOTION_RE.test(c)) || '');
+  return out.replace(/[，,、；;\s]+$/, '').trim();
+}
+
+/**
+ * 景别标签：`angleService` 的枚举只有 特写/中景/远景 三档，
+ * `大远景` 会被压成 `远景`（实测 65 镜里 5 条大远景全被压）。而分镜自己的 shot_type 是准的，
+ * 所以这里**优先照抄 shot_type** 的景别词，只用 angleService 补俯仰与朝向。
+ */
+function shotScaleLabelZh(shotTypeText, fallback = '中景') {
+  const t = String(shotTypeText || '');
+  const m = t.match(/(大远景|大全景|远景|全景|中景|近景|特写|大特写)/);
+  return m ? m[1] : fallback;
+}
+
+function angleLabelForFrame(sb) {
+  const scale = shotScaleLabelZh(sb.shot_type);
+  if (sb.angle_h && sb.angle_v && sb.angle_s) {
+    const full = angleService.toChineseLabel(sb.angle_h, sb.angle_v, sb.angle_s);
+    // toChineseLabel 形如「远景·平视·正面」，只取后两段，景别用 shot_type 的原文
+    const segs = String(full).split('·');
+    return segs.length === 3 ? `${scale}·${segs[1]}·${segs[2]}` : full;
+  }
+  if (sb.angle || sb.shot_type) {
+    const { h, v, s } = angleService.parseFromLegacyText(sb.angle || '', sb.shot_type || '');
+    const segs = String(angleService.toChineseLabel(h, v, s)).split('·');
+    return segs.length === 3 ? `${scale}·${segs[1]}·${segs[2]}` : scale;
+  }
+  return '';
 }
 
 function generateImagePrompt(sb, style) {
@@ -242,13 +309,9 @@ function generateImagePrompt(sb, style) {
     parts.push(locationDesc);
   }
   // 镜头视角：优先结构化三元组（中文标签），降级到旧文本
-  if (sb.angle_h && sb.angle_v && sb.angle_s) {
-    parts.push(angleService.toChineseLabel(sb.angle_h, sb.angle_v, sb.angle_s));
-  } else if (sb.angle || sb.shot_type) {
-    const { h, v, s } = angleService.parseFromLegacyText(sb.angle || '', sb.shot_type || '');
-    parts.push(angleService.toChineseLabel(h, v, s));
-  }
-  // 画面动作（取动作的起始状态）
+  const angleLabel = angleLabelForFrame(sb);
+  if (angleLabel) parts.push(angleLabel);
+  // 画面动作（只取动作发生前的**静止**初始状态）
   if (sb.action) {
     const initialPose = extractInitialPose(sb.action);
     if (initialPose) parts.push(initialPose);
@@ -313,6 +376,23 @@ function generateVideoPrompt(sb, style, videoRatio) {
  * 从 AI 输出的单个分镜对象计算入库字段（INSERT/UPDATE 共用）。
  * 会就地写入 sb.location / sb.time（由 scene_description 拆分）。
  */
+/**
+ * 情绪强度归一化：写库的列是 INTEGER，而模型既可能给 3/2/1/0/-1，
+ * 也可能给提示词里那套箭头（↑↑↑ / ↑↑ / ↑ / → / ↓）。给不出有效值时返回 null。
+ */
+function normalizeEmotionIntensity(v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  if (Number.isFinite(n)) return Math.max(-1, Math.min(3, Math.round(n)));
+  const str = String(v).trim();
+  if (/↑\s*↑\s*↑/.test(str)) return 3;
+  if (/↑\s*↑/.test(str)) return 2;
+  if (/↑/.test(str)) return 1;
+  if (/[→]/.test(str)) return 0;
+  if (/↓/.test(str)) return -1;
+  return null;
+}
+
 function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
   const universalOmni = !!opts.universalOmni;
   const angleValFn = (x) => x.angle ?? x.camera_angle ?? null;
@@ -326,6 +406,8 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
   const narration = sb.narration ?? '';
   const result = sb.result ?? '';
   const emotion = sb.emotion ?? '';
+  // emotion_intensity 列是 INTEGER，而模型可能给 3/2/1/0/-1，也可能给 ↑↑↑/↑↑/↑/→/↓ 这种箭头
+  const emotionIntensity = normalizeEmotionIntensity(sb.emotion_intensity);
   const segmentIndex = sb.segment_index != null ? Number(sb.segment_index) : 0;
   const segmentTitle = sb.segment_title ?? null;
   const lightingStyle = sb.lighting_style ?? null;
@@ -425,6 +507,7 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
     narration,
     result,
     emotion,
+    emotionIntensity,
     segmentIndex,
     segmentTitle,
     lightingStyle,
@@ -506,8 +589,8 @@ function insertOneStoryboard(db, episodeIdNum, sb, style, videoRatio, now, deriv
   const shotNumber = d.shotNumber;
   try {
     db.prepare(
-      `INSERT INTO storyboards (episode_id, scene_id, storyboard_number, title, description, location, time, duration, dialogue, narration, action, result, atmosphere, image_prompt, video_prompt, characters, shot_type, angle, angle_h, angle_v, angle_s, movement, lighting_style, depth_of_field, segment_index, segment_title, creation_mode, universal_segment_text, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+      `INSERT INTO storyboards (episode_id, scene_id, storyboard_number, title, description, location, time, duration, dialogue, narration, action, result, atmosphere, image_prompt, video_prompt, characters, shot_type, angle, angle_h, angle_v, angle_s, movement, lighting_style, depth_of_field, segment_index, segment_title, creation_mode, universal_segment_text, status, created_at, updated_at, emotion, emotion_intensity)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`
     ).run(
       episodeIdNum, d.sceneId, shotNumber, d.title || null, d.description,
       sb.location ?? null, sb.time ?? null, sb.duration ?? 5,
@@ -517,7 +600,10 @@ function insertOneStoryboard(db, episodeIdNum, sb, style, videoRatio, now, deriv
       d.movement || null, d.lightingStyle, d.depthOfField, d.segmentIndex, d.segmentTitle,
       d.creationMode || 'classic',
       d.universalSegmentText != null ? d.universalSegmentText : null,
-      now, now
+      now, now,
+      // 情绪此前**完全没入库**：三个项目 99 条分镜的 emotion 全是 NULL，而模型一直在返回它
+      // （它已写进 description 的【情绪】，也参与首帧图片提示词）。INSERT 里漏了这两列。
+      d.emotion || null, d.emotionIntensity ?? null
     );
     const newId = db.prepare('SELECT last_insert_rowid() as id').get().id;
     if (d.propIds.length > 0) {
@@ -739,8 +825,8 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
 
     try {
       db.prepare(
-        `INSERT INTO storyboards (episode_id, scene_id, storyboard_number, title, description, location, time, duration, dialogue, narration, action, result, atmosphere, image_prompt, video_prompt, characters, shot_type, angle, angle_h, angle_v, angle_s, movement, lighting_style, depth_of_field, segment_index, segment_title, creation_mode, universal_segment_text, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+        `INSERT INTO storyboards (episode_id, scene_id, storyboard_number, title, description, location, time, duration, dialogue, narration, action, result, atmosphere, image_prompt, video_prompt, characters, shot_type, angle, angle_h, angle_v, angle_s, movement, lighting_style, depth_of_field, segment_index, segment_title, creation_mode, universal_segment_text, status, created_at, updated_at, emotion, emotion_intensity)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`
       ).run(
         episodeIdNum, d.sceneId, shotNumber, d.title || null, d.description,
         sb.location ?? null, sb.time ?? null, sb.duration ?? 5,
@@ -750,13 +836,14 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
         d.movement || null, d.lightingStyle, d.depthOfField, d.segmentIndex, d.segmentTitle,
         d.creationMode || 'classic',
         d.universalSegmentText != null ? d.universalSegmentText : null,
-        now, now
+        now, now,
+        d.emotion || null, d.emotionIntensity ?? null
       );
     } catch (e) {
       if ((e.message || '').includes('shot_type') || (e.message || '').includes('angle') || (e.message || '').includes('movement') || (e.message || '').includes('result') || (e.message || '').includes('segment') || (e.message || '').includes('narration')) {
         db.prepare(
-          `INSERT INTO storyboards (episode_id, scene_id, storyboard_number, title, description, location, time, duration, dialogue, action, atmosphere, image_prompt, video_prompt, characters, creation_mode, universal_segment_text, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+          `INSERT INTO storyboards (episode_id, scene_id, storyboard_number, title, description, location, time, duration, dialogue, action, atmosphere, image_prompt, video_prompt, characters, creation_mode, universal_segment_text, status, created_at, updated_at, emotion, emotion_intensity)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`
         ).run(
           episodeIdNum, d.sceneId, shotNumber, d.title || null, d.description,
           sb.location ?? null, sb.time ?? null, sb.duration ?? 5,
@@ -764,7 +851,8 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
           d.imagePrompt, d.videoPrompt, d.charactersJson,
           d.creationMode || 'classic',
           d.universalSegmentText != null ? d.universalSegmentText : null,
-          now, now
+          now, now,
+          d.emotion || null, d.emotionIntensity ?? null
         );
       } else {
         throw e;
@@ -1804,8 +1892,9 @@ function persistSplitStoryboardRow(db, episodeId, storyboardNumber, baseRow, pla
       location, time, duration, dialogue, narration, action, result, atmosphere,
       image_prompt, characters, shot_type, angle, angle_h, angle_v, angle_s,
       movement, lighting_style, depth_of_field, segment_index, segment_title,
-      creation_mode, universal_segment_text, status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+      creation_mode, universal_segment_text, status, created_at, updated_at,
+      emotion, emotion_intensity
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`
   ).run(
     episodeId,
     baseRow.scene_id ?? null,
@@ -1836,7 +1925,9 @@ function persistSplitStoryboardRow(db, episodeId, storyboardNumber, baseRow, pla
     baseRow.creation_mode === 'universal' ? 'universal' : 'classic',
     null,
     now,
-    now
+    now,
+    baseRow.emotion ?? null,
+    baseRow.emotion_intensity ?? null
   );
   return info.lastInsertRowid;
 }
@@ -1934,6 +2025,9 @@ module.exports = {
   runStoryboardSelfChecks,
   /** 续写提示词（供测试验证「续写的格式要求 == 首轮」——镜数多时续写是必然发生的） */
   buildContinuationPrompt,
+  /** 首帧图提示词的机械拼装（供测试：静帧提示词里不得出现运镜/运动） */
+  generateImagePrompt,
+  extractInitialPose,
   /** 单次响应的 token 上限与它换算出的分镜数上限（供测试锁住「65 镜必须靠续写凑齐」这个前提） */
   DEFAULT_STORYBOARD_MAX_TOKENS,
 };

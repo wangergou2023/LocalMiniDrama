@@ -19,6 +19,34 @@ function parseSize(size) {
   return { w: 1024, h: 1024 };
 }
 
+/**
+ * MiniMax H3 的帧数必须落在 17k+5 网格上。
+ * ComfyUI 节点内部也是 `while n % 17 != 5: n += 1` 逐帧上取（comfy_extras/nodes_minimax_h3.py:37），
+ * 这里主动对齐，避免把 8k+1 的值丢过去、再依赖对方静默吸附（那样请求时长会被悄悄改掉）。
+ */
+function snapToH3FrameGrid(n) {
+  let f = Math.max(5, Math.round(n));
+  while (f % 17 !== 5) f++;
+  return f;
+}
+
+/**
+ * 找出工作流里的「turbo 加速」开关节点。
+ * 这类工作流的写法是：一个 PrimitiveBoolean 同时驱动若干 ComfySwitchNode
+ * （一个切「原始模型 / 挂 LoRA」，一个切「多步数 / 少步数」），
+ * 见 A03 的 146 → 141/142。这里按结构识别，不写死节点号，换工作流也能用。
+ */
+function findTurboSwitchIds(prompt) {
+  const switchIds = new Set();
+  for (const node of Object.values(prompt)) {
+    if (node && node.class_type === 'ComfySwitchNode') {
+      const sw = node.inputs && node.inputs.switch;
+      if (Array.isArray(sw) && typeof sw[0] === 'string') switchIds.add(sw[0]);
+    }
+  }
+  return [...switchIds].filter((id) => prompt[id] && prompt[id].class_type === 'PrimitiveBoolean');
+}
+
 function postJSON(url, body, timeoutMs = 120000) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
@@ -500,9 +528,6 @@ async function callComfyUIImageApi(config, log, opts) {
   throw new Error('ComfyUI image config has no workflow set. Please select a workflow file in AI settings.');
 }
 
-// LTX 2.3 图生视频工作流（API 格式已固化在 workflows/ltx23-i2v-api.json，
-// 两阶段采样 + 音轨；由 WYC UI 工作流一次性转换而来，不再依赖 ComfyUI 用户目录）
-
 /** 检测工作流是否为 MiniMax H3 参考图生视频（含编辑器格式 nodes/links 与 API 格式两种） */
 function hasH3ReferenceNode(wf) {
   if (!wf) return false;
@@ -592,24 +617,39 @@ async function callComfyUIVideoApi(config, log, opts) {
   const fs = require("fs");
   const path = require("path");
 
-  // 解析 settings 中的 workflow 字段
+  // 解析服务级 settings（AI 配置页保存的 JSON）：workflow / megapixels / turbo
   let workflowFile = null;
+  let svcMegapixels = NaN;
+  let svcTurbo; // undefined = 不覆盖工作流自身的开关
   if (config.settings) {
     try {
       const s = typeof config.settings === 'string' ? JSON.parse(config.settings) : config.settings;
       if (s.workflow) workflowFile = s.workflow;
+      svcMegapixels = Number(s.megapixels);
+      if (typeof s.turbo === 'boolean') svcTurbo = s.turbo;
     } catch (_) {}
   }
 
-  // fps=24, frames 8n+1
+  // fps=24。帧数一律按 MiniMax H3 的 17k+5 网格对齐
+  // （官方已验证范围约 124~362 帧 ≈ 5.2~15.1s，超出只告警不截断）
   const fps = 24;
   const videoDuration = Number(opts.duration) || 5;
-  const frames = Math.max(9, Math.round(videoDuration * fps / 8) * 8 + 1);
+  const frames = snapToH3FrameGrid(videoDuration * fps);
 
-  // Adjust video resolution based on aspect ratio
+  // 分辨率：与官方 ResolutionSelector 同构（comfy_extras/nodes_resolution.py:82-85）——
+  //   total = megapixels * 1024 * 1024（官方用的是二进制 MP，不是 1e6），再按 multiple=32 取整。
+  //   唯一配置入口：「AI 配置 → 视频服务 → 视频画幅」，存于 settings.megapixels；
+  //   兜底顺序：settings.megapixels → config.yaml style.default_video_megapixels → 0.5
+  //   0.4 MP → 16:9 得 864x480；0.5 → 960x544；0.98 → 1344x768（768p LoRA 的训练分辨率）
+  const cfgMegapixels = Number(config && config.style && config.style.default_video_megapixels);
+  const rawMegapixels = Number.isFinite(svcMegapixels) && svcMegapixels > 0
+    ? svcMegapixels
+    : (Number.isFinite(cfgMegapixels) && cfgMegapixels > 0 ? cfgMegapixels : 0.5);
+  const VIDEO_MEGAPIXELS = Math.min(2.0, Math.max(0.1, rawMegapixels));
+  const totalPx = Math.round(VIDEO_MEGAPIXELS * 1024 * 1024);
   const ratio = (opts.aspect_ratio || '').toString();
   const [rw, rh] = ratio.includes(':') ? ratio.split(':').map(Number) : [9, 16];
-  const totalPx = 768 * 512; const ratioVal = rw / rh;
+  const ratioVal = rw / rh;
   const vidW = Math.max(256, Math.round(Math.sqrt(totalPx * ratioVal) / 32) * 32);
   const vidH = Math.max(256, Math.round(Math.sqrt(totalPx / ratioVal) / 32) * 32);
 
@@ -620,20 +660,31 @@ async function callComfyUIVideoApi(config, log, opts) {
   if (image_url) {
     const prepared = await prepareReferenceImages([image_url], inputDir, log, storage_local_path);
     if (prepared.length > 0) imgName = prepared[0];
-    else log.warn("[ComfyUI/LTX] Failed to prepare input image: " + String(image_url).slice(0, 120));
+    else log.warn("[ComfyUI/Video] Failed to prepare input image: " + String(image_url).slice(0, 120));
   }
 
   // 动态工作流模式
   if (workflowFile) {
     const { loadWorkflow, prepareWorkflow, extractImageFromResult } = require('./workflowEngine');
 
-    log.info('[ComfyUI/LTX/' + workflowFile + '] Starting (dynamic)', { frames, size: vidW + 'x' + vidH });
-
     const wf = loadWorkflow(workflowFile);
     const seed = Math.floor(Math.random() * 9007199254740991);
     const isH3Ref = hasH3ReferenceNode(wf);
 
-    // H3 参考生视频：准备多张参考图（场景/角色/道具）+ 标签；LTX 用首帧图
+    log.info('[ComfyUI/Video/' + workflowFile + '] Starting (dynamic)', {
+      frames,
+      size: vidW + 'x' + vidH,
+      megapixels: VIDEO_MEGAPIXELS,
+      is_h3: isH3Ref,
+    });
+    if (isH3Ref && frames > 362) {
+      log.warn('[视频] 帧数超出 H3 已验证范围（约 124~362 帧）', {
+        frames,
+        seconds: Number((frames / fps).toFixed(2)),
+      });
+    }
+
+    // H3 参考生视频：准备多张参考图（场景/角色/道具）+ 标签；非 H3 工作流用首帧图
     let refImages;
     let refLabelsArr = [];
     let refAudios = [];
@@ -675,18 +726,27 @@ async function callComfyUIVideoApi(config, log, opts) {
       refImages: isH3Ref ? undefined : refImages,
     });
 
-    // H3 参考生视频：分组/拼图/说明头/动态槽位已由 applyH3RefsToApi 处理，跳过 LTX 首帧图覆盖
+    // turbo 加速：按「AI 配置 → 视频服务 → turbo 加速」覆盖工作流内的开关。
+    // settings.turbo 未设置时完全不动工作流（保持文件里的原值）；true/false 则强制覆盖。
+    if (typeof svcTurbo === 'boolean') {
+      const turboIds = findTurboSwitchIds(apiPrompt);
+      if (turboIds.length) {
+        for (const id of turboIds) apiPrompt[id].inputs.value = svcTurbo;
+        log.info('[ComfyUI/Video] turbo 开关已覆盖', { turbo: svcTurbo, nodes: turboIds });
+      } else {
+        log.warn('[ComfyUI/Video] 该工作流没有 turbo 开关节点（PrimitiveBoolean/ComfySwitchNode），settings.turbo 不生效', {
+          turbo: svcTurbo,
+        });
+      }
+    }
+
+    // H3 参考生视频：分组/拼图/说明头/动态槽位已由 applyH3RefsToApi 处理，跳过首帧图覆盖
     if (isH3Ref) {
       const header = applyH3RefsToApi(apiPrompt, refImages || [], refLabelsArr, prompt || '', refAudios);
       log.info("[ComfyUI/H3] 参考生视频，参考图 " + (refImages ? refImages.length : 0) + " 张，参考音频 " + (refAudios ? refAudios.length : 0) + " 段" + (header ? '（含说明头）' : ''));
     } else {
-      // Video-specific injection
+      // 非 H3 工作流的通用注入（RandomNoise / LoadImage / CLIPTextEncode 对任何工作流都适用）
       for (const [nid, node] of Object.entries(apiPrompt)) {
-        if (node.class_type === 'EmptyLTXVLatentVideo') {
-          node.inputs.length = frames;
-          node.inputs.width = vidW;
-          node.inputs.height = vidH;
-        }
         if (node.class_type === 'RandomNoise') {
           node.inputs.noise_seed = seed;
         }
@@ -696,14 +756,11 @@ async function callComfyUIVideoApi(config, log, opts) {
         if (node.class_type === 'CLIPTextEncode' && !Array.isArray(node.inputs.text)) {
           node.inputs.text = prompt || '';
         }
-        if (node.class_type === 'LTXVImgToVideoInplace' && node.inputs.strength != null && node.inputs.strength < 0.95) {
-          node.inputs.strength = 0.8;
-        }
       }
     }
 
-    log.info("[ComfyUI/LTX/" + workflowFile + "] Submitting " + Object.keys(apiPrompt).length + " nodes");
-    const payload = { prompt: apiPrompt, client_id: "localminidrama_ltx_" + Date.now() };
+    log.info("[ComfyUI/Video/" + workflowFile + "] Submitting " + Object.keys(apiPrompt).length + " nodes");
+    const payload = { prompt: apiPrompt, client_id: "localminidrama_video_" + Date.now() };
 
     let submitResp;
     try {
@@ -713,12 +770,12 @@ async function callComfyUIVideoApi(config, log, opts) {
     }
     const promptId = submitResp.prompt_id;
     if (!promptId) throw new Error("ComfyUI submit returned no prompt_id");
-    log.info("[ComfyUI/LTX] Submitted prompt_id=" + promptId);
+    log.info("[ComfyUI/Video] Submitted prompt_id=" + promptId);
 
     const result = await waitForComfyJob(baseUrl, promptId, log, {
       runningBudgetMs: 30 * 60 * 1000,
       absoluteCapMs: 4 * 3600 * 1000,
-      tag: '/LTX',
+      tag: '/Video',
     });
 
     let videoFilename = null;
@@ -737,114 +794,14 @@ async function callComfyUIVideoApi(config, log, opts) {
     const viewParams = "filename=" + videoFilename + "&type=output" +
       (videoSubfolder ? "&subfolder=" + encodeURIComponent(videoSubfolder) : "");
     const videoUrl = baseUrl + "/view?" + viewParams;
-    log.info("[ComfyUI/LTX/" + workflowFile + "] Done: " + videoUrl);
+    log.info("[ComfyUI/Video/" + workflowFile + "] Done: " + videoUrl);
     return { video_url: videoUrl };
   }
 
-  // --- 原逻辑：硬编码工作流 ---
-  const wfPath = path.join(__dirname, "workflows", "ltx23-i2v-api.json");
-  const prompt_data = JSON.parse(fs.readFileSync(wfPath, "utf-8"));
-
-  for (const node of Object.values(prompt_data)) {
-    if (node.class_type === "RandomNoise") {
-      node.inputs.noise_seed = Math.floor(Math.random() * 9007199254740991);
-    }
-  }
-
-  for (const [nid, node] of Object.entries(prompt_data)) {
-    if (node.class_type === "PrimitiveInt" && parseInt(node.inputs.value) === 97) node.inputs.value = frames;
-    if (node.class_type === "PrimitiveInt" && parseInt(node.inputs.value) === 24) node.inputs.value = fps;
-    if (node.class_type === "PrimitiveFloat" && parseFloat(node.inputs.value) === 24) node.inputs.value = fps;
-    if (node.class_type === "EmptyLTXVLatentVideo") {
-      node.inputs.length = frames;
-      node.inputs.width = vidW;
-      node.inputs.height = vidH;
-    }
-    if (node.class_type === "LTXVImgToVideoInplace" && node.inputs.strength != null && node.inputs.strength < 0.95) {
-      node.inputs.strength = 0.8;
-    }
-  }
-  log.info("[ComfyUI/LTX] Duration: " + videoDuration + "s, frames: " + frames + ", fps: " + fps + ", size: " + vidW + "x" + vidH + " (aspect: " + ratio + ")");
-
-  let imgName2 = "example.png";
-  if (image_url) {
-    const prepared = await prepareReferenceImages([image_url], inputDir, log, storage_local_path);
-    if (prepared.length > 0) imgName2 = prepared[0];
-    else log.warn("[ComfyUI/LTX] Failed to prepare input image: " + String(image_url).slice(0, 120));
-  }
-
-  for (const [nid, node] of Object.entries(prompt_data)) {
-    if (node.class_type === "LoadImage") {
-      node.inputs.image = imgName2;
-    }
-    if (node.class_type === "CLIPTextEncode") {
-      // Inject prompt from LocalMiniDrama into the first CLIPTextEncode (positive prompt)
-      if (!node.inputs.text || nid === "121") {
-        node.inputs.text = prompt || node.inputs.text || "";
-      }
-    }
-  }
-
-  log.info("[ComfyUI/LTX] Using image: " + imgName2 + " Submitting " + Object.keys(prompt_data).length + " nodes");
-  
-  // Submit via REST API
-  const https = require("https");
-  const http = require("http");
-  
-  const payload = JSON.stringify({ prompt: prompt_data, client_id: "localminidrama_ltx_" + Date.now() });
-  const parsed = new URL(baseUrl + "/prompt");
-  const mod = parsed.protocol === "https:" ? https : http;
-  
-  const submitResult = await new Promise((resolve, reject) => {
-    const req = mod.request({
-      hostname: parsed.hostname, port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
-      path: parsed.pathname, method: "POST",
-      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) }
-    }, (res) => {
-      let data = "";
-      res.on("data", c => data += c);
-      res.on("end", () => {
-        try { resolve(JSON.parse(data)); } catch (e) { reject(new Error("ComfyUI parse error: " + data.slice(0, 200))); }
-      });
-    });
-    req.setTimeout(30000, () => { req.destroy(); reject(new Error("ComfyUI submit timeout")); });
-    req.on("error", reject);
-    req.write(payload);
-    req.end();
-  });
-
-  const promptId = submitResult.prompt_id;
-  if (!promptId) throw new Error("ComfyUI submit failed: " + JSON.stringify(submitResult).slice(0, 200));
-
-  log.info("[ComfyUI/LTX] Submitted prompt_id=" + promptId);
-
-  // Wait for result（排队时间不计入执行超时；22B 两阶段执行预算 60 分钟）
-  const result = await waitForComfyJob(baseUrl, promptId, log, {
-    runningBudgetMs: 60 * 60 * 1000,
-    absoluteCapMs: 6 * 3600 * 1000,
-    tag: '/LTX',
-  });
-
-  // Extract video
-  let videoFilename = null;
-  let subfolder = null;
-  for (const [, out] of Object.entries(result.outputs || {})) {
-    if (out.gifs && out.gifs.length > 0) {
-      videoFilename = out.gifs[0].filename;
-      subfolder = out.gifs[0].subfolder || "";
-      break;
-    }
-    if (out.images && out.animated) {
-      videoFilename = out.images[0].filename;
-      subfolder = out.images[0].subfolder || "";
-      break;
-    }
-  }
-
-
-  const videoUrl = baseUrl + "/view?filename=" + videoFilename + "&type=output&subfolder=" + encodeURIComponent(subfolder);
-  log.info("[ComfyUI/LTX] Done: " + videoUrl);
-  return { video_url: videoUrl, first_frame_url: image_url || null };
+  // 未配置工作流：明确报错。
+  // 注：此处原先会回退到硬编码的 LTX 2.3 工作流（src/services/workflows/ltx23-i2v-api.json），
+  // 项目已不再支持 LTX，改为显式报错，避免「没选工作流却静默换模型出片」。
+  throw new Error('ComfyUI 视频配置未选择工作流：请在「AI 配置 → 视频服务」中选择工作流文件（settings.workflow）');
 }
 
 module.exports = { callComfyUIImageApi, callComfyUIVideoApi, parseSize, hasH3ReferenceNode, applyH3RefsToApi, prepareReferenceAudios };

@@ -1634,7 +1634,7 @@
       </section>
 
       <!-- 7. 视频配置 + AI 模型配置 -->
-      <section class="section card">
+      <section id="anchor-video-config" class="section card">
         <h2 class="section-title">视频配置</h2>
         <div class="config-grid">
           <el-form-item label="分辨率">
@@ -1643,6 +1643,7 @@
               <el-option label="2K (1080p)" value="1080p" />
               <el-option label="4K (2160p)" value="2160p" />
             </el-select>
+            <span class="form-hint">仅影响云厂商视频归一化与图片尺寸，不影响本地 ComfyUI 视频</span>
           </el-form-item>
           <!--
           <el-form-item label="配乐">
@@ -3265,6 +3266,7 @@ const navSteps = computed(() => {
     { key: 'scenes',   label: '场景',        anchor: 'anchor-scenes',     status: sceneStatus,     count: sceneList.length },
     { key: 'sb',       label: '分镜脚本',   anchor: 'anchor-storyboard', status: sbScriptStatus,  count: sbList.length },
     { key: 'sbimg',    label: '分镜图',      anchor: 'anchor-storyboard', status: sbImgStatus,     count: sbList.length },
+    { key: 'videocfg', label: '视频配置',   anchor: 'anchor-video-config', status: 'pending',     count: 0 },
     { key: 'video',    label: '分镜视频',   anchor: 'anchor-video',      status: videoStatus,     count: 0 },
   ]
 })
@@ -5338,6 +5340,7 @@ async function saveProjectSettings(includeGenerationStyle = false) {
   const metadata = {
     story_style: storyStyle.value || undefined,
     aspect_ratio: projectAspectRatio.value || '16:9',
+    video_resolution: videoResolution.value || '720p',
     video_clip_duration: videoClipDuration.value || 5,
     storyboard_include_narration: !!storyboardIncludeNarration.value,
     storyboard_universal_omni: !!storyboardUniversalOmni.value,
@@ -7479,7 +7482,7 @@ async function startBatchVideoGeneration() {
             style: getSelectedStyle(),
             aspect_ratio: projectAspectRatio.value || '16:9',
             resolution: videoResolution.value || undefined,
-            duration: getSbVideoDurationForApi(sb),
+                  duration: getSbVideoDurationForApi(sb),
           })
           if (res?.task_id) {
             const meta = buildSbGenMeta(sb, GEN_RESOURCE.SB_VIDEO, '分镜视频')
@@ -8180,7 +8183,7 @@ async function runOneClickPipeline(textOnly = false) {
               style,
               aspect_ratio: projectAspectRatio.value || '16:9',
               resolution: videoResolution.value || undefined,
-              duration: getSbVideoDurationForApi(sb),
+                      duration: getSbVideoDurationForApi(sb),
             })
             if (res?.task_id) {
               const meta = buildSbGenMeta(sb, GEN_RESOURCE.SB_VIDEO, '分镜视频')
@@ -8524,7 +8527,7 @@ async function runRepairPipeline() {
             reference_audio_urls: sbAudioRefUrls(sb),
               aspect_ratio: projectAspectRatio.value || '16:9',
               resolution: videoResolution.value || undefined,
-              duration: getSbVideoDurationForApi(sb),
+                      duration: getSbVideoDurationForApi(sb),
             })
             if (res?.task_id) {
               const meta = buildSbGenMeta(sb, GEN_RESOURCE.SB_VIDEO, '分镜视频')
@@ -11088,6 +11091,15 @@ html.light .sb-video-placeholder {
   font-size: 0.78rem;
   color: #52525b;
   white-space: nowrap;
+}
+/* 表单旁的小字说明（视频配置等） */
+.form-hint {
+  margin-left: 8px;
+  font-size: 0.78rem;
+  color: #52525b;
+  white-space: normal;
+  max-width: 260px;
+  line-height: 1.35;
 }
 .sb-config-hint--estimate {
   white-space: normal;

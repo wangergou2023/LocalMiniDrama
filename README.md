@@ -196,14 +196,19 @@ cd LocalMiniDrama
 
 # 后端（端口 5679）
 cd backend-node && npm install
-cp configs/config.example.yaml configs/config.yaml   # 填入 API Key
+# 配置文件仓库里已自带：backend-node/configs/config.yaml（直接编辑填入 API Key）
 npm run migrate && npm start
 
 # 前端（端口 3013，新终端）
 cd frontweb && npm install && npm run dev
 ```
 
-浏览器打开 `http://localhost:3013`，或双击根目录 **`run_dev.bat`** 一键启动。
+浏览器打开 `http://localhost:3013`。也可用根目录的一键启动脚本：
+
+- **Windows**：双击 **`run_dev.bat`**（或 PowerShell 执行 `.\run_dev.ps1`）
+- **Linux / macOS**：`./run_dev.sh`
+  - 前台运行，`Ctrl+C` 一起停；`./run_dev.sh restart` 重启
+  - `./run_dev.sh bg` 后台运行（日志写入 `/tmp/localminidrama_*.log`），`./run_dev.sh stop` 停止
 
 📖 [详细开发/打包/Docker 指南](docs/quickstart.md) · [AI 配置指南](docs/configuration.md)
 

@@ -34,6 +34,10 @@ style:
   default_prop_style: object centered, clean simple background, studio lighting, sharp focus, high detail, masterpiece, best quality
   default_image_ratio: '16:9'
   default_video_ratio: '16:9'
+  # 本地 ComfyUI 视频画幅（兆像素，官方 ResolutionSelector 口径：1MP = 1024x1024）
+  # 16:9 时：0.4→864x480  0.5→960x544  0.7→1152x640  0.98→1344x768
+  # 前端「视频画幅」未选择时的兜底值；调高会显著增加生成时间与显存占用
+  default_video_megapixels: 0.5
   default_prop_ratio: '1:1'
   default_image_size: 1024x1024
 vendor_lock:

@@ -801,6 +801,57 @@ input_reference = (图片文件，可选)</pre>
           <p class="field-tip">选定工作流后，模型加载由工作流 JSON 决定，上方「模型列表」「默认模型」可留空。</p>
         </el-form-item>
 
+        <!-- ComfyUI 视频画幅（本地视频实际分辨率） -->
+        <el-form-item v-if="showComfyMegapixels">
+          <template #label>
+            <span class="form-label-tip">视频画幅
+              <el-tooltip placement="top" popper-class="cfg-tip-popper">
+                <template #content>
+                  <div class="cfg-tip-content">
+                    本地 ComfyUI 视频的实际分辨率，与官方 ResolutionSelector 同口径（1 MP = 1024×1024）。<br>
+                    数值越大越清晰，但生成时间与显存占用显著上升（分辨率翻倍 ≈ 耗时翻倍以上）。<br>
+                    竖屏项目自动转置，无需另设。
+                  </div>
+                </template>
+                <el-icon class="tip-icon"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </span>
+          </template>
+          <el-select v-model="form.megapixels" style="width: 100%">
+            <el-option
+              v-for="opt in megapixelsOptions"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </el-select>
+          <p class="field-tip">决定本地视频画幅；云厂商视频仍按上方「分辨率」与项目画幅处理。</p>
+        </el-form-item>
+
+        <!-- ComfyUI turbo 加速开关（覆盖工作流内的 Lightning/turbo 开关） -->
+        <el-form-item v-if="showComfyMegapixels">
+          <template #label>
+            <span class="form-label-tip">turbo 加速
+              <el-tooltip placement="top" popper-class="cfg-tip-popper">
+                <template #content>
+                  <div class="cfg-tip-content">
+                    工作流内的 turbo 开关（PrimitiveBoolean → ComfySwitchNode）：开启时挂 turbo/Lightning LoRA 并用少步数采样，速度快；关闭时用原始模型 + 多步数采样。<br>
+                    默认「跟随工作流」，即按工作流文件里的原值执行；需要临时对比画质时再强制开启/关闭。<br>
+                    若该工作流没有此类开关节点，此项不生效（后端会打 WARN 日志）。
+                  </div>
+                </template>
+                <el-icon class="tip-icon"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </span>
+          </template>
+          <el-select v-model="form.turbo" style="width: 100%">
+            <el-option label="跟随工作流（不改动）" :value="''" />
+            <el-option label="强制开启（快）" :value="true" />
+            <el-option label="强制关闭（慢，原始模型）" :value="false" />
+          </el-select>
+          <p class="field-tip">仅对本地 ComfyUI 视频生效。</p>
+        </el-form-item>
+
         <template v-if="form.service_type !== 'jimeng2_character_auth'">
         <el-form-item>
           <template #label>
@@ -1252,6 +1303,10 @@ const form = ref({
   group_id: '',
   // ComfyUI 工作流选择
   workflow: '',
+  // ComfyUI 视频画幅（MP）：本地视频的实际分辨率来源
+  megapixels: 0.5,
+  // turbo 加速：'' = 跟随工作流，true/false = 强制开关
+  turbo: '',
 })
 const presetModelPick = ref('')
 const workflowList = ref([])
@@ -1532,6 +1587,23 @@ const isComfyUIForm = computed(() => {
 })
 
 const showComfyWorkflow = computed(() => isComfyUIForm.value && !vendorLock.value.enabled)
+
+// 视频画幅：仅 ComfyUI 的视频服务需要（决定本地视频实际分辨率）
+const showComfyMegapixels = computed(() => isComfyUIForm.value && form.value.service_type === 'video')
+
+// 与后端 comfyuiClient 同构：total = mp * 1024 * 1024，再按 32 取整（官方 ResolutionSelector 口径）
+function mpToPixels(mp, wr = 16, hr = 9) {
+  const total = Math.round(Number(mp || 0.4) * 1024 * 1024)
+  const scale = Math.sqrt(total / (wr * hr))
+  return `${Math.round((wr * scale) / 32) * 32}×${Math.round((hr * scale) / 32) * 32}`
+}
+
+const megapixelsOptions = computed(() =>
+  [0.4, 0.5, 0.6, 0.7, 0.98].map((mp) => ({
+    value: mp,
+    label: `${mp} MP · 16:9 ${mpToPixels(mp, 16, 9)} · 9:16 ${mpToPixels(mp, 9, 16)}`,
+  }))
+)
 
 async function fetchWorkflows() {
   workflowLoading.value = true
@@ -1874,6 +1946,8 @@ function resetForm() {
     kling_secret_key: '',
     kling_secret_key_base64: false,
     workflow: '',
+    megapixels: 0.5,
+    turbo: '',
   }
   formRef.value?.resetFields?.()
 }
@@ -1895,6 +1969,8 @@ function openEdit(row) {
   let kling_secret_key = ''
   let kling_secret_key_base64 = false
   let workflow = ''
+  let megapixels = 0.5
+  let turbo = ''
   const deepseekSettings = resolveDeepSeekFormSettings(row)
   if (row.settings) {
     try {
@@ -1909,6 +1985,8 @@ function openEdit(row) {
         kling_secret_key_base64 = !!s.kling_secret_key_base64
       }
       if (s.workflow) workflow = s.workflow
+      if (Number(s.megapixels) > 0) megapixels = Number(s.megapixels)
+      if (typeof s.turbo === 'boolean') turbo = s.turbo
     } catch (_) {}
   }
   form.value = {
@@ -1932,6 +2010,8 @@ function openEdit(row) {
     kling_secret_key,
     kling_secret_key_base64,
     workflow,
+    megapixels,
+    turbo,
   }
   dialogVisible.value = true
 }
@@ -1987,6 +2067,16 @@ async function submit() {
       const prev = editingId.value ? list.value.find((r) => r.id === editingId.value) : null
       const baseS = parseSettings(prev?.settings)
       baseS.workflow = form.value.workflow
+      settings = Object.keys(baseS).length ? JSON.stringify(baseS) : null
+    }
+    // ComfyUI 视频画幅：与工作流同存于 settings（仅视频服务有意义）
+    if (showComfyMegapixels.value) {
+      const prev = editingId.value ? list.value.find((r) => r.id === editingId.value) : null
+      const baseS = parseSettings(prev?.settings)
+      if (Number(form.value.megapixels) > 0) baseS.megapixels = Number(form.value.megapixels)
+      else delete baseS.megapixels
+      if (typeof form.value.turbo === 'boolean') baseS.turbo = form.value.turbo
+      else delete baseS.turbo
       settings = Object.keys(baseS).length ? JSON.stringify(baseS) : null
     }
     const payload = {

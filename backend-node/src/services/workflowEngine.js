@@ -330,13 +330,6 @@ function prepareWorkflow(workflow, params) {
       }
     }
 
-    // EmptyLTXVLatentVideo: 注入帧数和分辨率
-    if (classType === 'EmptyLTXVLatentVideo') {
-      if (videoFrames !== undefined) apiInputs.length = videoFrames;
-      if (width !== undefined) apiInputs.width = width;
-      if (height !== undefined) apiInputs.height = height;
-    }
-
     // MiniMax H3 参考图生视频 / 图生视频节点: 注入 prompt、宽高、时长（覆盖已连线的输入）
     if (classType === 'MiniMaxH3ReferenceToVideo' || classType === 'MiniMaxH3ImageToVideo') {
       if (promptText !== undefined) apiInputs.prompt = promptText;

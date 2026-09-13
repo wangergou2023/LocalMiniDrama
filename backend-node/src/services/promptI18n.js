@@ -1134,6 +1134,22 @@ function buildStoryExpansionUserPrompt(cfg, premise, style, type, episodeCount) 
  * 返回指定提示词 key 的可编辑默认正文（中文，不含动态锁定部分）。
  * promptOverrides.js 调用此函数，确保 UI 展示的内容与 promptI18n.js 始终一致。
  */
+/**
+ * 把分镜用户提示词拆成「可编辑正文」与「锁定的输出格式段」——
+ * 只给「提示词设置」页用（它把 default_body 当 placeholder、locked_suffix 当固定尾缀）。
+ *
+ * 为什么不再手抄一份：这两段在设置页里各有一份**独立的硬编码副本**，与真正发出去的提示词
+ * 经常不一致 —— 实测那份副本的 JSON 字段清单更旧（连 segment_index / narration / props /
+ * layout_description / emotion_intensity 都没有）。用户在设置页照它改一版并保存，
+ * 就等于把字段清单回退到旧版，而那会让模型静默不返回那些字段。所以这里改成从同一处拆。
+ */
+function splitStoryboardUserSuffix(cfg) {
+  const full = String(getStoryboardUserPromptSuffix(cfg || { language: 'zh' }, null) || '').trim();
+  const i = full.indexOf('【输出格式】');
+  if (i < 0) return { body: full, locked: '' };
+  return { body: full.slice(0, i).trim(), locked: full.slice(i).trim() };
+}
+
 function getDefaultPromptBody(key) {
   switch (key) {
     case 'story_expansion_system':
@@ -1157,7 +1173,9 @@ function getDefaultPromptBody(key) {
       return '你是一位专业的剧本道具分析师，擅长从剧本中提取具有视觉特征的关键道具。\n\n你的任务是根据提供的剧本内容，提取并整理所有对剧情有重要作用或有特殊视觉特征的关键道具。\n\n要求：\n1. 只提取对剧情发展有重要作用、或有特殊视觉特征的关键道具。\n2. 普通的生活用品（如普通的杯子、笔）如果无特殊剧情意义不需要提取。\n3. 归属者、剧中人名等**只**写在 "description"，**不要**写进 "image_prompt"。\n4. "image_prompt" 按项目语言撰写（中文项目优先用中文），按「产品主图 / 资产白模照」标准撰写：只描述该道具本体（造型、材质、颜色、工艺与磨损），并强制纯色无缝棚拍背景、无场景无杂物。匹配项目中文提示词语音（融入真实尺度、次要元素原则）。\n5. "image_prompt" 须明确排除人物、手、家具、台面、其他物体与环境叙事元素。\n6. "image_prompt" **禁止**出现剧本人名、地名、组织名、台词、剧情专有词；用泛化视觉词替代，且**禁止无依据扩写**（不凭空加配饰、品牌叙事、煽情形容词）。';
 
     case 'storyboard_user_suffix':
-      return '【分镜要素】每个分镜 = **一次连续拍摄**（默认单镜；打斗/追击/连招镜可按拍镜内切镜，用 `[Shot 1] … [Shot 2] At MM:SS.mmm, the camera cuts to …` 记号；叙述性「切镜到/镜头2」仍然禁止），描述要详尽具体：\n1. **镜头标题(title)**：用3-5个字概括该镜头的核心内容或情绪\n2. **时间**：[清晨/午后/深夜/具体时分+详细光线描述]\n3. **地点**：[场景完整描述+空间布局+环境细节]\n4. **镜头设计**：**景别(shot_type)**、**镜头角度(angle)**、**运镜方式(movement)**\n5. **人物行为**：**详细动作描述**\n6. **对话/独白**：提取该镜头中的完整对话或独白内容（如无对话则为空字符串）\n7. **画面结果**：动作的即时后果+视觉细节+氛围变化\n8. **环境氛围**：光线质感+色调+声音环境+整体氛围\n9. **声音设计**：bgm_prompt 必须填空字符串""或"无背景音乐/禁BGM"；不要为单个片段设计背景音乐。sound_effect 只写现场环境声、动作音效、对白/旁白音色与口型同步要求\n10. **观众情绪**：[情绪类型]（[强度：↑↑↑/↑↑/↑/→/↓]）\n\n**dialogue字段说明**：角色名："台词内容"。无对话时填空字符串""。\n**scene_id**：从上方场景列表中选择最匹配的背景ID，如无合适背景则填null。\n**duration时长**：综合对话、动作、情绪估算每镜时长（具体目标秒数由系统自动注入）。\n**声音一致性**：所有镜头默认无BGM；若有对白/旁白，sound_effect 须补充音色与情绪强度。';
+      // 从同一处拆（见 splitStoryboardUserSuffix 注释），不再手抄
+      return splitStoryboardUserSuffix({ language: 'zh' }).body;
+
 
     case 'first_frame_prompt':
       return '你是一个专业的电影分镜图像生成提示词专家。请根据提供的镜头信息，生成适合AI图像生成的提示词。\n\n重要：这是镜头的首帧 - 一个完全静态的画面，展示动作发生之前的初始状态。\n\n核心规则：\n1. 聚焦初始静态状态 - 动作发生之前的那一瞬间，禁止包含任何动作或运动描述\n2. 描述角色在画面中的位置（画面左/中/右）、朝向（面向/背对/侧面）、初始姿态和表情\n3. 如提供了角色外貌信息，必须将其融入提示词（仅使用固定身份特征：脸型、五官、发型、肤质、标记等，严禁添加或推断任何服装、衣着、服饰描述，服装由参考图决定）\n\n【电影语言规范（必须应用）】\n\n构图规则（根据景别选择）：\n- 三分法：主体置于三分线交点，稳定平衡，适合大多数叙事镜头\n- 框架构图：用门窗/树枝/栏杆形成自然画框，突出主体，增加纵深\n- 中心构图：对称庄重，适合特写和仪式感场景\n- 前景遮挡：前景虚化元素增加层次感\n\n光线设计（必须描述）：\n- 光源方向：左侧光/右侧光/顶光/逆光（轮廓光）/底光\n- 光线质感：硬光（强烈阴影，戏剧张力）/ 柔光（柔和过渡，自然温馨）\n- 色温：暖光（金黄/橙红，温暖怀旧）/ 冷光（蓝调/青白，冷漠疏离）\n\n景深设置：\n- 特写/近景：浅景深，背景虚化，突出人物情绪\n- 中景：中等景深，人物与环境均清晰\n- 远景/全景：深景深，前后均清晰，交代空间关系';
@@ -1193,7 +1211,8 @@ function getLockedSuffix(key) {
     case 'prop_extraction':
       return '\n- **风格要求**：[当前道具风格]\n- **图片比例**：[当前比例]\n\n【输出格式】\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n每个对象包含：\n- name: 道具名称\n- type: 类型 (如：武器/关键证物/日常用品/特殊装置)\n- description: 在剧中的作用和中文外观描述（人名归属可写此处，勿写入 image_prompt）\n- image_prompt: 单道具主图提示词（纯色底、仅主体；无剧本人名地名等；简练、不扩写；中文项目用中文并匹配项目语音与真实尺度铁律）';
     case 'storyboard_user_suffix':
-      return '\n\n【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, title, shot_type, angle, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters, is_primary。**必须只返回纯JSON，不要markdown。**';
+      // 同上：从同一处拆
+      return splitStoryboardUserSuffix({ language: 'zh' }).locked;
     case 'first_frame_prompt':
     case 'key_frame_prompt':
     case 'last_frame_prompt':

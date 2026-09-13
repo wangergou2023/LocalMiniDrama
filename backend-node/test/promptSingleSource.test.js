@@ -83,6 +83,18 @@ describe('提示词关键规则：打斗按拍（不许悄悄回退）', () => {
     }
   });
 
+  it('storyboard_user_suffix 的页面副本也从同一处拆（不再手抄字段清单）', () => {
+    const body = promptI18n.getDefaultPromptBody('storyboard_user_suffix');
+    const locked = promptI18n.getLockedSuffix('storyboard_user_suffix');
+    const real = promptI18n.getStoryboardUserPromptSuffix(ZH, null).trim();
+    // 两段拼起来就是真正发出去的提示词
+    assert.equal((body + '\n\n' + locked).trim(), real);
+    // 字段清单必须跟着走，否则设置页里那份会悄悄变旧
+    for (const f of ['segment_index', 'lighting_style', 'depth_of_field', 'narration', 'emotion_intensity', 'layout_description']) {
+      assert.match(locked, new RegExp('\\b' + f + '\\b'), 'locked_suffix 缺 ' + f);
+    }
+  });
+
   it('multiline 块格式没被压成单行（历史回归：曾被 replace(/\\r?\\n/g," ") 压平）', () => {
     const spec = promptI18n.getUniversalOmniMultiBeatFormatSpec(ZH);
     assert.ok(spec.split('\n').length > 20, '规范必须仍是多行');

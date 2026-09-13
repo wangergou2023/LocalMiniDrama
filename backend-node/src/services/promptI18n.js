@@ -935,7 +935,7 @@ Each element: location, time, prompt (English image generation prompt for pure b
  */
 function getStoryExpansionSystemPrompt(cfg, episodeCount) {
   const n = Number(episodeCount) > 1 ? Number(episodeCount) : 1;
-  const jsonNote = `\n\n**输出格式（必须严格遵守）**：\n返回一个 JSON 数组，包含 ${n} 个对象，每个对象格式如下：\n[\n  {\n    "episode": 1,\n    "title": "第一集标题（5-10字，概括本集核心内容）",\n    "content": "本集剧本正文（约800字）"\n  }\n]\n**必须只返回纯 JSON 数组，不要任何 markdown 代码块、说明文字。直接以 [ 开头，以 ] 结尾。**`;
+  const jsonNote = `\n\n**输出格式（必须严格遵守）**：\n返回一个 JSON 数组，包含 ${n} 个对象，每个对象格式如下：\n[\n  {\n    "episode": 1,\n    "title": "第一集标题（5-10字，概括本集核心内容）",\n    "content": "本集剧本正文（约1200-1600字）"\n  }\n]\n**必须只返回纯 JSON 数组，不要任何 markdown 代码块、说明文字。直接以 [ 开头，以 ] 结尾。**`;
   if (isEnglish(cfg)) {
     const enNote = `\n\n**Output format (STRICTLY required)**:\nReturn a JSON array with ${n} object(s), each in this format:\n[\n  {\n    "episode": 1,\n    "title": "Episode title (5-15 words)",\n    "content": "Episode script body (~800 words)"\n  }\n]\n**Return ONLY the JSON array. No markdown, no explanation. Start directly with [ and end with ].**`;
     return `You are a professional screenwriter. Your task is to expand the user's story premise into ${n} episode(s) of a short-film script.
@@ -944,7 +944,9 @@ Requirements:
 1. Write in clear, fluent English suitable for later storyboard breakdown.
 2. Include scene descriptions, character actions and dialogue. Do NOT use shot numbers, "INT./EXT." headings, or screenplay formatting marks.
 3. Each episode: approximately 800 words. Episodes must be connected in story continuity — each episode picks up from where the previous one ended.
-4. Each episode should have a clear beginning, development, and a hook or turning point at the end.${enNote}`;
+4. **One event per sentence**: each sentence must describe exactly ONE filmable event. Never pack a move + an arrival + a discovery into a single sentence. Bad: "Sha Wujing went to Huaguo Mountain to confront Wukong, only to find him sitting in the Water Curtain Cave with a fake Tang Seng beside him." Good — split it: "Sha Wujing rode the clouds to Huaguo Mountain." / "He landed outside the Water Curtain Cave and pushed through the falling water." / "On the stone platform sat a 'Wukong', and beside him sat a 'Tang Seng' and a 'Zhu Bajie' — all of them fakes."
+5. **Write the transitions**: show HOW a character gets from place A to place B (walks / rides a cloud / pushes the door / parts the curtain) and how the location changes — as filmable action. Never skip to the result with words like "only to find" or "suddenly saw".
+6. Each episode should have a clear beginning, development, and a hook or turning point at the end.${enNote}`;
   }
   const _storyOverride = _overrideCache['story_expansion_system'];
   const base = _storyOverride || `你是一位专业的编剧。你的任务是根据用户提供的故事梗概，创作 ${n} 集完整的短片剧本。
@@ -952,8 +954,12 @@ Requirements:
 要求：
 1. 用中文写作，叙事清晰流畅，适合后续拆分为分镜。
 2. 可以包含场景描述、角色动作与对话，但不要输出分镜格式、镜头编号或「内景/外景」等场次标记。
-3. 每集约 800 字。如有多集，剧情必须前后衔接——每集从上一集结尾处推进，确保整体故事连贯。
-4. 每集有清晰的起承转合，结尾留有悬念或转折，吸引观众看下一集。`;
+3. **每集约 1200-1600 字**：把动作、走位、表情、环境、过渡都写清楚，**宁可写细，不要压缩**。不要靠形容词灌水凑字数。
+4. **一句一事**：每个句子只写**一个**可拍摄的事件，禁止把多个节拍挤进同一句。
+   ✗ 反例（三个节拍挤在一句）：「沙僧去花果山找悟空理论，却见悟空正坐在水帘洞中，身边还有一个"唐僧"和"八戒""沙僧"」
+   ✓ 正例（拆成三句，每句一镜）：「沙僧驾云赶往花果山。」「他落在水帘洞外，掀帘而入。」「洞中石台上端坐着一个"悟空"，身边还坐着"唐僧""八戒""沙僧"——全是假的！」
+5. **过渡必须写出来**：人物怎么从一个地点到另一个地点（走过去／驾云／推门／掀帘）、地点怎么切换，都要写成**可拍摄的动作**。**禁止**用「却见」「不想」「谁知」「忽见」这类词直接跳到结果。
+6. 每集有清晰的起承转合，结尾留有悬念或转折，吸引观众看下一集。`;
   return base + jsonNote;
 }
 
@@ -1035,7 +1041,7 @@ function buildStoryExpansionUserPrompt(cfg, premise, style, type, episodeCount) 
 function getDefaultPromptBody(key) {
   switch (key) {
     case 'story_expansion_system':
-      return '你是一位专业的编剧。你的任务是根据用户提供的故事梗概，创作 ${n} 集完整的短片剧本。\n\n要求：\n1. 用中文写作，叙事清晰流畅，适合后续拆分为分镜。\n2. 可以包含场景描述、角色动作与对话，但不要输出分镜格式、镜头编号或「内景/外景」等场次标记。\n3. 每集约 800 字。如有多集，剧情必须前后衔接——每集从上一集结尾处推进，确保整体故事连贯。\n4. 每集有清晰的起承转合，结尾留有悬念或转折，吸引观众看下一集。';
+      return '你是一位专业的编剧。你的任务是根据用户提供的故事梗概，创作 ${n} 集完整的短片剧本。\n\n要求：\n1. 用中文写作，叙事清晰流畅，适合后续拆分为分镜。\n2. 可以包含场景描述、角色动作与对话，但不要输出分镜格式、镜头编号或「内景/外景」等场次标记。\n3. **每集约 1200-1600 字**：把动作、走位、表情、环境、过渡都写清楚，**宁可写细，不要压缩**。不要靠形容词灌水凑字数。\n4. **一句一事**：每个句子只写**一个**可拍摄的事件，禁止把多个节拍挤进同一句。\n   ✗ 反例（三个节拍挤在一句）：「沙僧去花果山找悟空理论，却见悟空正坐在水帘洞中，身边还有一个"唐僧"和"八戒""沙僧"」\n   ✓ 正例（拆成三句，每句一镜）：「沙僧驾云赶往花果山。」「他落在水帘洞外，掀帘而入。」「洞中石台上端坐着一个"悟空"，身边还坐着"唐僧""八戒""沙僧"——全是假的！」\n5. **过渡必须写出来**：人物怎么从一个地点到另一个地点（走过去／驾云／推门／掀帘）、地点怎么切换，都要写成**可拍摄的动作**。**禁止**用「却见」「不想」「谁知」「忽见」这类词直接跳到结果。\n6. 每集有清晰的起承转合，结尾留有悬念或转折，吸引观众看下一集。';
 
     case 'storyboard_system':
       return '【角色】你是一位资深影视分镜师，精通罗伯特·麦基的镜头拆解理论，擅长构建情绪节奏。\n\n【任务】将小说剧本按**独立动作单元**拆解为分镜头方案。\n\n【分镜拆解原则】\n1. **动作单元划分**：每个镜头必须对应一个完整且独立的动作\n   - 一个动作 = 一个镜头（角色站起来、走过去、说一句话、做一个反应表情等）\n   - 禁止合并多个动作（站起+走过去应拆分为2个镜头）\n\n2. **景别标准**（根据叙事需要选择）：\n   - 大远景：环境、氛围营造\n   - 远景：全身动作、空间关系\n   - 中景：交互对话、情感交流\n   - 近景：细节展示、情绪表达\n   - 特写：关键道具、强烈情绪\n\n3. **运镜要求**：\n   - 固定镜头：稳定聚焦于一个主体\n   - 推镜：接近主体，增强紧张感\n   - 拉镜：扩大视野，交代环境\n   - 摇镜：水平移动摄像机，空间转换\n   - 跟镜：跟随主体移动\n   - 移镜：摄像机与主体同向移动\n\n4. **情绪与强度标记**：\n   - emotion：简短描述（兴奋、悲伤、紧张、愉快等）\n   - emotion_intensity：用箭头表示情绪等级\n     * 极强 ↑↑↑ (3)：情绪高峰、高度紧张\n     * 强 ↑↑ (2)：情绪明显波动\n     * 中 ↑ (1)：情绪有所变化\n     * 平稳 → (0)：情绪不变\n     * 弱 ↓ (-1)：情绪回落\n\n【输出要求】\n1. 生成一个数组，每个元素是一个镜头，包含：\n   - shot_number：镜头号\n   - scene_description：场景（地点+时间，如"卧室内，早晨"）\n   - shot_type：景别（大远景/远景/中景/近景/特写）\n   - camera_angle：机位角度（平视/仰视/俯视/侧面/背面）\n   - camera_movement：运镜方式（static/推镜push/拉镜pull/横摇pan/纵摇tilt/跟镜tracking/升镜crane_up/降镜crane_dn/环绕orbit/手持handheld/变焦zoom/旋转roll/甩镜whip_pan/螺旋spiral/希区柯克hitchcock_zoom/子弹时间bullet_time/荷兰角dutch_angle_move/推轨复合dolly_track/升格环绕slowmo_orbit）——**强制动态优先，固定镜头不得超过20%**\n   - action：动作描述\n   - result：动作完成后的画面结果\n   - dialogue：角色对话或旁白（如有）\n   - emotion：当前情绪\n   - emotion_intensity：情绪强度等级（3/2/1/0/-1）';

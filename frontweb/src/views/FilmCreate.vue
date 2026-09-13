@@ -909,6 +909,16 @@
             <ElButton type="info" plain size="large" @click="onAddSingleStoryboard">
             添加一个分镜
             </ElButton>
+            <ElButton
+              v-if="qualityReport"
+              type="warning"
+              plain
+              size="large"
+              @click="qualityReportVisible = true"
+            >
+              质量报告
+              <template v-if="qualityReport.stats && qualityReport.stats.dialogue_missing">（缺 {{ qualityReport.stats.dialogue_missing }} 句台词）</template>
+            </ElButton>
           </div>
           <template v-if="storyboards.length > 0">
             <div class="sb-batch-right">
@@ -2792,6 +2802,101 @@
         </template>
       </div>
     </Teleport>
+
+    <!-- 生成质量报告：生成分镜完成后自动弹出，也可用工具栏的「质量报告」按钮重开 -->
+    <el-dialog v-model="qualityReportVisible" title="分镜生成质量报告" width="720px">
+      <template v-if="qualityReport">
+        <el-alert
+          :type="qualityReport.verdict === 'ok' ? 'success' : qualityReport.verdict === 'warn' ? 'warning' : 'error'"
+          :closable="false"
+          show-icon
+          :title="qualityReport.headline"
+        >
+          <template #default>
+            <div v-for="(r, i) in qualityReport.reasons" :key="i" style="line-height: 1.6">{{ r }}</div>
+          </template>
+        </el-alert>
+
+        <el-descriptions :column="2" border size="small" style="margin-top: 14px">
+          <el-descriptions-item label="分镜数">
+            {{ qualityReport.stats.shot_count }} 条
+            <span v-if="qualityReport.stats.requested_count">（请求 {{ qualityReport.stats.requested_count }}）</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="总时长">
+            {{ qualityReport.stats.total_duration }}s
+            <span v-if="qualityReport.stats.requested_duration">（请求 {{ qualityReport.stats.requested_duration }}）</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="剧本台词覆盖">
+            <span :style="{ color: qualityReport.stats.dialogue_missing ? '#f56c6c' : '#67c23a' }">
+              {{ qualityReport.stats.dialogue_covered }} / {{ qualityReport.stats.dialogue_total }}
+            </span>
+          </el-descriptions-item>
+          <el-descriptions-item label="剧情节拍覆盖">
+            <span v-if="!qualityReport.stats.beat_total" style="color: #909399">未检查</span>
+            <span v-else :style="{ color: qualityReport.stats.beat_missing ? '#e6a23c' : '#67c23a' }">
+              {{ qualityReport.stats.beat_covered }} / {{ qualityReport.stats.beat_total }}
+            </span>
+          </el-descriptions-item>
+          <el-descriptions-item label="提示词格式">
+            <span v-if="qualityReport.stats.universal_fatal" style="color: #f56c6c">
+              兜底替换 {{ qualityReport.stats.universal_fatal }} 条
+            </span>
+            <span v-else-if="qualityReport.stats.universal_repaired" style="color: #e6a23c">
+              自动修正 {{ qualityReport.stats.universal_repaired }} 条
+            </span>
+            <span v-else style="color: #67c23a">全部合规</span>
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <div v-if="qualityReport.missing_dialogue && qualityReport.missing_dialogue.length" style="margin-top: 14px">
+          <div style="font-weight: 600; margin-bottom: 6px; color: #f56c6c">
+            以下剧本台词没有进任何分镜：
+          </div>
+          <div v-for="(m, i) in qualityReport.missing_dialogue" :key="i" style="line-height: 1.7; font-size: 13px">
+            · <span v-if="m.speaker">{{ m.speaker }}：</span>「{{ m.line }}」
+          </div>
+          <div style="margin-top: 6px; font-size: 12px; color: #909399">
+            分镜能承载的台词数约 1 句/镜。在「分镜数」里填一个更大的值重新生成即可补回（决定权在你，软件不会自动重跑）。
+          </div>
+        </div>
+
+        <div v-if="qualityReport.missing_beats && qualityReport.missing_beats.length" style="margin-top: 14px">
+          <div style="font-weight: 600; margin-bottom: 6px; color: #e6a23c">
+            语义判定认为以下剧本节拍没落到任何分镜（理解式判定，可能有误，请人工确认）：
+          </div>
+          <div v-for="(b, i) in qualityReport.missing_beats" :key="i" style="line-height: 1.7; font-size: 13px">
+            · {{ b.beat }}<span v-if="b.reason" style="color: #909399"> —— {{ b.reason }}</span>
+          </div>
+        </div>
+
+        <el-table
+          v-if="qualityReport.shots && qualityReport.shots.length"
+          :data="qualityReport.shots"
+          size="small"
+          max-height="320"
+          style="margin-top: 14px"
+        >
+          <el-table-column prop="index" label="镜" width="52" />
+          <el-table-column prop="title" label="标题" width="130" show-overflow-tooltip />
+          <el-table-column prop="duration" label="时长" width="64">
+            <template #default="{ row }">{{ row.duration }}s</template>
+          </el-table-column>
+          <el-table-column label="对白">
+            <template #default="{ row }">
+              <span v-if="row.dialogue">{{ row.dialogue }}</span>
+              <span v-else style="color: #c0c4cc">（无对白）</span>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <div style="margin-top: 12px; font-size: 12px; color: #909399; line-height: 1.7">
+          台词覆盖与提示词骨架是**确定性判定**（字符串比对/结构校验），结论可信。<br />
+          剧情节拍覆盖是**语义判定**（LLM 读剧本与分镜清单做对照）—— 措辞不同也算覆盖
+          （例如「把前事细细叙来」就是「八戒沙僧将前事说了一遍」），但它仍可能有误，清单请自行确认。<br />
+          出片质量（口型、有没有念提示词、响度）需要能听能看，本报告覆盖不到。
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -2823,6 +2928,7 @@ import { propLibraryAPI } from '@/api/propLibrary'
 import { generationSettingsAPI } from '@/api/prompts'
 import { parseScriptIntoEpisodes, episodesListToPlainScript } from '@/utils/scriptEpisodes'
 import { estimateVideoDurationSecFromCharLen, STORYBOARD_PLAN_SECONDS } from '@/utils/scriptDurationEstimate'
+import { parseTaskResult } from '@/utils/taskResult'
 import { exportStoryboardSheet } from '@/utils/exportStoryboardSheet'
 import StylePickerButton from '@/components/StylePickerButton.vue'
 import AIConfigContent from '@/components/AIConfigContent.vue'
@@ -3031,6 +3137,9 @@ const sbTruncatedDismissed = ref(false)
 /** 剧本里没进分镜的台词（后端台词覆盖率自检结果），见 applyDialogueCoverageWarning */
 const sbDialogueMissing = ref([])
 const sbDialogueMissingDismissed = ref(false)
+/** 生成质量报告（后端 utils/storyboardQualityReport 产出）：生成完直接弹出来，见 applyQualityReport */
+const qualityReport = ref(null)
+const qualityReportVisible = ref(false)
 const videoErrorMsg = ref('')
 // 一键全流程流水线
 const pipelineRunning = ref(false)
@@ -7220,7 +7329,9 @@ async function refreshStoryboardsOnly() {
  * 成因是容量：**分镜能承载的台词数 ≈ 1 句/镜**，镜数不够时模型合并叙事节拍并优先保
  * 画面动作、牺牲台词。修法是加大「分镜数」重新生成（该输入框会覆盖自动估算）。
  */
-function applyDialogueCoverageWarning(taskResult) {
+function applyDialogueCoverageWarning(taskResultRaw) {
+  // 任务结果是 JSON 字符串（见 utils/taskResult），不解析就读不到字段 —— 之前这里静默失效
+  const taskResult = parseTaskResult(taskResultRaw)
   const cov = taskResult?.dialogue_coverage
   const missing = Array.isArray(cov?.missing) ? cov.missing : []
   sbDialogueMissing.value = missing.map((m) => (m && m.line) || '').filter(Boolean)
@@ -7230,6 +7341,24 @@ function applyDialogueCoverageWarning(taskResult) {
       `有 ${sbDialogueMissing.value.length} 句剧本台词没进分镜，建议加大「分镜数」重新生成`
     )
   }
+}
+
+/**
+ * 展示后端汇总的「生成质量报告」（utils/storyboardQualityReport）。
+ *
+ * 背景：这轮之前，所有自检结果（台词覆盖、提示词格式修正）只落在后端日志里 ——
+ * 用户要自己去翻 /tmp/lmd-backend.log 才知道这版能不能出片。报告把
+ * 镜数/时长、台词覆盖、格式自检、逐镜台词清单汇总成一份可读结论（可出片 / 建议重跑）。
+ *
+ * 报告**不包含**剧情点（叙事节拍）覆盖判定：剧本叙述部分没有确定性边界，关键词自动判
+ * 会把「一棒…身形溃散，化作一道黑烟…消融殆尽」误判成「没打死六耳猕猴」，误报比不报更糟。
+ */
+function applyQualityReport(taskResultRaw) {
+  const taskResult = parseTaskResult(taskResultRaw)
+  const report = taskResult?.quality_report
+  if (!report || typeof report !== 'object') return
+  qualityReport.value = report
+  qualityReportVisible.value = true
 }
 
 async function onGenerateStoryboard() {
@@ -7260,6 +7389,7 @@ async function onGenerateStoryboard() {
         sbTruncatedDismissed.value = false
       }
       applyDialogueCoverageWarning(pollRes?.result)
+      applyQualityReport(pollRes?.result)
     }
     await loadDrama()
     // 生成完成后静默补全空缺的摄影参数（只填未填字段，不覆盖 AI 已填的）
@@ -7968,6 +8098,7 @@ async function runOneClickPipeline(textOnly = false) {
             sbTruncatedDismissed.value = false
           }
           applyDialogueCoverageWarning(result?.result)
+          applyQualityReport(result?.result)
         }
         await loadDrama()
         await pipelineRest()
@@ -8474,6 +8605,7 @@ async function runRepairPipeline() {
           if (result?.paused) { await waitForResume(); return }
           if (result?.error) { addPipelineError('分镜生成', result.error); return }
           applyDialogueCoverageWarning(result?.result)
+          applyQualityReport(result?.result)
         }
         await loadDrama()
         await pipelineRest()

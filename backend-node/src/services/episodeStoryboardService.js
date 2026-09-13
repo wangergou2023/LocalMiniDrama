@@ -8,7 +8,9 @@ const { safeParseAIJSON, extractJsonCandidate, repairTruncatedJsonArray, extract
 const loadConfig = require('../config').loadConfig;
 const angleService = require('./angleService');
 const { checkDialogueCoverage, extractScriptDialogue } = require('../utils/dialogueCoverage');
-const { buildFallbackUniversalMultiBeatText, repairUniversalSegmentText } = require('./universalOmniMultiBeatFormat');
+const { buildFallbackUniversalMultiBeatText, repairUniversalSegmentText, summarizeUniversalSegmentFormat } = require('./universalOmniMultiBeatFormat');
+const { buildStoryboardQualityReport } = require('../utils/storyboardQualityReport');
+const { checkBeatCoverage } = require('../utils/beatCoverageCheck');
 
 /**
  * 分镜专用 generateText 包装：
@@ -809,18 +811,28 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
   }
   log.info('Storyboards saved', { episode_id: episodeId, count: saved.length });
 
-  // 全能分镜格式自检告警。两种情况：
-  //   · 骨架错但正文立得住 → 只把骨架几行换掉，模型写的第4行长句保留（常见，危害小）
-  //   · 正文根本不成块（灵境单行 / 多子分镜 / 混入 @人物N）→ 整条换成块格式模板兜底（危害大，出片质量明显下降）
-  // 后者必须单独报出来让人重跑，否则会被当成普通修复而被忽略。
+  // 全能分镜格式自检。两种情况必须分开报：
+  //   · 骨架错但正文立得住 → 只把骨架几行换掉，模型写的第 4 行长句保留（常见，危害小）
+  //   · 正文根本不成块（灵境单行 / 多子分镜 / 混入 @人物N）→ 整条换成块格式模板兜底
+  //     （危害大，出片质量明显低于模型正常产出，必须让人重跑）
+  // 汇总随任务结果返回，供界面「生成质量报告」展示 —— 此前只进后端日志，
+  // 用户要翻 /tmp/lmd-backend.log 才知道这版能不能用。
+  const fmtRepaired = fmtProblems.filter((x) => !x.fatal);
   const fmtFatal = fmtProblems.filter((x) => x.fatal);
-  const fmtRepaired = fmtProblems.length - fmtFatal.length;
-  if (fmtRepaired > 0) {
+  const formatReport = {
+    checked: saved.filter((r) => r.creation_mode === 'universal').length,
+    repaired: fmtRepaired.length,
+    fatal: fmtFatal.length,
+    repaired_sample: fmtRepaired.slice(0, 5),
+    fatal_sample: fmtFatal.slice(0, 5),
+  };
+
+  if (fmtRepaired.length > 0) {
     log.warn('[分镜] 部分分镜的全能提示词骨架不合规，已就地修复（正文保留）', {
       episode_id: episodeId,
-      count: fmtRepaired,
+      count: fmtRepaired.length,
       total: saved.length,
-      sample: fmtProblems.filter((x) => !x.fatal).slice(0, 3),
+      sample: fmtRepaired.slice(0, 3),
     });
   }
   if (fmtFatal.length > 0) {
@@ -831,7 +843,7 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
       sample: fmtFatal.slice(0, 3),
     });
   }
-  return saved;
+  return { saved, formatReport };
 }
 
 /**
@@ -887,7 +899,7 @@ ${lastCtx}
 ${originalUserPrompt}`;
 }
 
-async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, model, style, userPrompt, systemPrompt, includeNarration, universalOmni, targetClipDurationSec = null) {
+async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, model, style, userPrompt, systemPrompt, includeNarration, universalOmni, targetClipDurationSec = null, requestedCount = null, requestedDuration = null) {
   // 增量保存状态放在 try 外，catch 里可用于部分恢复
   const episodeIdNum = Number(episodeId);
   const streamSavedNums = new Set();
@@ -962,6 +974,10 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
           log.warn('Parse failed but partial storyboards already saved incrementally, treating as truncated success', {
             task_id: taskId, recovered_count: partialBoards.length, parse_error: e.message,
           });
+          // 部分恢复也必须带自检 —— 否则「生成其实成功了」的结果里会一片空白
+          const partialChecks = await runStoryboardSelfChecks(db, log, episodeIdNum, {
+            requestedCount, requestedDuration, styleZh: deriveOpts?.styleZh || '',
+          });
           taskService.updateTaskResult(db, taskId, {
             storyboards: partialBoards,
             total: partialBoards.length,
@@ -969,6 +985,10 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
             duration_minutes: Math.ceil((totalDuration + 59) / 60),
             truncated: true,
             error_message: `AI输出含JSON格式缺陷（${e.message}），已恢复 ${partialBoards.length} 个分镜`,
+            dialogue_coverage: partialChecks.dialogueCoverage,
+            universal_segment_format: partialChecks.formatReport,
+            beat_coverage: partialChecks.beatCoverage,
+            quality_report: partialChecks.qualityReport,
           });
           return;
         }
@@ -1086,7 +1106,7 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
     taskService.updateTaskStatus(db, taskId, 'processing', 70, '正在保存分镜头...');
 
     // 传入 streamSavedNums：已增量保存的项目直接从 DB 读取，跳过重复 INSERT
-    const saved = saveStoryboards(db, log, episodeId, storyboards, cfg, style, streamSavedNums, deriveOpts);
+    const { saved, formatReport: saveFormatReport } = saveStoryboards(db, log, episodeId, storyboards, cfg, style, streamSavedNums, deriveOpts);
 
     // ── 分镜角色补全（字符串匹配，无 AI，极快）──────────────────────────────────
     taskService.updateTaskStatus(db, taskId, 'processing', 75, '正在校验分镜角色关联...');
@@ -1100,39 +1120,20 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
       log.info('[分镜] 角色补全完成', { episode_id: episodeId, total_added: totalCharAdded });
     }
 
-    // ── 剧本台词覆盖率自检（只读，不重试、不挡出片）────────────────────────────
-    //
-    // 剧本里的引号台词是**必须出现在成片里**的内容。此前这一步没有任何校验，实测两次
-    // 都是静默丢失：「三打白骨精」21 句丢 10 句、「真假美猴王」10 句丢 1 句 —— 丢掉的
-    // 句子在 dialogue / universal_segment_text / video_prompt 里都没有，等于整个剧情点
-    // 不存在。三打白骨精丢的正是「你连杀三人，佛门慈悲何在？」这类台词，把
-    // 「唐僧为什么最后赶走悟空」的因果链挖空了，而日志里一行提示都没有。
-    //
-    // 成因是容量：分镜能承载的台词数 ≈ 1 句/镜。镜数不足时模型合并节拍并优先保画面
-    // 动作、牺牲台词。修法是加镜（改估算公式或手填分镜数），需要人判断，所以这里只告警。
-    let dialogueCoverage = null;
-    try {
-      const epRow = db.prepare('SELECT script_content FROM episodes WHERE id = ? AND deleted_at IS NULL').get(episodeIdNum);
-      dialogueCoverage = checkDialogueCoverage(epRow && epRow.script_content, getStoryboardsForEpisode(db, episodeIdNum));
-      if (dialogueCoverage && dialogueCoverage.missing.length > 0) {
-        log.warn('[分镜] 剧本台词未全部覆盖 —— 以下台词在全部分镜里都找不到，必要时请增加分镜数重新生成', {
-          episode_id: episodeIdNum,
-          total: dialogueCoverage.total,
-          covered: dialogueCoverage.covered,
-          missing_count: dialogueCoverage.missing.length,
-          missing: dialogueCoverage.missing.map((m) => m.line),
-        });
-      } else if (dialogueCoverage) {
-        log.info('[分镜] 剧本台词覆盖率自检通过', {
-          episode_id: episodeIdNum,
-          total: dialogueCoverage.total,
-        });
-      }
-    } catch (e) {
-      log.warn('[分镜] 台词覆盖率自检失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
-    }
+    // ── 生成后自检 + 质量报告（正常路径与「部分恢复」路径共用）────────────────────
+    // 抽成 runStoryboardSelfChecks 的原因：分镜 JSON 解析失败/连接中断时会走「部分恢复」
+    // 分支，那条分支以前直接写一份不含任何自检的结果 —— 实测就出现过「生成实际成功、却因
+    // 一处变量作用域错误被降级成部分恢复，所有自检字段全部消失」的情况。自检不能因为
+    // 走了哪条分支就消失。
+    const selfChecks = await runStoryboardSelfChecks(db, log, episodeIdNum, {
+      requestedCount,
+      requestedDuration,
+      styleZh: deriveOpts?.styleZh || '',
+      saveRepaired: saveFormatReport ? saveFormatReport.repaired : 0,
+      saveFatal: saveFormatReport ? saveFormatReport.fatal : 0,
+    });
 
-    taskService.updateTaskStatus(db, taskId, 'processing', 90, '正在更新剧集时长...');
+    taskService.updateTaskStatus(db, taskId, 'processing', 94, '正在更新剧集时长...');
 
     const durationMinutes = Math.ceil((totalDuration + 59) / 60);
     db.prepare('UPDATE episodes SET duration = ?, updated_at = ? WHERE id = ?').run(durationMinutes, new Date().toISOString(), Number(episodeId));
@@ -1145,7 +1146,13 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
       duration_minutes: durationMinutes,
       truncated: parseMeta.truncated || false,
       // 剧本台词覆盖率：前端可据此提示「有 N 句台词没进分镜」
-      dialogue_coverage: dialogueCoverage,
+      dialogue_coverage: selfChecks.dialogueCoverage,
+      // 全能提示词格式自检（骨架修正/无法修复各几条 + 落库后仍不合规几条）
+      universal_segment_format: selfChecks.formatReport,
+      // 剧情点（叙事节拍）覆盖：LLM 语义判定
+      beat_coverage: selfChecks.beatCoverage,
+      // 汇总报告：镜数/时长/台词覆盖/格式自检/节拍覆盖 + 一句话结论，供界面「生成质量报告」展示
+      quality_report: selfChecks.qualityReport,
     };
     taskService.updateTaskResult(db, taskId, resultData);
     log.info('Storyboard generation completed', { task_id: taskId, episode_id: episodeId });
@@ -1161,6 +1168,10 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
           log.warn('Partial storyboards recovered after error, treating as truncated success', {
             task_id: taskId, recovered_count: partialBoards.length, error: err.message,
           });
+          // 同理：走异常分支也不能让自检消失（实测这里曾把一次成功生成降级成空白结果）
+          const errChecks = await runStoryboardSelfChecks(db, log, episodeIdNum, {
+            requestedCount, requestedDuration, styleZh: deriveOpts?.styleZh || '',
+          });
           taskService.updateTaskResult(db, taskId, {
             storyboards: partialBoards,
             total: partialBoards.length,
@@ -1168,6 +1179,10 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
             duration_minutes: Math.ceil((totalDuration + 59) / 60),
             truncated: true,
             error_message: `连接中断（${err.message}），已恢复 ${partialBoards.length} 个分镜`,
+            dialogue_coverage: errChecks.dialogueCoverage,
+            universal_segment_format: errChecks.formatReport,
+            beat_coverage: errChecks.beatCoverage,
+            quality_report: errChecks.qualityReport,
           });
           return;
         }
@@ -1176,6 +1191,119 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
 
     taskService.updateTaskError(db, taskId, (err.message || '生成分镜头失败'));
   }
+}
+
+/**
+ * 生成后的自检 + 质量报告（正常路径与「部分恢复」路径共用）。
+ *
+ * 抽出来的理由：分镜 JSON 解析失败 / 连接中断时会走「部分恢复」分支，那条分支以前直接
+ * 写一份**不含任何自检字段**的结果。实测就踩过：一次生成实际成功了，却因为一处变量作用域
+ * 错误（引用了内层函数里不存在的 scriptContent/storyboardCount）被外层 catch 降级成
+ * 「部分恢复」，结果里既没有 quality_report 也没有台词覆盖 —— 而日志只显示「连接中断」。
+ * 自检不能因为走了哪条分支就消失。
+ *
+ * 本函数**绝不抛异常**：任何一步失败都记 warn 并返回 null 字段，不影响出片。
+ *
+ * @param {object} db
+ * @param {object} log
+ * @param {number} episodeIdNum
+ * @param {{requestedCount?:number|null, requestedDuration?:number|null, styleZh?:string, saveRepaired?:number, saveFatal?:number}} [opts]
+ */
+async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
+  const requestedCount = opts.requestedCount != null ? Number(opts.requestedCount) : null;
+  const requestedDuration = opts.requestedDuration != null ? Number(opts.requestedDuration) : null;
+
+  let storyboards = [];
+  try {
+    storyboards = getStoryboardsForEpisode(db, episodeIdNum);
+  } catch (e) {
+    log.warn('[分镜] 自检读取分镜失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
+    return { dialogueCoverage: null, beatCoverage: null, formatReport: null, qualityReport: null };
+  }
+
+  let scriptContent = '';
+  try {
+    const epRow = db.prepare('SELECT script_content FROM episodes WHERE id = ? AND deleted_at IS NULL').get(episodeIdNum);
+    scriptContent = (epRow && epRow.script_content) || '';
+  } catch (_) { /* 取不到剧本就只能跳过台词/节拍检查 */ }
+
+  // 1) 台词覆盖 —— 确定性字符串比对
+  let dialogueCoverage = null;
+  try {
+    dialogueCoverage = checkDialogueCoverage(scriptContent, storyboards);
+    if (dialogueCoverage && dialogueCoverage.missing.length > 0) {
+      log.warn('[分镜] 剧本台词未全部覆盖 —— 以下台词在全部分镜里都找不到，必要时请增加分镜数重新生成', {
+        episode_id: episodeIdNum,
+        total: dialogueCoverage.total,
+        covered: dialogueCoverage.covered,
+        missing_count: dialogueCoverage.missing.length,
+        missing: dialogueCoverage.missing.map((m) => m.line),
+      });
+    } else if (dialogueCoverage) {
+      log.info('[分镜] 剧本台词覆盖率自检通过', { episode_id: episodeIdNum, total: dialogueCoverage.total });
+    }
+  } catch (e) {
+    log.warn('[分镜] 台词覆盖率自检失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
+  }
+
+  // 2) 剧情点（叙事节拍）覆盖 —— LLM 语义判定。为什么不能用规则见 utils/beatCoverageCheck
+  let beatCoverage = null;
+  try {
+    beatCoverage = await checkBeatCoverage(db, log, scriptContent, storyboards);
+    if (beatCoverage && beatCoverage.missing.length > 0) {
+      log.warn('[分镜] 剧情点未全部覆盖 —— 语义判定认为以下剧本节拍没有落到任何分镜（请人工确认，必要时补镜）', {
+        episode_id: episodeIdNum,
+        total: beatCoverage.total,
+        covered: beatCoverage.covered,
+        missing: beatCoverage.missing.map((m) => m.beat),
+      });
+    } else if (beatCoverage) {
+      log.info('[分镜] 剧情点覆盖检查通过', { episode_id: episodeIdNum, total: beatCoverage.total });
+    }
+  } catch (e) {
+    log.warn('[分镜] 剧情点覆盖检查失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
+  }
+
+  // 3) 格式：以**库里实际存下来的文本**为准做只读复核（任何路径都能算，包括部分恢复）
+  let formatReport = null;
+  try {
+    const stored = summarizeUniversalSegmentFormat(storyboards, { styleZh: opts.styleZh || '' });
+    formatReport = {
+      checked: stored.checked,
+      noncompliant: stored.noncompliant,
+      noncompliant_sample: stored.samples,
+      // 入库时被自动修复/换成兜底的数量由 saveStoryboards 侧提供；部分恢复路径拿不到，记 0
+      repaired: Number(opts.saveRepaired) || 0,
+      fatal: Number(opts.saveFatal) || 0,
+    };
+    if (stored.noncompliant > 0) {
+      log.warn('[分镜] 落库后仍有分镜的全能提示词不合规（格式自检没兜住）', {
+        episode_id: episodeIdNum,
+        noncompliant: stored.noncompliant,
+        checked: stored.checked,
+        sample: stored.samples,
+      });
+    }
+  } catch (e) {
+    log.warn('[分镜] 提示词格式复核失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
+  }
+
+  // 4) 汇总报告
+  let qualityReport = null;
+  try {
+    qualityReport = buildStoryboardQualityReport({
+      storyboards,
+      coverage: dialogueCoverage,
+      beatCoverage,
+      formatReport,
+      requestedCount,
+      requestedDuration,
+    });
+  } catch (e) {
+    log.warn('[分镜] 质量报告生成失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
+  }
+
+  return { dialogueCoverage, beatCoverage, formatReport, qualityReport };
 }
 
 function generateStoryboard(db, log, episodeId, model, style, storyboardCount, videoDuration, aspectRatio, includeNarration, universalOmni) {
@@ -1438,7 +1566,9 @@ ${items}
       systemPrompt,
       wantNarration,
       wantUniversalOmni,
-      clipSec
+      clipSec,
+      storyboardCount,
+      videoDuration
     );
   });
 
@@ -1741,4 +1871,6 @@ module.exports = {
   composeStoryboardVideoPrompt: generateVideoPrompt,
   rebuildVideoPromptForStoryboard,
   splitStoryboardByAudio,
+  /** 供测试在数据库副本上验证入库行为（返回 { saved, formatReport }） */
+  saveStoryboards,
 };

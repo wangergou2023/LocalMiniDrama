@@ -8,6 +8,7 @@ import { getDramaGenerationOptions } from '@/utils/canvasWorkflow'
 import { runImageStep, runVideoStep } from '@/composables/useCanvasWorkflowRunner'
 import { hasStoryboardImage, hasStoryboardVideo } from '@/utils/storyboardMedia'
 import { CANVAS_NODE_STATUS_LABELS } from '@/composables/useCanvasNodeStatus'
+import { parseTaskResult } from '@/utils/taskResult'
 import { estimateVideoDurationSecFromCharLen, STORYBOARD_PLAN_SECONDS } from '@/utils/scriptDurationEstimate'
 
 async function pollTask(taskId, onTick, maxAttempts = 450, interval = 2000) {
@@ -16,7 +17,7 @@ async function pollTask(taskId, onTick, maxAttempts = 450, interval = 2000) {
     await new Promise((r) => setTimeout(r, interval))
     try {
       const t = await taskAPI.get(taskId)
-      if (t.status === 'completed') return { status: 'completed', result: t.result }
+      if (t.status === 'completed') return { status: 'completed', result: parseTaskResult(t.result) }
       if (t.status === 'failed') {
         return { status: 'failed', error: t.error?.message || t.error || '任务失败' }
       }

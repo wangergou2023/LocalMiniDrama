@@ -232,6 +232,30 @@ function repairUniversalSegmentText(text, opts = {}) {
   return { fatal: false, text: fixed, changes };
 }
 
+/**
+ * 以**库里实际存下来的文本**为准，汇总全能提示词格式合规情况。
+ *
+ * 与 saveStoryboards 里那个「入库时修复了几个」的累加器不同：这个是对落库结果做只读
+ * 复核，因此在**任何**路径上都能算（包括分镜 JSON 解析失败后的「部分恢复」路径 ——
+ * 那条路不经过 saveStoryboards，此前完全没有自检）。两者互补：
+ *   · repaired（入库时修复数）说明模型偏离了规范，但已被修正
+ *   · noncompliant（落库后仍不合规数）说明有东西漏过去了，必须处理
+ *
+ * @param {Array<object>} storyboards
+ * @param {{styleZh?: string}} [opts]
+ */
+function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
+  const rows = (Array.isArray(storyboards) ? storyboards : []).filter(
+    (r) => r && r.creation_mode === 'universal'
+  );
+  const samples = [];
+  for (const r of rows) {
+    const v = validateUniversalSegmentText(r.universal_segment_text, opts);
+    if (!v.ok) samples.push({ id: r.id ?? null, title: r.title || '', problems: v.problems });
+  }
+  return { checked: rows.length, noncompliant: samples.length, samples: samples.slice(0, 5) };
+}
+
 module.exports = {
   DEFAULT_LINE3,
   LINE3_NO_SCENE,
@@ -242,4 +266,5 @@ module.exports = {
   buildFallbackUniversalMultiBeatText,
   validateUniversalSegmentText,
   repairUniversalSegmentText,
+  summarizeUniversalSegmentFormat,
 };

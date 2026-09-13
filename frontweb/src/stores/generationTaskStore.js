@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { parseTaskResult } from '@/utils/taskResult'
 import { ref, computed } from 'vue'
 import { taskAPI } from '@/api/task'
 import { imagesAPI } from '@/api/images'
@@ -296,7 +297,7 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
               }
             }
             markDone(key)
-            return resolve({ status: 'completed', result: t.result })
+            return resolve({ status: 'completed', result: parseTaskResult(t.result) })
           }
           if (t.status === 'failed') {
             const errMsg = taskFailMessage(t)

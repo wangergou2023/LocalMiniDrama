@@ -77,6 +77,44 @@ export function useCharacters(deps) {
   const voiceBankList = ref([])
   const voiceBankApplyingId = ref(null)
   const currentVoiceBankChar = ref(null)
+  /** 音色库是否已拉取过：角色卡要显示「设的是哪个音色」，所以初始化也会拉一次 */
+  const voiceBankLoaded = ref(false)
+
+  /**
+   * 拉取内置音色库列表。force=true 时忽略缓存。
+   * @param {{force?: boolean}} [opts]
+   */
+  async function loadVoiceBankList(opts = {}) {
+    if (voiceBankLoaded.value && !opts.force) return voiceBankList.value
+    voiceBankLoading.value = true
+    try {
+      const res = await characterAPI.voiceBankList()
+      voiceBankList.value = res?.data?.voices || res?.voices || []
+      voiceBankLoaded.value = true
+    } catch (e) {
+      // 初始化时静默失败（少个音色名而已）；弹窗里会再试并提示
+      if (opts.force) ElMessage.error(e?.message || '内置音色库加载失败')
+    } finally {
+      voiceBankLoading.value = false
+    }
+    return voiceBankList.value
+  }
+
+  /**
+   * 已设置音色的可读文案，用于角色卡上显示「设的到底是哪一个」。
+   * - 内置音色库：返回 labels.json 里的完整标签，如「云夏 YunXia · 男 · 普通话·可爱」
+   * - 手动上传：返回「自定义上传」
+   * - 列表还没加载完（拿不到标签）：退回显示原始 voice_key，至少能看出是哪个
+   */
+  function voiceLabelFor(char) {
+    const asset = char?.seedance2_voice_asset
+    if (!asset || asset.status !== 'active') return ''
+    const key = String(asset.voice_key || '').trim()
+    if (!key) return '自定义上传'
+    const hit = (voiceBankList.value || []).find((v) => v.key === key)
+    return (hit && (hit.raw || hit.name)) || key
+  }
+
 
   // 按「哪里话（方言/语言）」分组，组内女声在前、男声在后，避免男女混排
   const voiceBankGroups = computed(() => {
@@ -804,15 +842,7 @@ export function useCharacters(deps) {
   async function openVoiceBank(char) {
     currentVoiceBankChar.value = char || null
     voiceBankVisible.value = true
-    voiceBankLoading.value = true
-    try {
-      const res = await characterAPI.voiceBankList()
-      voiceBankList.value = res?.data?.voices || res?.voices || []
-    } catch (e) {
-      ElMessage.error(e?.message || '内置音色库加载失败')
-    } finally {
-      voiceBankLoading.value = false
-    }
+    await loadVoiceBankList({ force: !voiceBankLoaded.value })
   }
 
   // 试听某个内置音色（通过后端 /voice-bank/audio/:key 流式返回 mp3）——注意路由挂在 /api/v1 下，需带前缀
@@ -834,8 +864,10 @@ export function useCharacters(deps) {
     if (!char?.id || !voiceKey) return
     voiceBankApplyingId.value = char.id
     try {
-      const res = await characterAPI.voiceBankApply(char.id, voiceKey)
-      ElMessage.success('已应用内置音色（Seedance 2.0 / MiniMax H3 均生效）')
+      const hit = (voiceBankList.value || []).find((v) => v.key === voiceKey)
+      const label = (hit && (hit.raw || hit.name)) || voiceKey
+      await characterAPI.voiceBankApply(char.id, voiceKey)
+      ElMessage.success('已为「' + (char.name || '角色') + '」设置音色：' + label)
       voiceBankVisible.value = false
       // 重新加载数据，确保 seedance2_voice_asset 更新
       await loadDrama()
@@ -949,6 +981,8 @@ export function useCharacters(deps) {
     closeVoiceBank,
     applyVoiceBank,
     playVoiceBankAudio,
+    loadVoiceBankList,
+    voiceLabelFor,
     playSd2Voice,
     loadCharLibraryList,
     debouncedLoadCharLibrary,

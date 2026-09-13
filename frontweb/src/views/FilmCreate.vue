@@ -528,7 +528,10 @@
                         >
                           更换
                         </el-button>
-                        <span style="font-size:11px;color:#67c23a">音色已设置</span>
+                        <span
+                          style="font-size:11px;color:#67c23a"
+                          :title="'音色文件：' + (char.seedance2_voice_asset?.url || '')"
+                        >音色已设置：{{ voiceLabelFor(char) }}</span>
                       </template>
                       <template v-else>
                         <el-button
@@ -3092,6 +3095,7 @@ const {
   extractIdentityAnchors, clearCharRefImage, onCloseCharDialog, onDeleteCharacter, onGenerateCharacterImage, onSd2CertifyCharacter, onSd2CertifyRefresh, sd2ActionLabel, onSd2PrimaryAction, openCharSd2CertDialog,
   onSd2VoicePrimaryAction, onSd2VoiceReplace, sd2VoiceActionLabel, playSd2Voice,
   openVoiceBank, closeVoiceBank, applyVoiceBank, playVoiceBankAudio,
+  loadVoiceBankList, voiceLabelFor,
   loadCharLibraryList, debouncedLoadCharLibrary, loadDramaAllCharList, debouncedLoadDramaAllCharList,
   onCharLibraryDialogOpen, onCharLibraryTabChange, isCharAddToEpisodeLoading,
   openEditCharLibrary, submitEditCharLibrary,
@@ -3482,24 +3486,36 @@ const exportingStoryboardSheet = ref(false)
 const lastFrameUseFirstLayoutLock = ref(true)
 const gridMode = ref('single') // 序列图模式：single / quad_grid / nine_grid
 
-// ── 剧本长度 → 估算总时长；自动分镜数与项目「每段秒数」(videoClipDuration) 对齐 ──
+// ── 剧本长度 → 估算总时长；自动分镜数按「规划单镜秒数」推算（项目「每段秒数」= 单镜上限，非每镜目标值） ──
 
-/** 用于估算的每段时长（秒），与一键成片处「X秒/段」一致 */
+/** 用于估算的每段时长（秒），与一键成片处「X秒/段」一致；这是**单镜时长上限** */
 function clipSecondsForStoryboardEstimate() {
   const c = Number(videoClipDuration.value)
   return Math.max(2, Math.min(60, Number.isFinite(c) && c > 0 ? c : 5))
 }
 
-/** 由估算总时长与每段秒数得镜数中枢与宽松参考区间（±1 镜） */
+/**
+ * 规划镜数用的「平均单镜秒数」。
+ * 项目「X秒/段」是单镜**上限**（本地 MiniMax H3 单镜最长 362 帧 = 15.08s），不是每镜的目标值：
+ * 若直接用「总时长 ÷ 每段秒数」估镜数，配合「单镜 ≤ 每段」就会把每个镜头都顶到上限（全都 15s）。
+ * 这里按 8 秒平均折算（H3 成本甜点区），单镜时长再由 AI 在 [5.2, 每段秒数] 内按内容浮动。
+ */
+const STORYBOARD_PLAN_SECONDS = 8
+function planSecondsForStoryboardEstimate() {
+  return Math.min(clipSecondsForStoryboardEstimate(), STORYBOARD_PLAN_SECONDS)
+}
+
+/** 由估算总时长与规划单镜秒数得镜数中枢与宽松参考区间（±1 镜） */
 function shotCountEstimateFromDurationSec(sec) {
   const s = Math.max(10, Math.min(600, Math.round(Number(sec) || 0)))
   const clip = clipSecondsForStoryboardEstimate()
-  const ideal = s / clip
+  const plan = planSecondsForStoryboardEstimate()
+  const ideal = s / plan
   const locked = Math.max(1, Math.min(200, Math.round(ideal)))
   const minR = Math.max(1, locked - 1)
   const maxR = Math.min(200, locked + 1)
   const range = minR >= maxR ? { min: locked, max: locked } : { min: minR, max: maxR }
-  return { locked, range, clip }
+  return { locked, range, clip, plan }
 }
 
 /** 由剧本字符数粗估成片总时长（短剧偏长镜）：秒数 = round(10 + (字数/600)×60)，夹在 10–600s */
@@ -3510,15 +3526,15 @@ function estimateVideoDurationSecFromCharLen(charLen) {
   return Math.min(600, Math.max(10, raw))
 }
 
-/** 当前剧本下的估算：总秒数、镜数中枢、镜数区间、采用的每段秒数 */
+/** 当前剧本下的估算：总秒数、镜数中枢、镜数区间、单镜上限、规划单镜秒数 */
 const scriptStoryboardEstimate = computed(() => {
   const script = (scriptContent.value || '').toString().trim()
   const len = script.length
   if (!len) return null
   const sec = estimateVideoDurationSecFromCharLen(len)
   if (sec == null) return null
-  const { locked, range, clip } = shotCountEstimateFromDurationSec(sec)
-  return { sec, locked, range, clip, len }
+  const { locked, range, clip, plan } = shotCountEstimateFromDurationSec(sec)
+  return { sec, locked, range, clip, plan, len }
 })
 
 const scriptEstimateVideoDurationHint = computed(() => {
@@ -3536,16 +3552,14 @@ const scriptEstimateVideoDurationTitle = computed(() => {
 const scriptEstimateStoryboardHint = computed(() => {
   const e = scriptStoryboardEstimate.value
   if (!e) return ''
-  if (e.range && e.range.min !== e.range.max) {
-    return `（约 ${e.locked} 镜，参考 ${e.range.min}–${e.range.max}）`
-  }
-  return `（约 ${e.locked} 镜）`
+  const r = e.range && e.range.min !== e.range.max ? `，参考 ${e.range.min}–${e.range.max}` : ''
+  return `（约 ${e.locked} 镜${r}；单镜约 ${e.plan}s，上限 ${e.clip}s）`
 })
 
 const scriptEstimateStoryboardTitle = computed(() => {
   const e = scriptStoryboardEstimate.value
   if (!e) return ''
-  return `按估算时长 ${e.sec}s ÷ 项目「每段 ${e.clip} 秒」四舍五入粗估约 ${e.locked} 镜；旁注区间为 ±1 镜供参考。切换「X秒/段」会同步改变本估算。`
+  return `按估算时长 ${e.sec}s ÷ 规划单镜 ${e.plan} 秒（= min(项目「每段 ${e.clip} 秒」, ${STORYBOARD_PLAN_SECONDS} 秒平均)）四舍五入粗估约 ${e.locked} 镜；旁注区间为 ±1 镜供参考。项目「每段 ${e.clip} 秒」是单镜**上限**，实际单镜时长由 AI 在 5.2–${e.clip} 秒内按内容浮动，不会每个镜头都写满上限。切换「X秒/段」会同步改变本估算。`
 })
 
 function scriptTextTrimmedForEstimate() {
@@ -3570,7 +3584,7 @@ function getVideoDurationForApi() {
   return estimateVideoDurationSecFromCharLen(len) ?? undefined
 }
 
-/** 请求后端的分镜数量：仅未手动填时按「估算总时长 ÷ 每段秒数」推算，与项目 X秒/段 一致 */
+/** 请求后端的分镜数量：仅未手动填时按「估算总时长 ÷ 规划单镜秒数」推算，与项目 X秒/段（单镜上限）配套 */
 function getStoryboardCountForApi() {
   if (userFilledStoryboardCount()) return Math.round(Number(storyboardCount.value))
   const sec = getVideoDurationForApi()
@@ -8602,6 +8616,8 @@ onMounted(async () => {
   window.addEventListener('keydown', onPreviewKeydown)
   loadPipelineConcurrency()
   applyRouteToStore()
+  // 预取内置音色库：角色卡要显示「已设置的是哪个音色」，不能等打开弹窗才拉
+  loadVoiceBankList()
   // 周期同步运行中的生成任务，让左导航/任务面板实时显示进度（含导演助手 API 新建的任务）
   taskSyncTimer = setInterval(() => {
     if (currentEpisodeId.value) recoverAndSyncEpisodeTasks(currentEpisodeId.value)

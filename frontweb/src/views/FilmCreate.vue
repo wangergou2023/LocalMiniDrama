@@ -6011,15 +6011,34 @@ function getSbLastFrameUrl(sb) {
 }
 
 /** 经典模式视频：首帧 URL（连贯帧可覆盖首帧）+ 可选尾帧 */
+/**
+ * 提交视频时用的首帧 / 尾帧 URL。
+ *
+ * 全能模式（本地 H3 Ref2VA）此前**一律返回空**，于是「尾帧衔接」按钮写好的首帧、
+ * 以及首尾帧模式绑好的尾帧，都送不到后端 —— 后端那条链其实早就接好了
+ * （videoClient 透传 first_frame_url → comfyuiClient 注入 MiniMaxH3AddGuide，
+ * 首帧 frame_idx=0、尾帧 -1，过了 ComfyUI 图校验）。
+ *
+ * 现在的规则：
+ *   · **显式绑定过**就传（尾帧衔接写的 first_frame_image_id / 首尾帧模式绑的 last_frame_image_id）
+ *   · 没绑定则全能模式**不传** —— 关键：不能把「分镜主图」当每镜首帧，否则所有镜头起幅都被钉死
+ *   · 经典模式行为不变（首帧回退到主图，尾帧仅在首尾帧模式开启时传）
+ */
 function sbVideoFirstLastUrls(sb, universal, contiguityFirstFrameUrl) {
-  let first =
-    contiguityFirstFrameUrl ||
-    (universal ? '' : toAbsoluteImageUrl(getSbFirstFrameUrl(sb) || ''))
-  if (!first && !universal) {
-    first = toAbsoluteImageUrl(getSbFirstFrameUrl(sb) || '')
+  const boundFirst = !!(sb && (sb.first_frame_image_id != null || sb.first_frame_image_url || sb.first_frame_local_path))
+  const boundLast = !!(sb && (sb.last_frame_image_id != null || sb.last_frame_image_url || sb.last_frame_local_path))
+  let first = contiguityFirstFrameUrl || undefined
+  if (!first && boundFirst) {
+    const img = getSbFirstImage(sb.id)
+    if (img && (img.image_url || img.local_path)) first = toAbsoluteImageUrl(assetImageUrl(img))
+    else if (sb.first_frame_image_url || sb.first_frame_local_path) {
+      first = toAbsoluteImageUrl(assetImageUrl({ image_url: sb.first_frame_image_url, local_path: sb.first_frame_local_path }))
+    }
   }
-  let last = undefined
-  if (storyboardUseFirstLastFrame.value && !universal) {
+  if (!first && !universal) first = toAbsoluteImageUrl(getSbFirstFrameUrl(sb) || '') || undefined
+  let last
+  if (boundLast) last = toAbsoluteImageUrl(getSbLastFrameUrl(sb) || '') || undefined
+  else if (storyboardUseFirstLastFrame.value && !universal) {
     const lu = getSbLastFrameUrl(sb)
     if (lu) last = toAbsoluteImageUrl(lu)
   }
@@ -7279,8 +7298,8 @@ async function onGenerateSbVideo(sb) {
       storyboard_id: sb.id,
       prompt: adaptPromptForVideoProvider(buildSbVideoPromptForApi(sb, { preferClassicPrompt }), videoCfg?.provider),
       image_url: universalOmniApi ? undefined : ((vFirst || absoluteUrl) || undefined),
-      first_frame_url: universalOmniApi ? undefined : (vFirst || absoluteUrl || undefined),
-      last_frame_url: universalOmniApi ? undefined : vLast,
+      first_frame_url: (vFirst || (universalOmniApi ? undefined : absoluteUrl)) || undefined,
+      last_frame_url: vLast || undefined,
       reference_image_urls: referenceUrls,
       reference_labels: omniLabels,
       reference_audio_urls: sbAudioRefUrls(sb),

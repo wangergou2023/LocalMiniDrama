@@ -3,6 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const { callComfyUIVideoApi } = require("./comfyuiClient");
 const aiConfigService = require('./aiConfigService');
+const { parseDialogueSpeakers } = require('../utils/h3DialogueMark');
+const { ensureEnglishSegmentText } = require('./segmentTextI18nService');
 let sharp; try { sharp = require('sharp'); } catch (_) { sharp = null; }
 const { uploadLocalImageToProxy, uploadToImageProxy } = require('./uploadService');
 const imageClient = require('./imageClient');
@@ -3359,13 +3361,15 @@ function collectActiveCharacterVoiceRefs(db, dramaId) {
   if (!db || !dramaId) return map;
   try {
     const rows = db.prepare(
-      'SELECT id, seedance2_voice_asset FROM characters WHERE drama_id = ? AND deleted_at IS NULL'
+      'SELECT id, name, seedance2_voice_asset FROM characters WHERE drama_id = ? AND deleted_at IS NULL'
     ).all(Number(dramaId));
     for (const row of rows) {
       const asset = parseJsonColumnForVideo(row.seedance2_voice_asset);
       if (!asset || String(asset.status || '').toLowerCase() !== 'active') continue;
       const url = String(asset.url || '').trim();
-      if (url) map.set(Number(row.id), url);
+      // 值为 { url, name }：name 供 H3 的 <Audio j> 说明行点名「这是谁的音色」，
+      // 否则模型无法把参考音频对应到具体角色（会照着参考音频把开头「续读」出来）。
+      if (url) map.set(Number(row.id), { url, name: String(row.name || '').trim() });
     }
   } catch (_) {}
   return map;
@@ -3766,43 +3770,75 @@ async function callVideoApi(db, log, opts) {
   const isSeedance2 =
     isSeedance2FamilyModel(model) || protocol === 'volcengine_omni';
   const isMinimaxH3 = protocol === 'minimax_h3' || protocol === 'comfyui' || (protocol === 'comfyui' && isMinimaxH3Model(model));
+  // 台词说话人顺序（供 H3 渲染阶段给台词加 (Sx) 编号与 <d> 标记）。
+  // 与音色注入无关地独立解析：即使本镜没有可用音色，台词标记本身也有价值。
+  if (isMinimaxH3 && opts.storyboard_id && !opts.dialogue_speakers) {
+    try {
+      const sbDlg = db.prepare('SELECT dialogue FROM storyboards WHERE id = ? AND deleted_at IS NULL')
+        .get(Number(opts.storyboard_id));
+      const spk = parseDialogueSpeakers(sbDlg && sbDlg.dialogue);
+      if (spk.length) {
+        opts.dialogue_speakers = spk;
+        log.info('[视频][台词] 解析出说话人顺序，将标 (Sx) 与 <d>', {
+          video_gen_id,
+          storyboard_id: opts.storyboard_id,
+          speakers: spk,
+        });
+      }
+    } catch (_) {}
+  }
+
   if ((isSeedance2 || isMinimaxH3) && db && opts.drama_id && !opts.voice_reference_url) {
     const voiceMap = collectActiveCharacterVoiceRefs(db, opts.drama_id);
     if (voiceMap.size > 0) {
-      // 优先使用分镜显式指定的角色（如果有），否则取第一个
-      let chosen = null;
-      if (opts.storyboard_id) {
-        try {
-          const sbRow = db.prepare('SELECT characters FROM storyboards WHERE id = ?').get(opts.storyboard_id);
-          if (sbRow && sbRow.characters) {
-            const charList = typeof sbRow.characters === 'string' ? JSON.parse(sbRow.characters) : sbRow.characters;
-            const ids = Array.isArray(charList) ? charList.map(c => Number(c?.id || c)).filter(Boolean) : [];
-            for (const cid of ids) {
-              if (voiceMap.has(cid)) { chosen = voiceMap.get(cid); break; }
-            }
-          }
-        } catch (_) {}
+      // 只绑「本镜真正开口、且名字能对上角色」的那条音色。
+      //
+      // 原来的策略是「分镜角色列表里第一个有音色的」，不看谁在说话，结果错误不小：
+      //   镜 9 老妇哭喊 —— 说话人是「老妇人」，角色表里没这个名字，于是退回绑了「悟空」；
+      //   镜 10 老翁现身 —— 同理也是悟空。等于把悟空的音色配给了老妇/老翁的台词。
+      //
+      // 而这类名字对不上是有意义的：白骨精化身为村姑 / 老妇人 / 老翁时，化身的声音本就
+      // 应该和本体不同，绑白骨精（更别提退回绑悟空）反而错。所以**对不上就不绑**。
+      // 同理，无对白的镜头也不绑 —— 只需要环境音，音色参考没有意义。
+      //
+      // 另外，H3 把参考音频当作「目标音频的前缀」注入（见 comfyuiClient 里
+      // H3_VOICE_REF_SKIP_HEAD_SECONDS 的注释），多余的参考音频只会带来副作用。
+      let chosenId = null;
+      const speakers = Array.isArray(opts.dialogue_speakers) ? opts.dialogue_speakers : [];
+      if (speakers.length) {
+        const idByName = new Map();
+        for (const [cid, v] of voiceMap) {
+          const nm = String(v.name || '').trim();
+          if (nm && !idByName.has(nm)) idByName.set(nm, cid);
+        }
+        for (const sp of speakers) {
+          const hit = idByName.get(String(sp || '').trim());
+          if (hit != null) { chosenId = hit; break; }
+        }
       }
-      if (!chosen) {
-        // 取 Map 中的第一个
-        chosen = voiceMap.values().next().value;
-      }
-      if (chosen) {
-        opts.voice_reference_url = chosen;
+      if (chosenId != null && voiceMap.has(chosenId)) {
+        const chosen = voiceMap.get(chosenId);
+        opts.voice_reference_url = chosen.url;
+        opts.voice_reference_name = chosen.name || '';
         log.info('[视频][音色] 自动注入角色音色参考（来自角色 seedance2_voice_asset）', {
           video_gen_id,
           storyboard_id: opts.storyboard_id,
-          voice_ref_url: String(chosen).slice(0, 100)
+          character_id: chosenId,
+          character_name: chosen.name || '',
+          voice_ref_url: String(chosen.url).slice(0, 100)
         });
       } else {
-        log.info('[视频][SD2][全能] 检测到活跃音色参考但未匹配到当前分镜角色', {
+        log.info('[视频][音色] 本镜不绑音色参考（说话人对不上角色，或本镜无对白）', {
           video_gen_id,
           storyboard_id: opts.storyboard_id,
-          available_voice_char_ids: Array.from(voiceMap.keys())
+          speakers,
+          available_voice_characters: Array.from(voiceMap.values()).map((v) => v.name),
         });
       }
     } else {
-      log.info('[视频][SD2][全能] Seedance 2.0 模型但本剧暂无 active 角色音色参考', { video_gen_id, drama_id: opts.drama_id });
+      log.info('[视频][音色] 本剧暂无 active 角色音色参考（角色编辑页「音色库」可绑定）', {
+        video_gen_id, drama_id: opts.drama_id, is_h3: isMinimaxH3, is_seedance2: isSeedance2,
+      });
       if (isMinimaxH3 && Array.isArray(opts.reference_urls) && opts.reference_urls.length > 0) {
         const narratorRef = await resolveDefaultNarratorVoiceReferenceUrl(db, log, opts.storage_local_path, video_gen_id);
         if (narratorRef && !opts.voice_reference_url) {
@@ -3826,14 +3862,37 @@ async function callVideoApi(db, log, opts) {
   });
 
   if (protocol === 'comfyui') {
+    // 本地 H3 路径：正文改用英文版（对白仍以中文留在 <d>[Chinese] …</d> 内）。
+    //
+    // 这不是「偏好英文」，而是 <d> 能生效的机制 —— 实测（镜 3，同 seed/参考图/参考音频）：
+    //   中文正文 + 裸引号台词 → 模型把 <d> 之后的描述也念出来，且角色嘴不动（当成旁白）
+    //   英文正文 + <d>[Chinese] 台词</d> → 台词正确、无多余语音、嘴部随台词开合
+    // 语言差异本身就是「描述」与「台词」的分界线。
+    //
+    // 中文原文仍存在 storyboards.universal_segment_text，编辑器里照常可读；
+    // 英文版缓存在 universal_segment_text_en，只需翻译一次。失败则回退中文，不挡出片。
+    let comfyPrompt = prompt;
+    if (db && opts.storyboard_id) {
+      try {
+        const en = await ensureEnglishSegmentText(db, log, opts.storyboard_id, prompt);
+        if (en) comfyPrompt = en;
+      } catch (e) {
+        log.warn('[视频][英译] 取得英文正文失败，回退中文正文', {
+          video_gen_id, storyboard_id: opts.storyboard_id, error: e.message,
+        });
+      }
+    }
     return callComfyUIVideoApi(config, log, {
-      prompt,
+      prompt: comfyPrompt,
       model,
       image_url: opts.image_url || opts.first_frame_url,
       reference_image_urls: opts.reference_urls,
       reference_labels: opts.reference_labels,
       reference_audio_urls: opts.reference_audio_urls,
+      reference_audio_names: opts.reference_audio_names,
       voice_reference_url: opts.voice_reference_url,
+      voice_reference_name: opts.voice_reference_name,
+      dialogue_speakers: opts.dialogue_speakers,
       aspect_ratio,
       duration: opts.duration,
       files_base_url: opts.files_base_url,
@@ -4554,6 +4613,7 @@ async function pollVideoTask(db, log, videoGenId, taskId, config, maxAttempts = 
 module.exports = {
   getDefaultVideoConfig,
   callVideoApi,
+  collectActiveCharacterVoiceRefs,
   pollVideoTask,
   normalizeAspectRatioForApi,
   isPlausibleHttpVideoUrl,

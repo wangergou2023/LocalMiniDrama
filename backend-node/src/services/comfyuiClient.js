@@ -6,6 +6,139 @@ const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { markDialogue } = require('../utils/h3DialogueMark');
+const { fixLegacySegmentText } = require('../utils/segmentTextNormalize');
+
+/**
+ * H3 音色参考音频的裁剪上限（秒）。
+ *
+ * 内置音色库（backend-node/src/assets/voice-bank/voices/）那 14 个 mp3 全部 13.7~21.2 秒，
+ * 中位 15.3 秒 —— 那是一整段带内容、带节奏、带情绪的完整念白，不是「音色样本」。
+ *
+ * H3 官方规范把 `<Audio N>` 定位成 voice-timbre reference，并在 §5.4 明确警告：
+ *   "When only timbre, rhythm, emotion, or delivery is referenced,
+ *    do not carry the original dialogue from the reference audio into the target video."
+ * 参考越长，原始台词/语速/情绪越容易漏进成片；而我们的目标分镜只有 6~10 秒，
+ * 15 秒的参考比目标还长，参考关系是倒挂的。音色克隆惯例是 3~5 秒，这里取 4 秒。
+ *
+ * 注：裁剪对速度几乎没有收益（15 秒 ≈ 1204 token，占整条 packed 序列约 4%，
+ *     而 7 张参考图合计约 3570 token），纯属语义层面的修正。
+ */
+const H3_VOICE_REF_MAX_SECONDS = 4;
+
+/**
+ * 音色参考在保留窗口之前额外丢掉的秒数（去掉开头静音之后再丢）。
+ *
+ * 为什么需要它 —— 从 ComfyUI 的 H3 模型实现里找到了「参考音频被续读」的根因：
+ *   comfy/ldm/minimax/model.py
+ *     def _ref_t_span(blk):
+ *         # time-axis span a reference block occupies AHEAD OF THE TARGET STREAMS
+ *         if kind == "audio": return float(blk["ref_audio_t"])
+ *   …
+ *     pos.append(_audio_grid(cursor, rt, *target_audio_w))   # 参考音频排在时间轴 cursor 处
+ *     cursor += float(rt)
+ *     pos.append(_audio_grid(cursor, audio_t, *target_audio_w))  # 目标音频紧接其后
+ *
+ * 也就是说：参考音频与目标音频位于**同一条连续时间轴**上，参考在前、目标紧随其后，
+ * 且参考部分以 frozen conditioning 注入（audio_update=False）。模型被训练成「接着参考往下说」。
+ * 这是位置/结构层面的设计，不是提示词没写清楚 —— 实测三种提示词写法
+ * （泛泛的 <Audio> 说明行 / 点名角色+禁止复述 / 再加 <d> 与 (Sx) 编号）都没能去掉
+ * 开头多出来的那段语音（用户听到的是参考音频开头的「你好」）。
+ *
+ * 所以只能从参考音频本身下手：把开头那段有辨识度的内容丢掉，让前缀的结尾落在句子中间，
+ * 模型要继续的东西就变成了目标台词。
+ */
+const H3_VOICE_REF_SKIP_HEAD_SECONDS = 1.0;
+
+/** 用 ffprobe 读取媒体时长（秒）；失败返回 null */
+function probeMediaDuration(filePath, log) {
+  try {
+    const { getFfprobePath } = require('../utils/ffmpegPath');
+    const { spawnSync } = require('child_process');
+    const r = spawnSync(
+      getFfprobePath(),
+      ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', filePath],
+      { encoding: 'utf8' }
+    );
+    if (r.status !== 0) return null;
+    const d = Number(String(r.stdout || '').trim());
+    return Number.isFinite(d) && d > 0 ? d : null;
+  } catch (e) {
+    if (log) log.warn('[ComfyUI] ffprobe 读取时长失败: ' + e.message);
+    return null;
+  }
+}
+
+/**
+ * 把过长的音色参考裁到 maxSeconds。
+ *
+ * - 先去掉开头静音（音色样本里的空白没有信息量，还会占掉裁剪预算），再截前 maxSeconds
+ * - 统一输出 32kHz / 立体声 / s16le WAV：H3 audio VAE 工作在 32kHz，
+ *   且 `_encode_ref_audio` 按 [B, 32, ch=2, T] 编码，单声道源显式补成双声道更稳
+ * - 全程 best-effort：ffprobe/ffmpeg 缺失、解码失败等情况一律保留原文件并告警，
+ *   绝不因为裁剪失败而让整条视频生成挂掉
+ *
+ * @returns {Promise<{path:string, changed:boolean, from?:number, to?:number}>}
+ */
+function trimVoiceReference(audioPath, log, maxSeconds = H3_VOICE_REF_MAX_SECONDS, skipSeconds = H3_VOICE_REF_SKIP_HEAD_SECONDS) {
+  const keep = Number(maxSeconds);
+  if (!Number.isFinite(keep) || keep <= 0) return { path: audioPath, changed: false };
+  const origDuration = probeMediaDuration(audioPath, log);
+  if (origDuration == null) {
+    log.warn('[ComfyUI] 音色参考时长未知，跳过多余裁剪: ' + path.basename(audioPath));
+    return { path: audioPath, changed: false };
+  }
+  // 源时长不足以「跳过 + 保留」时，退化为不跳过，避免把参考裁成空
+  const skip = origDuration > keep + (Number(skipSeconds) || 0) + 0.3 ? (Number(skipSeconds) || 0) : 0;
+  if (origDuration <= keep + 0.05) return { path: audioPath, changed: false, from: origDuration };
+
+  const outPath = audioPath.replace(/\.[^.]+$/, '') + '_trim.wav';
+  try {
+    const { getFfmpegPath } = require('../utils/ffmpegPath');
+    const { spawnSync } = require('child_process');
+    // 先用 silenceremove 去掉开头静音，再用 atrim 丢掉带辨识度的开头（见 SKIP_HEAD 注释），
+    // 最后 asetpts 重置时间戳（否则 atrim 后时间轴仍从 skip 处起算，-t 会截错）。
+    const skipHead = skip;   // 见上方「源时长不足则退化」的判断
+    const filter = skipHead > 0
+      ? `silenceremove=start_periods=1:start_silence=0.05:start_threshold=-45dB,` +
+        `atrim=start=${skipHead},asetpts=N/SR/TB`
+      : 'silenceremove=start_periods=1:start_silence=0.05:start_threshold=-45dB';
+    const r = spawnSync(
+      getFfmpegPath(),
+      [
+        '-y', '-i', audioPath,
+        '-af', filter,
+        '-t', String(keep),
+        '-ar', '32000', '-ac', '2', '-c:a', 'pcm_s16le',
+        outPath,
+      ],
+      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }
+    );
+    if (r.status !== 0 || !fs.existsSync(outPath)) {
+      log.warn('[ComfyUI] 音色参考裁剪失败，保留原文件', {
+        file: path.basename(audioPath),
+        stderr: (r.stderr || '').slice(-400),
+      });
+      return { path: audioPath, changed: false, from: origDuration };
+    }
+    // 裁出来的新文件为 0 字节/极短时不替换（例如源文件几乎全是静音）
+    const newDuration = probeMediaDuration(outPath, log);
+    if (newDuration == null || newDuration < 0.3) {
+      log.warn('[ComfyUI] 音色参考裁剪结果过短，保留原文件', {
+        file: path.basename(audioPath),
+        trimmed_seconds: newDuration,
+      });
+      try { fs.unlinkSync(outPath); } catch (_) {}
+      return { path: audioPath, changed: false, from: origDuration };
+    }
+    try { fs.unlinkSync(audioPath); } catch (_) {}
+    return { path: outPath, changed: true, from: origDuration, to: newDuration };
+  } catch (e) {
+    log.warn('[ComfyUI] 音色参考裁剪异常，保留原文件: ' + e.message);
+    try { if (fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch (_) {}
+    return { path: audioPath, changed: false, from: origDuration };
+  }
+}
 
 function parseSize(size) {
   if (!size) return { w: 1024, h: 1024 };
@@ -205,7 +338,14 @@ async function prepareReferenceAudios(referenceUrls, comfyuiInputDir, log, stora
         }
       }
       log.info('[ComfyUI] 参考音频 ' + (i + 1) + '/' + referenceUrls.length + ' 已就绪 (' + via + '): ' + String(ref).slice(0, 120) + ' -> ' + name);
-      filenames.push(name);
+      // H3 音色参考裁到 4 秒（见 H3_VOICE_REF_MAX_SECONDS 注释）。非 H3 路径不经过本函数。
+      const trimmed = trimVoiceReference(destPath, log);
+      const finalName = trimmed.changed ? path.basename(trimmed.path) : name;
+      if (trimmed.changed) {
+        log.info('[ComfyUI] 音色参考已裁剪 ' + trimmed.from.toFixed(2) + 's -> ' + trimmed.to.toFixed(2) + 's'
+          + (H3_VOICE_REF_SKIP_HEAD_SECONDS > 0 ? '（另跳过开头 ' + H3_VOICE_REF_SKIP_HEAD_SECONDS + 's）' : '') + ': ' + finalName);
+      }
+      filenames.push(finalName);
       srcIndices.push(i);
     } catch (e) {
       log.warn('[ComfyUI] 参考音频 ' + (i + 1) + '/' + referenceUrls.length + ' 处理失败: ' + String(ref).slice(0, 120) + ' err=' + e.message);
@@ -543,7 +683,7 @@ function hasH3ReferenceNode(wf) {
  *  - 无 labels：每张参考图一个 LoadImage，逐张切槽（最多 9 张，节点 Autogrow 上限）。
  * 就地修改 apiPrompt，返回说明头（可为空串）。
  */
-function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles) {
+function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles, audioLabels, dialogueSpeakers, shotSeconds, log) {
   let h3Id = null;
   for (const [nid, node] of Object.entries(apiPrompt)) {
     if (node && node.class_type === 'MiniMaxH3ReferenceToVideo') { h3Id = nid; break; }
@@ -568,7 +708,24 @@ function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles) 
     String(s || '')
       .replace(/@图片\s*(\d+)/g, '<Picture $1>')
       .replace(/参考图\s*(\d+)/g, '<Picture $1>');
-  const boundPrompt = toPictureTags(promptText);
+
+  // 历史遗留措辞修正抽到 utils/segmentTextNormalize.js 共用（英译前置步骤也要用，且必须在英译之前跑）
+  let boundPrompt = markDialogue(fixLegacySegmentText(toPictureTags(promptText)), dialogueSpeakers);
+
+  // 说话人 → (Sx) 编号表：供下面 <Audio j> 说明行把音轨绑到具体说话人
+  const speakerIds = new Map();
+  for (const n of (Array.isArray(dialogueSpeakers) ? dialogueSpeakers : [])) {
+    const name = String(n || '').trim();
+    if (name && !speakerIds.has(name)) speakerIds.set(name, speakerIds.size + 1);
+  }
+
+  // 说明头语言跟随正文：
+  // 正文已是英文（英译成功）时，说明头也走英文。原因是实测发现「谈论语音」的文字最容易被
+  // 当成台词念出来 —— 中文的 <Audio 1> 说明行里带「只/严禁」这类限制性措辞，
+  // 在中文正文那批渲染里疑似被朗读（用户听到「限制了步数」）。正文英文时不要再留中文说明。
+  // 判定时先剥掉 <d> 块，因为对白本来就该保留中文。
+  const bodyWithoutDialogue = String(promptText || '').replace(/<d>[\s\S]*?<\/d>/g, '');
+  const useEnHeader = !!bodyWithoutDialogue.trim() && !/[\u4e00-\u9fa5]/.test(bodyWithoutDialogue);
 
   // 逐张：每图一个 LoadImage，直接接 ref_image_0..N（最多 9 张），不拼图
   const addNodes = {};
@@ -583,35 +740,83 @@ function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles) 
     const name = nameMatch ? nameMatch[1] : '';
     const picNum = i + 1;
     let desc;
-    if (/scene background|场景|scene/i.test(lbl)) {
-      desc = '<Picture ' + picNum + '>：场景环境参考（注意：该图为参考，可能是多视角/宫格拼图——只取其中统一的空间、光线与氛围语义，禁止照搬其分格/取景/并列布局）';
-    } else if (/character appearance|角色|character/i.test(lbl)) {
-      desc = '<Picture ' + picNum + '>：角色「' + (name || '角色' + picNum) + '」外貌参考（若该图为同一人物多角度/四视图合成图，仅锁定其长相、发型、服装；成片取单一自然镜头，禁止复现其多视图/拼图布局）';
+    if (useEnHeader) {
+      if (/scene background|场景|scene/i.test(lbl)) {
+        desc = '<Picture ' + picNum + '>: scene and environment reference (the image may be a multi-view sheet or a multi-panel collage — extract only the unified space, lighting and atmosphere; do not reproduce its panels or side-by-side layout in the final shot)';
+      } else if (/character appearance|角色|character/i.test(lbl)) {
+        desc = '<Picture ' + picNum + '>: appearance reference for the character "' + (name || ('Character ' + picNum)) + '" (if the image is a multi-view turnaround, keep only the face, hairstyle and costume; the finished shot must be one single natural camera view)';
+      } else {
+        desc = '<Picture ' + picNum + '>: appearance reference for the prop "' + (name || ('Prop ' + picNum)) + '" (if it is a multi-angle or composite image, keep only the prop\'s exterior shape)';
+      }
     } else {
-      desc = '<Picture ' + picNum + '>：道具「' + (name || '物品' + picNum) + '」外观参考（若为多角度/合成图，仅锁定道具外形）';
+      if (/scene background|场景|scene/i.test(lbl)) {
+        desc = '<Picture ' + picNum + '>：场景环境参考（注意：该图为参考，可能是多视角/宫格拼图——只取其中统一的空间、光线与氛围语义，禁止照搬其分格/取景/并列布局）';
+      } else if (/character appearance|角色|character/i.test(lbl)) {
+        desc = '<Picture ' + picNum + '>：角色「' + (name || '角色' + picNum) + '」外貌参考（若该图为同一人物多角度/四视图合成图，仅锁定其长相、发型、服装；成片取单一自然镜头，禁止复现其多视图/拼图布局）';
+      } else {
+        desc = '<Picture ' + picNum + '>：道具「' + (name || '物品' + picNum) + '」外观参考（若为多角度/合成图，仅锁定道具外形）';
+      }
     }
     headerLines.push(desc);
   }
 
   // 参考音频：每段独立接 ref_audio_0..N（最多 3 段），<Audio j> 编号从 1 起
+  //
+  // 措辞很关键。旧文案是「参考音频片段（用作生成音频的音色/节奏参考，按 <Audio j> 标签引用）」，
+  // 实测会导致模型把参考音频的开头「续读」出来（镜 3 用户听到参考音频开头的「你好」）。
+  // 官方规范 §5.4：「When only timbre … is referenced, do not carry the original dialogue
+  // from the reference audio into the target video.」
+  // 所以这里：① 指明是哪个角色的音色 ② 显式禁止复述内容 ③ 语言跟随正文。
+  // 另外说明行里**不能出现字面量 <d>**（special token，会造成开闭标签不平衡）。
   const audioList = (Array.isArray(audioFiles) ? audioFiles : []).filter(Boolean);
   const audioCap = Math.min(audioList.length, 3);
   for (let j = 0; j < audioCap; j++) {
     const k = 'h3_ad_' + j;
     addNodes[k] = { class_type: 'LoadAudio', inputs: { audio: audioList[j] } };
     h3.inputs['ref_audios.ref_audio_' + j] = [k, 0];
-    headerLines.push('<Audio ' + (j + 1) + '>：参考音频片段（用作生成音频的音色/节奏参考，按 <Audio j> 标签引用）');
+    const who = String((Array.isArray(audioLabels) ? audioLabels[j] : '') || '').trim();
+    const sid = who && speakerIds.has(who) ? speakerIds.get(who) : 0;
+    if (useEnHeader) {
+      // 极简陈述句，照官方规范 <Audio N> 的写法。
+      // 不要在这里写「只能/严禁/见下方」这类关于说话的说明 —— 实测这类文字会被模型念出来
+      // （用户两次听到 <Audio 1> 说明行被朗读：一次疑似「限制了步数」、一次「本…下方」）。
+      const subj = who
+        ? 'voice-timbre reference for the character "' + who + '"' + (sid ? ' (S' + sid + ')' : '')
+        : 'voice-timbre reference';
+      headerLines.push('<Audio ' + (j + 1) + '>: ' + subj + '.');
+    } else {
+      const subject = who
+        ? '角色「' + who + '」' + (sid ? ' (S' + sid + ')' : '') + ' 的音色参考'
+        : '音色参考';
+      headerLines.push('<Audio ' + (j + 1) + '>：' + subject + '。');
+    }
   }
 
   Object.assign(apiPrompt, addNodes);
 
-  const header = headerLines.length ? headerLines.join('\n') + '\n\n生成一段连续、完整、单一镜头的画面（禁止拼贴、分屏、宫格、多画面并列、复刻参考图的网格/多视图布局）：\n' : '';
+  const headerLead = useEnHeader
+    ? '\n\nGenerate one continuous, complete single take (no collage, no split screen, no grid, no side-by-side panels; do not reproduce the reference images\' grid or multi-view layout):\n'
+    : '\n\n生成一段连续、完整、单一镜头的画面（禁止拼贴、分屏、宫格、多画面并列、复刻参考图的网格/多视图布局）：\n';
+  const header = headerLines.length ? headerLines.join('\n') + headerLead : '';
   if (header && promptText !== undefined) h3.inputs.prompt = header + boundPrompt;
+  else if (promptText !== undefined) h3.inputs.prompt = boundPrompt;
+
+  // 守卫：<d>/</d> 必须配平。它们是词表 special token（MINIMAX_EXTRA_TOKENS），
+  // 说明性文字里出现孤立标签会干扰模型判断哪些文本是台词，而且这种错误此前是静默进模型的。
+  const finalPrompt = String(h3.inputs.prompt || '');
+  const openD = (finalPrompt.match(/<d>/g) || []).length;
+  const closeD = (finalPrompt.match(/<\/d>/g) || []).length;
+  if (openD !== closeD && log && typeof log.warn === 'function') {
+    log.warn('[ComfyUI/H3] prompt 里 <d> 与 </d> 数量不平衡，请检查说明性文字是否混入了字面标签', {
+      open_d: openD, close_d: closeD,
+    });
+  }
   return header;
 }
 
 async function callComfyUIVideoApi(config, log, opts) {
-  const { prompt, model, image_url, video_gen_id, files_base_url, storage_local_path, reference_image_urls, reference_labels, reference_audio_urls, voice_reference_url } = opts;
+  const { prompt, model, image_url, video_gen_id, files_base_url, storage_local_path, reference_image_urls, reference_labels, reference_audio_urls, voice_reference_url, voice_reference_name, dialogue_speakers } = opts;
+  const reference_audio_names = opts.reference_audio_names;
   const baseUrl = (config.base_url || "http://127.0.0.1:8188").replace(/\/$/, "");
 
   const fs = require("fs");
@@ -631,10 +836,10 @@ async function callComfyUIVideoApi(config, log, opts) {
   }
 
   // fps=24。帧数一律按 MiniMax H3 的 17k+5 网格对齐
-  // （官方已验证范围约 124~362 帧 ≈ 5.2~15.1s，超出只告警不截断）
+  // （官方已验证范围约 124~362 帧 ≈ 5.2~15.1s；超上限在下面 isH3Ref 分支里夹取）
   const fps = 24;
   const videoDuration = Number(opts.duration) || 5;
-  const frames = snapToH3FrameGrid(videoDuration * fps);
+  let frames = snapToH3FrameGrid(videoDuration * fps);
 
   // 分辨率：与官方 ResolutionSelector 同构（comfy_extras/nodes_resolution.py:82-85）——
   //   total = megapixels * 1024 * 1024（官方用的是二进制 MP，不是 1e6），再按 multiple=32 取整。
@@ -671,23 +876,33 @@ async function callComfyUIVideoApi(config, log, opts) {
     const seed = Math.floor(Math.random() * 9007199254740991);
     const isH3Ref = hasH3ReferenceNode(wf);
 
+    // H3 的 `length` 训练范围是 124~362 帧（节点 tooltip 原文 "trained range is ~124-362"）。
+    // 此前超限只告警不拦截，若时长被手填成 16s→384 帧 会直接送进模型，白跑一次几十分钟的渲染。
+    // 这里夹到 362 帧（=15.08s）并重新对齐 17k+5 网格；362 % 17 === 5，本来就是合法网格点。
+    const H3_MAX_FRAMES = 362;
+    if (isH3Ref && frames > H3_MAX_FRAMES) {
+      const clamped = snapToH3FrameGrid(H3_MAX_FRAMES);
+      log.warn('[视频] 帧数超出 H3 已验证范围（124~362 帧），已夹到上限', {
+        requested_duration: videoDuration,
+        requested_frames: frames,
+        clamped_frames: clamped,
+        clamped_seconds: Number((clamped / fps).toFixed(2)),
+      });
+      frames = clamped;
+    }
+
     log.info('[ComfyUI/Video/' + workflowFile + '] Starting (dynamic)', {
       frames,
       size: vidW + 'x' + vidH,
       megapixels: VIDEO_MEGAPIXELS,
       is_h3: isH3Ref,
     });
-    if (isH3Ref && frames > 362) {
-      log.warn('[视频] 帧数超出 H3 已验证范围（约 124~362 帧）', {
-        frames,
-        seconds: Number((frames / fps).toFixed(2)),
-      });
-    }
 
     // H3 参考生视频：准备多张参考图（场景/角色/道具）+ 标签；非 H3 工作流用首帧图
     let refImages;
     let refLabelsArr = [];
     let refAudios = [];
+    let voiceRefLabels = [];
     if (isH3Ref) {
       const rawUrls = Array.isArray(reference_image_urls) ? reference_image_urls.filter(Boolean) : [];
       const rawLabels = Array.isArray(reference_labels) ? reference_labels : [];
@@ -709,22 +924,41 @@ async function callComfyUIVideoApi(config, log, opts) {
       // 参考音频：准备进 input 目录，逐段接 ref_audio_0..N。
       // voice_reference_url（角色音色参考 / 旁白 TTS）也作为一段参考音频并入，让本地 H3 能用到音色。
       const audioUrls = (Array.isArray(reference_audio_urls) ? reference_audio_urls.filter(Boolean) : []);
+      // 与 audioUrls 下标对齐的角色名，供 <Audio j> 说明行点名「这是谁的音色」
+      const audioNames = (Array.isArray(reference_audio_names) ? reference_audio_names.slice() : []);
       const voiceUrl = voice_reference_url ? String(voice_reference_url).trim() : '';
-      if (voiceUrl && !audioUrls.includes(voiceUrl)) audioUrls.unshift(voiceUrl);
+      if (voiceUrl && !audioUrls.includes(voiceUrl)) {
+        audioUrls.unshift(voiceUrl);
+        audioNames.unshift(voice_reference_name ? String(voice_reference_name) : '');
+      }
       if (audioUrls.length) {
         refAudios = await prepareReferenceAudios(audioUrls, inputDir, log, storage_local_path);
+        voiceRefLabels = audioNames;
       }
     }
 
-    const { prompt: apiPrompt } = prepareWorkflow(wf, {
+    const { prompt: apiPrompt, resolutionInjections } = prepareWorkflow(wf, {
       prompt: prompt || '',
       width: vidW,
       height: vidH,
+      megapixels: VIDEO_MEGAPIXELS,
+      aspectRatio: ratio,
       seed,
       videoFrames: frames,
       videoFps: fps,
       refImages: isH3Ref ? undefined : refImages,
     });
+
+    // 分辨率对工作流的干预程度：semantic = 只改了上游分辨率节点的 megapixels（工作流的
+    // aspect_ratio/multiple 等仍然生效）；direct = 没有语义上游，降级为覆盖 width/height。
+    if (resolutionInjections.length) {
+      const semantic = resolutionInjections.every((s) => s.endsWith(':semantic'));
+      log.info('[ComfyUI/Video] 分辨率注入 ' + (semantic ? 'semantic' : 'direct'), {
+        nodes: resolutionInjections,
+        megapixels: VIDEO_MEGAPIXELS,
+        aspect_ratio: ratio,
+      });
+    }
 
     // turbo 加速：按「AI 配置 → 视频服务 → turbo 加速」覆盖工作流内的开关。
     // settings.turbo 未设置时完全不动工作流（保持文件里的原值）；true/false 则强制覆盖。
@@ -742,7 +976,7 @@ async function callComfyUIVideoApi(config, log, opts) {
 
     // H3 参考生视频：分组/拼图/说明头/动态槽位已由 applyH3RefsToApi 处理，跳过首帧图覆盖
     if (isH3Ref) {
-      const header = applyH3RefsToApi(apiPrompt, refImages || [], refLabelsArr, prompt || '', refAudios);
+      const header = applyH3RefsToApi(apiPrompt, refImages || [], refLabelsArr, prompt || '', refAudios, voiceRefLabels, dialogue_speakers, frames / fps, log);
       log.info("[ComfyUI/H3] 参考生视频，参考图 " + (refImages ? refImages.length : 0) + " 张，参考音频 " + (refAudios ? refAudios.length : 0) + " 段" + (header ? '（含说明头）' : ''));
     } else {
       // 非 H3 工作流的通用注入（RandomNoise / LoadImage / CLIPTextEncode 对任何工作流都适用）

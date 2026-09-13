@@ -2825,6 +2825,12 @@
             <div v-for="(r, i) in qualityReport.reasons" :key="i" style="line-height: 1.6">{{ r }}</div>
           </template>
         </el-alert>
+        <div
+          v-if="qualityReport.stage_hint"
+          style="margin-top: 8px; font-size: 12px; color: #909399; line-height: 1.6"
+        >
+          {{ qualityReport.stage_hint }}
+        </div>
 
         <el-descriptions :column="2" border size="small" style="margin-top: 14px">
           <el-descriptions-item label="分镜数">
@@ -2907,10 +2913,7 @@
       </template>
       <template #footer>
         <span style="float: left; font-size: 12px; color: #909399">
-          <template v-if="qualityReport && qualityReport.stage === 'generation'">
-            注：润色会在生成完成后逐条重写正文，完成后本报告会自动重算一次。
-          </template>
-          <template v-else-if="qualityReport && qualityReport.computed_at">
+          <template v-if="qualityReport && qualityReport.computed_at">
             计算于 {{ new Date(qualityReport.computed_at).toLocaleTimeString() }}
           </template>
         </span>

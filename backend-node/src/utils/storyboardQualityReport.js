@@ -39,11 +39,18 @@ function buildStoryboardQualityReport(opts = {}) {
   // 所以那份报告的格式结论对最终文本并不成立。润色完成后前端会再调一次并刷新，
   // stage 标成 after_polish，界面据此提示用户「这份是最终文本的结论」。
   const stage = ['generation', 'after_polish', 'manual'].includes(opts.stage) ? opts.stage : 'generation';
+  // 标签与一句话说明都要让用户看懂「这份结论对应的是哪一版文本」——
+  // 初版只写了「生成时自检（润色前）」，用户直接问「这个是啥意思」，说明没做到。
   const stageLabel = stage === 'after_polish'
-    ? '润色后复核'
+    ? '复核 · 对应最终文本'
     : stage === 'manual'
-      ? '手动重新自检'
-      : '生成时自检（润色前）';
+      ? '手动自检'
+      : '初检 · 润色前';
+  const stageHint = stage === 'after_polish'
+    ? '润色已完成，这份结论对应的就是你最终看到的正文。'
+    : stage === 'manual'
+      ? '这是你手动触发的一次重算，对应库里当前文本。'
+      : '「生成分镜」刚跑完时的初检。前端随后会自动逐条润色正文（重写画面描述），润色完成后本报告会自动重算一次，标签变为「复核 · 对应最终文本」。';
 
   const reasons = [];
   let verdict = 'ok';
@@ -117,6 +124,7 @@ function buildStoryboardQualityReport(opts = {}) {
     headline,
     stage,
     stage_label: stageLabel,
+    stage_hint: stageHint,
     computed_at: new Date().toISOString(),
     reasons,
     stats: {

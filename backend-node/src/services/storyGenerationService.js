@@ -25,9 +25,26 @@ async function generateStory(db, log, body) {
     ? promptI18n.buildPromoVideoUserPrompt(cfg, premise, style, type, segmentCount)
     : promptI18n.buildStoryExpansionUserPrompt(cfg, premise, style, type, episodeCount);
 
-  // 每集约 800 字（中文）≈ 1600 token，多留余量作为最低需求；
-  // 不使用 max_tokens 硬上限，而是用 min_max_tokens 确保即使用户 AI 配置了小上限也能保证基本输出量。
-  const minTokensNeeded = Math.max(2000, episodeCount * 2200);
+  // 单次**输出**上限（max_tokens）。注意它与模型的上下文窗口（本项目 1M）是两回事：
+  // 上下文再大，max_tokens 仍决定"一次最多吐多少"。
+  //
+  // 剧本长度目标已从「每集约 800 字」提到「约 1200-1600 字」（见 promptI18n 的剧本创作提示词：
+  // 一句一事 + 过渡要写出来），按实测约 1.45 token/字 + JSON 包装估算，1600 字 ≈ 2400 token。
+  // 原值 2200 会开始截断，故抬到 4500（约 2 倍余量）。
+  //
+  // 多集注意：当前实现把 episodeCount 集放在**一次调用**里生成，集数一多单次输出上限必然不够。
+  // 这里按单次调用的现实上限封顶并告警，而不是发一个不可能的 max_tokens 让接口报错。
+  const perEpisodeTokens = 4500;
+  const wantTokens = episodeCount * perEpisodeTokens;
+  const singleCallCap = 8000;
+  const minTokensNeeded = Math.max(perEpisodeTokens, Math.min(wantTokens, singleCallCap));
+  if (wantTokens > singleCallCap && log && typeof log.warn === 'function') {
+    log.warn('剧本生成：集数过多，单次输出上限不足，可能被截断（建议减少单次集数）', {
+      episode_count: episodeCount,
+      want_tokens: wantTokens,
+      capped_to: minTokensNeeded,
+    });
+  }
 
   // 注意：不使用 json_mode=true，因为 response_format:json_object 要求返回 JSON 对象而非数组，
   // 会导致模型将数组包成 {"episodes":[...]} 对象，破坏解析逻辑。依靠 prompt 本身约束格式即可。
@@ -92,6 +109,7 @@ async function generateStory(db, log, body) {
 
     if (result.length > 0) {
       log && log.info && log.info('Story episodes parsed', { count: result.length });
+      logScriptLengths(log, result);
       return { episodes: result };
     }
   }
@@ -101,13 +119,40 @@ async function generateStory(db, log, body) {
     text_length: (rawText || '').length,
   });
   const fallbackContent = (rawText || '').trim();
-  return {
-    episodes: [{
-      episode: 1,
-      title: '第1集',
-      content: fallbackContent,
-    }],
-  };
+  const fallbackList = [{
+    episode: 1,
+    title: '第1集',
+    content: fallbackContent,
+  }];
+  logScriptLengths(log, fallbackList);
+  return { episodes: fallbackList };
+}
+
+/**
+ * 剧本长度自检：把每集实际字数打出来。
+ *
+ * 为什么需要：实测模型会**自己写短** —— 提示词要「每集约 800 字」，它给了 716 字；
+ * 而日志里当时只记了原始响应总长（785 字符，含 JSON 包装），看不出正文到底多少字。
+ * 现在目标提到「约 1200-1600 字」，低于 1000 字即视为未达目标并告警。
+ * 注意这与 max_tokens 截断是两回事：截断会中途断句，这里记录的是模型主动收尾的情况。
+ */
+function logScriptLengths(log, episodes) {
+  if (!log || typeof log.info !== 'function') return;
+  try {
+    for (const ep of (episodes || [])) {
+      const len = String((ep && ep.content) || '').trim().length;
+      if (len <= 0) continue;
+      if (len < 1000) {
+        if (typeof log.warn === 'function') {
+          log.warn('剧本偏短，未达长度目标（模型自己收尾，非截断）', {
+            episode: ep.episode, chars: len, target: '约 1200-1600 字',
+          });
+        }
+      } else {
+        log.info('剧本长度', { episode: ep.episode, chars: len });
+      }
+    }
+  } catch (_) {}
 }
 
 async function processStoryGeneration(db, log, taskId, req) {

@@ -179,6 +179,34 @@ function amixTwoTracks(pathA, pathB, slotSec, outPath, log) {
   );
 }
 
+/**
+ * 构造「原生音频床」滤镜链。
+ *
+ * 背景：MiniMax H3 是原生同步音频模型（画面/音效/音乐单次前向一起出），而此前最终合成只有
+ * TTS 一条轨（`-map 0:v -map 1:a`），H3 生成的环境音/音效被整条丢掉。这里把它接回来当垫底轨。
+ *
+ * 关键点：**有对白的镜头必须压低**。H3 在有台词的镜头里会自己生成人声（实测 mean −14 dB），
+ * 直接垫在 TTS 对白下会变成两个人同时说话。压到 duck 倍率后，H3 人声落到 −36 dB 量级，
+ * 与 TTS 抢不了戏，而该镜的环境音仍在（避免环境音在对话时整段断掉）。
+ *
+ * 用 volume 的 timeline `enable` 表达式一次完成，避免 asplit/concat 把每个镜头切一遍。
+ * 注意：ffmpeg 的 filter 参数里逗号是分隔符，但被单引号括住即为字面量，所以表达式整体用 '...'。
+ *
+ * @param {Array<[number, number]>} dialogueSlots 有对白的镜头时间窗 [startSec, endSec]
+ * @param {number} gainFactor 全局线性增益倍率
+ * @param {number} duck 有对白镜头的压低倍率
+ */
+function buildNativeBedFilter(dialogueSlots, gainFactor, duck) {
+  const slots = (dialogueSlots || []).filter((s) => Array.isArray(s) && s.length === 2);
+  const gain = Number.isFinite(gainFactor) && gainFactor > 0 ? gainFactor : 1;
+  const d = Number.isFinite(duck) && duck > 0 && duck <= 1 ? duck : 1;
+  if (!slots.length) return `[0:a]volume=${gain}[bed]`;
+  const cond = slots
+    .map(([s, e]) => `between(t,${Number(s).toFixed(3)},${Number(e).toFixed(3)})`)
+    .join('+');
+  return `[0:a]volume='if(${cond},${d},1)*${gain}':eval=frame[bed]`;
+}
+
 function getDrawtextFontOption() {
   const candidates = [];
   if (process.platform === 'win32') {
@@ -231,9 +259,12 @@ async function runMergedEpisodePostProcess(db, log, opts) {
     let alignedAudioPath = null;
     let srtPath = null;
     let srtLines = [];
+    /** 有对白 TTS 的镜头时间窗，供原生音频床压低用（见 buildNativeBedFilter） */
+    const dialogueSlots = [];
 
     if (needAudio) {
       let tMs = 0;
+      let tSec = 0;
       let srtIdx = 1;
       const segmentFiles = [];
 
@@ -251,6 +282,8 @@ async function runMergedEpisodePostProcess(db, log, opts) {
           srtLines.push(String(srtIdx++), `${formatSrtTimestamp(tMs)} --> ${formatSrtTimestamp(tMs + durMs)}`, narrText, '');
         }
         tMs += Math.round(slotSec * 1000);
+        const slotStartSec = tSec;
+        tSec += slotSec;
 
         const diaFit = path.join(tempRoot, `dia_fit_${i}.mp3`);
         const narrFit = path.join(tempRoot, `narr_fit_${i}.mp3`);
@@ -260,6 +293,7 @@ async function runMergedEpisodePostProcess(db, log, opts) {
           const rel = row?.audio_local_path && String(row.audio_local_path).trim();
           const srcAbs = rel ? path.join(storageRoot, rel.replace(/\//g, path.sep)) : null;
           if (srcAbs && fs.existsSync(srcAbs)) {
+            dialogueSlots.push([slotStartSec, slotStartSec + slotSec]);
             if (!fitAudioToSlot(srcAbs, slotSec, diaFit, log)) {
               return { ok: false, error: `对白配音时长对齐失败 #${i}` };
             }
@@ -370,9 +404,39 @@ async function runMergedEpisodePostProcess(db, log, opts) {
       if (!alignedAudioPath || !fs.existsSync(alignedAudioPath)) {
         return { ok: false, error: '内部错误：缺少对齐音轨' };
       }
+
+      // 原生音频床：把合成视频自带的 H3 音轨接回来垫在 TTS 之下（环境音/音效/配乐）。
+      // 失败不影响主流程 —— 探测不到音轨或参数异常就退回「只有 TTS」的老行为。
+      const keepNative = mergeOpts.keep_native_audio !== false;
+      const bedGainDb = Number.isFinite(Number(mergeOpts.native_audio_gain_db))
+        ? Number(mergeOpts.native_audio_gain_db)
+        : 6;
+      const bedDuck = Number.isFinite(Number(mergeOpts.native_audio_duck))
+        ? Number(mergeOpts.native_audio_duck)
+        : 0.08;
+      let bedChain = '';
+      if (keepNative && ffprobeHasAudio(mergedAbsPath)) {
+        bedChain = buildNativeBedFilter(dialogueSlots, Math.pow(10, bedGainDb / 20), bedDuck);
+        log.info('merged post: 接入 H3 原生音频床', {
+          gain_db: bedGainDb,
+          duck_on_dialogue: bedDuck,
+          dialogue_slots: dialogueSlots.length,
+          total_slots: scenes.length,
+        });
+      }
+
+      // [1:a]=TTS 对白/旁白，[bed]=原生环境音。amix 必须 normalize=0，
+      // 否则 ffmpeg 会按输入数自动衰减（两条轨各 −6 dB），把 TTS 一起压小。
+      const aChain = bedChain
+        ? `${bedChain};[1:a][bed]amix=inputs=2:duration=first:normalize=0[aout]`
+        : '';
+      const filters = [filterComplex, aChain].filter(Boolean).join(';');
+
       const args = ['-y', '-i', mergedAbsPath, '-i', alignedAudioPath];
-      if (filterComplex) {
-        args.push('-filter_complex', filterComplex, '-map', '[vout]', '-map', '1:a');
+      if (filters) {
+        args.push('-filter_complex', filters);
+        args.push('-map', filterComplex ? '[vout]' : '0:v');
+        args.push('-map', bedChain ? '[aout]' : '1:a');
       } else {
         args.push('-map', '0:v', '-map', '1:a');
       }
@@ -443,4 +507,5 @@ function ffprobeHasAudio(filePath) {
 module.exports = {
   runMergedEpisodePostProcess,
   ffprobeDurationSec,
+  buildNativeBedFilter,
 };

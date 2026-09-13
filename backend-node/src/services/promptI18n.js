@@ -992,7 +992,11 @@ Requirements:
 3. Each episode: approximately 800 words. Episodes must be connected in story continuity — each episode picks up from where the previous one ended.
 4. **One event per sentence**: each sentence must describe exactly ONE filmable event. Never pack a move + an arrival + a discovery into a single sentence. Bad: "Sha Wujing went to Huaguo Mountain to confront Wukong, only to find him sitting in the Water Curtain Cave with a fake Tang Seng beside him." Good — split it: "Sha Wujing rode the clouds to Huaguo Mountain." / "He landed outside the Water Curtain Cave and pushed through the falling water." / "On the stone platform sat a 'Wukong', and beside him sat a 'Tang Seng' and a 'Zhu Bajie' — all of them fakes."
 5. **Write the transitions**: show HOW a character gets from place A to place B (walks / rides a cloud / pushes the door / parts the curtain) and how the location changes — as filmable action. Never skip to the result with words like "only to find" or "suddenly saw".
-6. Each episode should have a clear beginning, development, and a hook or turning point at the end.${enNote}`;
+6. **Write fights beat by beat**: break a fight into **one beat per sentence**, each sentence a single moment of contact. The target video model supports cuts inside one generation ("[Shot N]"), and **the beats come from the script** — if the script packs a whole exchange into one sentence, the storyboard has nothing to cut on and the finished shot degenerates into "most of the runtime spent establishing the space, the clash in the last instant".
+   Bad (four beats in one sentence, uncuttable): "Wukong and the fake monkey fought from the mountain hollow to the ridge and then up into the clouds, neither gaining the upper hand."
+   Good (one beat per sentence, each can be a cut inside one clip): "Wukong swings his cudgel down at the fake's head." / "The fake raises his own cudgel to block; the two staves collide and throw sparks." / "The fake reverses into a sweeping blow at Wukong's waist." / "Wukong twists aside and the blow shatters the rock behind him."
+   Keep a fight going for **at least three or four beats** before it resolves; weapon contact, blocking, dodging, staggering back and gasping for breath each count as one beat.
+7. Each episode should have a clear beginning, development, and a hook or turning point at the end.${enNote}`;
   }
   const _storyOverride = _overrideCache['story_expansion_system'];
   const base = _storyOverride || `你是一位专业的编剧。你的任务是根据用户提供的故事梗概，创作 ${n} 集完整的短片剧本。
@@ -1005,7 +1009,11 @@ Requirements:
    ✗ 反例（三个节拍挤在一句）：「沙僧去花果山找悟空理论，却见悟空正坐在水帘洞中，身边还有一个"唐僧"和"八戒""沙僧"」
    ✓ 正例（拆成三句，每句一镜）：「沙僧驾云赶往花果山。」「他落在水帘洞外，掀帘而入。」「洞中石台上端坐着一个"悟空"，身边还坐着"唐僧""八戒""沙僧"——全是假的！」
 5. **过渡必须写出来**：人物怎么从一个地点到另一个地点（走过去／驾云／推门／掀帘）、地点怎么切换，都要写成**可拍摄的动作**。**禁止**用「却见」「不想」「谁知」「忽见」这类词直接跳到结果。
-6. 每集有清晰的起承转合，结尾留有悬念或转折，吸引观众看下一集。`;
+6. **打斗按「拍」写**：写打斗时，把交锋拆成**一拍一句**，每拍只写一个动作瞬间。目标视频模型支持一次生成内按拍切镜（[Shot N] 记号），而**拍是从剧本里来的** —— 剧本把整套连招挤成一句话，分镜就没有拍可切，成片会退化成「大半时长在介绍环境、交锋只在最后一瞬」。
+   ✗ 反例（四拍挤成一句，无法切镜）：「悟空与假猴从山坳打到山巅，又从山巅打到云端，难分胜负」
+   ✓ 正例（一拍一句，每句都能成为一个镜头内的一个切点）：「悟空抡起金箍棒当头劈下。」「假猴抄棒横架相迎，两棒相交迸出火星。」「假猴反手一棒扫向悟空腰际。」「悟空侧身闪过，一棒击碎了身后的山石。」
+   打斗**至少连续三到四拍**再分出结果，别一拍就完；兵器相交、格挡、闪避、踉跄后退、力竭喘息都各算一拍。
+7. 每集有清晰的起承转合，结尾留有悬念或转折，吸引观众看下一集。`;
   return base + jsonNote;
 }
 

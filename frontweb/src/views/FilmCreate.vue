@@ -995,6 +995,16 @@
           <span>检测到分镜可能不完整（AI 输出被截断），请确认分镜数量是否符合预期，必要时可重新生成。</span>
           <el-button size="small" text @click="sbTruncatedDismissed = true">关闭</el-button>
         </div>
+        <div v-if="sbDialogueMissing.length && !sbDialogueMissingDismissed && storyboards.length > 0" class="sb-truncated-warning">
+          <el-icon><WarningFilled /></el-icon>
+          <span>
+            有 {{ sbDialogueMissing.length }} 句剧本台词没有进分镜（分镜能承载的台词约 1 句/镜，镜数不够时会静默丢掉台词）。
+            建议加大「分镜数」重新生成。
+            <br />
+            缺失：{{ sbDialogueMissing.join('　|　') }}
+          </span>
+          <el-button size="small" text @click="sbDialogueMissingDismissed = true">关闭</el-button>
+        </div>
         <template v-if="storyboards.length > 0">
           <template v-for="(sb, i) in storyboards" :key="sb.id">
             <!-- 段落分隔标头：segment_title 存在且是新段落的第一个镜头时显示 -->
@@ -2812,6 +2822,7 @@ import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
 import { generationSettingsAPI } from '@/api/prompts'
 import { parseScriptIntoEpisodes, episodesListToPlainScript } from '@/utils/scriptEpisodes'
+import { estimateVideoDurationSecFromCharLen, STORYBOARD_PLAN_SECONDS } from '@/utils/scriptDurationEstimate'
 import { exportStoryboardSheet } from '@/utils/exportStoryboardSheet'
 import StylePickerButton from '@/components/StylePickerButton.vue'
 import AIConfigContent from '@/components/AIConfigContent.vue'
@@ -3017,6 +3028,9 @@ const universalOmniPolishAbort = ref(false)
 const universalOmniPolishProgress = ref({ current: 0, total: 0, label: '' })
 const sbTruncatedWarning = ref(false)
 const sbTruncatedDismissed = ref(false)
+/** 剧本里没进分镜的台词（后端台词覆盖率自检结果），见 applyDialogueCoverageWarning */
+const sbDialogueMissing = ref([])
+const sbDialogueMissingDismissed = ref(false)
 const videoErrorMsg = ref('')
 // 一键全流程流水线
 const pipelineRunning = ref(false)
@@ -3495,12 +3509,13 @@ function clipSecondsForStoryboardEstimate() {
 }
 
 /**
- * 规划镜数用的「平均单镜秒数」。
+ * 规划镜数用的「平均单镜秒数」= min(项目「每段秒数」, STORYBOARD_PLAN_SECONDS)。
+ *
  * 项目「X秒/段」是单镜**上限**（本地 MiniMax H3 单镜最长 362 帧 = 15.08s），不是每镜的目标值：
  * 若直接用「总时长 ÷ 每段秒数」估镜数，配合「单镜 ≤ 每段」就会把每个镜头都顶到上限（全都 15s）。
  * 这里按 8 秒平均折算（H3 成本甜点区），单镜时长再由 AI 在 [5.2, 每段秒数] 内按内容浮动。
+ * 常量定义在 utils/scriptDurationEstimate.js（与后端 episodeStoryboardService 同值）。
  */
-const STORYBOARD_PLAN_SECONDS = 8
 function planSecondsForStoryboardEstimate() {
   return Math.min(clipSecondsForStoryboardEstimate(), STORYBOARD_PLAN_SECONDS)
 }
@@ -3516,14 +3531,6 @@ function shotCountEstimateFromDurationSec(sec) {
   const maxR = Math.min(200, locked + 1)
   const range = minR >= maxR ? { min: locked, max: locked } : { min: minR, max: maxR }
   return { locked, range, clip, plan }
-}
-
-/** 由剧本字符数粗估成片总时长（短剧偏长镜）：秒数 = round(10 + (字数/600)×60)，夹在 10–600s */
-function estimateVideoDurationSecFromCharLen(charLen) {
-  const len = Math.max(0, Math.floor(Number(charLen) || 0))
-  if (len < 1) return null
-  const raw = Math.round(10 + (len / 600) * 60)
-  return Math.min(600, Math.max(10, raw))
 }
 
 /** 当前剧本下的估算：总秒数、镜数中枢、镜数区间、单镜上限、规划单镜秒数 */
@@ -3546,7 +3553,7 @@ const scriptEstimateVideoDurationHint = computed(() => {
 const scriptEstimateVideoDurationTitle = computed(() => {
   const e = scriptStoryboardEstimate.value
   if (!e) return ''
-  return `按当前剧本文本约 ${e.len} 个字符（含标点；常见汉字在浏览器里一字一算，并非按 UTF-8 字节翻倍）、短剧公式 round(10+(字符/600)×60) 粗估总时长约 ${e.sec} 秒；未填输入框时该值会作为约束传给生成接口。仅供参考`
+  return `按当前剧本文本约 ${e.len} 个字符（含标点；常见汉字在浏览器里一字一算，并非按 UTF-8 字节翻倍）、按中文语速 4.2 字/秒粗估总时长约 ${e.sec} 秒；未填输入框时该值会作为约束传给生成接口。仅供参考`
 })
 
 const scriptEstimateStoryboardHint = computed(() => {
@@ -7201,6 +7208,30 @@ async function refreshStoryboardsOnly() {
   return refreshStoryboardsForEpisode(currentEpisodeId.value)
 }
 
+/**
+ * 处理分镜生成返回的「剧本台词覆盖率」自检结果（后端 utils/dialogueCoverage 产出）。
+ *
+ * 为什么必须在界面上提示：剧本里的引号台词是**必须出现在成片里**的内容，而丢失是静默的。
+ * 实测两集：「三打白骨精」21 句丢 10 句、「真假美猴王」10 句丢 1 句 —— 丢掉的句子在
+ * dialogue、universal_segment_text、video_prompt 里全都没有，等于整个剧情点不存在。
+ * 三打白骨精丢的正是「你连杀三人，佛门慈悲何在？」「你这泼猴，连伤两命！」这类台词，
+ * 把「唐僧为什么最后要赶走悟空」的因果链挖空了，而此前没有任何提示。
+ *
+ * 成因是容量：**分镜能承载的台词数 ≈ 1 句/镜**，镜数不够时模型合并叙事节拍并优先保
+ * 画面动作、牺牲台词。修法是加大「分镜数」重新生成（该输入框会覆盖自动估算）。
+ */
+function applyDialogueCoverageWarning(taskResult) {
+  const cov = taskResult?.dialogue_coverage
+  const missing = Array.isArray(cov?.missing) ? cov.missing : []
+  sbDialogueMissing.value = missing.map((m) => (m && m.line) || '').filter(Boolean)
+  sbDialogueMissingDismissed.value = false
+  if (sbDialogueMissing.value.length) {
+    ElMessage.warning(
+      `有 ${sbDialogueMissing.value.length} 句剧本台词没进分镜，建议加大「分镜数」重新生成`
+    )
+  }
+}
+
 async function onGenerateStoryboard() {
   trackFilmCreateAction('generate_storyboard_click')
   const epId = currentEpisodeId.value
@@ -7228,6 +7259,7 @@ async function onGenerateStoryboard() {
         sbTruncatedWarning.value = true
         sbTruncatedDismissed.value = false
       }
+      applyDialogueCoverageWarning(pollRes?.result)
     }
     await loadDrama()
     // 生成完成后静默补全空缺的摄影参数（只填未填字段，不覆盖 AI 已填的）
@@ -7935,6 +7967,7 @@ async function runOneClickPipeline(textOnly = false) {
             sbTruncatedWarning.value = true
             sbTruncatedDismissed.value = false
           }
+          applyDialogueCoverageWarning(result?.result)
         }
         await loadDrama()
         await pipelineRest()
@@ -8440,6 +8473,7 @@ async function runRepairPipeline() {
           const result = await pollTaskWithPause(taskId, () => loadDrama())
           if (result?.paused) { await waitForResume(); return }
           if (result?.error) { addPipelineError('分镜生成', result.error); return }
+          applyDialogueCoverageWarning(result?.result)
         }
         await loadDrama()
         await pipelineRest()

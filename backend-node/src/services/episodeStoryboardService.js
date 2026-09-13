@@ -7,6 +7,7 @@ const safeJson = require('../utils/safeJson');
 const { safeParseAIJSON, extractJsonCandidate, repairTruncatedJsonArray, extractFirstArray } = safeJson;
 const loadConfig = require('../config').loadConfig;
 const angleService = require('./angleService');
+const { checkDialogueCoverage } = require('../utils/dialogueCoverage');
 
 /**
  * 分镜专用 generateText 包装：
@@ -1105,6 +1106,38 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
       log.info('[分镜] 角色补全完成', { episode_id: episodeId, total_added: totalCharAdded });
     }
 
+    // ── 剧本台词覆盖率自检（只读，不重试、不挡出片）────────────────────────────
+    //
+    // 剧本里的引号台词是**必须出现在成片里**的内容。此前这一步没有任何校验，实测两次
+    // 都是静默丢失：「三打白骨精」21 句丢 10 句、「真假美猴王」10 句丢 1 句 —— 丢掉的
+    // 句子在 dialogue / universal_segment_text / video_prompt 里都没有，等于整个剧情点
+    // 不存在。三打白骨精丢的正是「你连杀三人，佛门慈悲何在？」这类台词，把
+    // 「唐僧为什么最后赶走悟空」的因果链挖空了，而日志里一行提示都没有。
+    //
+    // 成因是容量：分镜能承载的台词数 ≈ 1 句/镜。镜数不足时模型合并节拍并优先保画面
+    // 动作、牺牲台词。修法是加镜（改估算公式或手填分镜数），需要人判断，所以这里只告警。
+    let dialogueCoverage = null;
+    try {
+      const epRow = db.prepare('SELECT script_content FROM episodes WHERE id = ? AND deleted_at IS NULL').get(episodeIdNum);
+      dialogueCoverage = checkDialogueCoverage(epRow && epRow.script_content, getStoryboardsForEpisode(db, episodeIdNum));
+      if (dialogueCoverage && dialogueCoverage.missing.length > 0) {
+        log.warn('[分镜] 剧本台词未全部覆盖 —— 以下台词在全部分镜里都找不到，必要时请增加分镜数重新生成', {
+          episode_id: episodeIdNum,
+          total: dialogueCoverage.total,
+          covered: dialogueCoverage.covered,
+          missing_count: dialogueCoverage.missing.length,
+          missing: dialogueCoverage.missing.map((m) => m.line),
+        });
+      } else if (dialogueCoverage) {
+        log.info('[分镜] 剧本台词覆盖率自检通过', {
+          episode_id: episodeIdNum,
+          total: dialogueCoverage.total,
+        });
+      }
+    } catch (e) {
+      log.warn('[分镜] 台词覆盖率自检失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
+    }
+
     taskService.updateTaskStatus(db, taskId, 'processing', 90, '正在更新剧集时长...');
 
     const durationMinutes = Math.ceil((totalDuration + 59) / 60);
@@ -1117,6 +1150,8 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
       total_duration: totalDuration,
       duration_minutes: durationMinutes,
       truncated: parseMeta.truncated || false,
+      // 剧本台词覆盖率：前端可据此提示「有 N 句台词没进分镜」
+      dialogue_coverage: dialogueCoverage,
     };
     taskService.updateTaskResult(db, taskId, resultData);
     log.info('Storyboard generation completed', { task_id: taskId, episode_id: episodeId });

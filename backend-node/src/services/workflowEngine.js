@@ -220,8 +220,10 @@ function bypassEmptyLoras(prompt, workflow, linkMap) {
 /**
  * 准备工作流并注入参数
  * @param {object} workflow - 原始工作流 JSON (含 nodes + links)
- * @param {object} params - { prompt, width, height, seed, batchSize }
- * @returns {{ prompt: object, outputPrefixes: string[] }} - API 格式的 prompt 对象
+ * @param {object} params - { prompt, width, height, megapixels, aspectRatio, seed, batchSize, videoFrames, refImages }
+ * @returns {{ prompt: object, outputPrefixes: string[], resolutionInjections: string[] }}
+ *   resolutionInjections 记录分辨率注到了哪里，形如 "136:MiniMaxH3ReferenceToVideo:semantic"，
+ *   semantic 表示改了上游分辨率节点的 megapixels，direct 表示降级为直接覆盖 width/height。
  */
 function isApiFormat(wf) {
   // API 格式：顶层是 { "1": {...}, "2": {...}, ... }，没有 nodes/links 字段
@@ -229,8 +231,56 @@ function isApiFormat(wf) {
   return !wf.nodes && !wf.links;
 }
 
+// 官方 ResolutionSelector 的 aspect_ratio 枚举（comfy_extras/nodes_resolution.py）。
+// 工作流里存的是完整枚举串，前端传的是 "16:9" 这类简写，用前缀匹配对上。
+const OFFICIAL_ASPECT_RATIOS = [
+  '1:1 (Square)', '2:3 (Portrait Photo)', '3:2 (Photo)', '3:4 (Portrait Standard)',
+  '4:3 (Standard)', '9:16 (Portrait Widescreen)', '16:9 (Widescreen)', '21:9 (Ultrawide)',
+];
+
+function toOfficialAspectRatio(ratio) {
+  const s = String(ratio || '').trim();
+  if (!s) return null;
+  return OFFICIAL_ASPECT_RATIOS.find((o) => o === s)
+    || OFFICIAL_ASPECT_RATIOS.find((o) => o.startsWith(s + ' '))
+    || null;
+}
+
+/**
+ * 注入分辨率：优先改「语义输入」，而不是覆盖「计算结果」。
+ *
+ * 工作流常把 width/height 连到一个算分辨率的节点（如官方 ResolutionSelector）。若直接
+ * 覆盖 width/height，那个节点就成了孤儿——它的 aspect_ratio / multiple 等设置全被无视，
+ * 而且换任何分辨率节点都得改这里的代码。
+ *
+ * 所以顺着 width 的连线往上游找一步：上游若有能表达「目标分辨率」的输入（megapixels），
+ * 就改它、不动连线；否则（字面值，或上游没有语义输入）才降级为直接写 width/height。
+ *
+ * @returns {'semantic'|'direct'|null} 实际采用的方式，null 表示本次没注入
+ */
+function injectResolution(prompt, apiInputs, opts) {
+  const { width, height, megapixels, aspectRatio } = opts;
+  if (width === undefined && height === undefined) return null;
+
+  const src = apiInputs.width;
+  if (Array.isArray(src) && src.length === 2) {
+    const upstream = prompt[String(src[0])];
+    const upIn = upstream && upstream.inputs;
+    if (upIn && upIn.megapixels !== undefined && megapixels !== undefined) {
+      upIn.megapixels = megapixels;
+      const ar = toOfficialAspectRatio(aspectRatio);
+      if (ar && upIn.aspect_ratio !== undefined) upIn.aspect_ratio = ar;
+      return 'semantic';
+    }
+  }
+
+  if (width !== undefined) apiInputs.width = width;
+  if (height !== undefined) apiInputs.height = height;
+  return 'direct';
+}
+
 function prepareWorkflow(workflow, params) {
-  const { prompt: promptText, width, height, seed, batchSize = 1, refImages, videoFrames, videoFps } = params;
+  const { prompt: promptText, width, height, seed, batchSize = 1, refImages, videoFrames, videoFps, megapixels, aspectRatio } = params;
 
   let prompt;
   if (isApiFormat(workflow)) {
@@ -274,6 +324,9 @@ function prepareWorkflow(workflow, params) {
     }
   }
 
+  // 记录分辨率实际注到了哪里，供调用方判断是否走了语义注入
+  const resolutionInjections = [];
+
   for (const [nid, node] of Object.entries(prompt)) {
     const apiInputs = node.inputs;
     if (!apiInputs) continue;
@@ -291,8 +344,8 @@ function prepareWorkflow(workflow, params) {
 
     // EmptyLatentImage / EmptySD3LatentImage: 注入尺寸
     if (classType === 'EmptyLatentImage' || classType === 'EmptySD3LatentImage') {
-      if (width !== undefined) apiInputs.width = width;
-      if (height !== undefined) apiInputs.height = height;
+      const mode = injectResolution(prompt, apiInputs, { width, height, megapixels, aspectRatio });
+      if (mode) resolutionInjections.push(nid + ':' + classType + ':' + mode);
       if (batchSize !== undefined) apiInputs.batch_size = batchSize;
     }
 
@@ -330,12 +383,13 @@ function prepareWorkflow(workflow, params) {
       }
     }
 
-    // MiniMax H3 参考图生视频 / 图生视频节点: 注入 prompt、宽高、时长（覆盖已连线的输入）
+    // MiniMax H3 参考图生视频 / 图生视频节点: 注入 prompt 与时长。
+    // 分辨率也走 injectResolution —— 优先改上游分辨率节点的语义输入，而不是覆盖宽高。
     if (classType === 'MiniMaxH3ReferenceToVideo' || classType === 'MiniMaxH3ImageToVideo') {
       if (promptText !== undefined) apiInputs.prompt = promptText;
-      if (width !== undefined) apiInputs.width = width;
-      if (height !== undefined) apiInputs.height = height;
       if (videoFrames !== undefined) apiInputs.length = videoFrames;
+      const mode = injectResolution(prompt, apiInputs, { width, height, megapixels, aspectRatio });
+      if (mode) resolutionInjections.push(nid + ':' + classType + ':' + mode);
     }
 
     // 收集输出前缀
@@ -347,7 +401,7 @@ function prepareWorkflow(workflow, params) {
     }
   }
 
-  return { prompt, outputPrefixes };
+  return { prompt, outputPrefixes, resolutionInjections };
 }
 
 function extractImageFromResult(result, outputPrefixes) {

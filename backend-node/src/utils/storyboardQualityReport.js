@@ -34,6 +34,17 @@ function buildStoryboardQualityReport(opts = {}) {
   const universalRepaired = formatReport ? Number(formatReport.repaired) || 0 : 0;
   const universalFatal = formatReport ? Number(formatReport.fatal) || 0 : 0;
 
+  // 报告是在流程的哪一步算的。**这点很重要**：生成任务结束时算的那份，校验的是
+  // 「前端润色之前」的文本；而前端随后会逐条重写 universal_segment_text（实测 21 条约 80 秒），
+  // 所以那份报告的格式结论对最终文本并不成立。润色完成后前端会再调一次并刷新，
+  // stage 标成 after_polish，界面据此提示用户「这份是最终文本的结论」。
+  const stage = ['generation', 'after_polish', 'manual'].includes(opts.stage) ? opts.stage : 'generation';
+  const stageLabel = stage === 'after_polish'
+    ? '润色后复核'
+    : stage === 'manual'
+      ? '手动重新自检'
+      : '生成时自检（润色前）';
+
   const reasons = [];
   let verdict = 'ok';
   let hasMissingDialogue = false;
@@ -104,6 +115,9 @@ function buildStoryboardQualityReport(opts = {}) {
   return {
     verdict,
     headline,
+    stage,
+    stage_label: stageLabel,
+    computed_at: new Date().toISOString(),
     reasons,
     stats: {
       shot_count: shotCount,

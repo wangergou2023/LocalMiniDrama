@@ -2804,7 +2804,16 @@
     </Teleport>
 
     <!-- 生成质量报告：生成分镜完成后自动弹出，也可用工具栏的「质量报告」按钮重开 -->
-    <el-dialog v-model="qualityReportVisible" title="分镜生成质量报告" width="720px">
+    <el-dialog v-model="qualityReportVisible" width="720px">
+      <template #header>
+        <span>分镜生成质量报告</span>
+        <el-tag
+          v-if="qualityReport && qualityReport.stage_label"
+          :type="qualityReport.stage === 'after_polish' ? 'success' : 'info'"
+          size="small"
+          style="margin-left: 10px"
+        >{{ qualityReport.stage_label }}</el-tag>
+      </template>
       <template v-if="qualityReport">
         <el-alert
           :type="qualityReport.verdict === 'ok' ? 'success' : qualityReport.verdict === 'warn' ? 'warning' : 'error'"
@@ -2895,6 +2904,18 @@
           （例如「把前事细细叙来」就是「八戒沙僧将前事说了一遍」），但它仍可能有误，清单请自行确认。<br />
           出片质量（口型、有没有念提示词、响度）需要能听能看，本报告覆盖不到。
         </div>
+      </template>
+      <template #footer>
+        <span style="float: left; font-size: 12px; color: #909399">
+          <template v-if="qualityReport && qualityReport.stage === 'generation'">
+            注：润色会在生成完成后逐条重写正文，完成后本报告会自动重算一次。
+          </template>
+          <template v-else-if="qualityReport && qualityReport.computed_at">
+            计算于 {{ new Date(qualityReport.computed_at).toLocaleTimeString() }}
+          </template>
+        </span>
+        <el-button :loading="qualityReportRechecking" @click="onRecheckQuality">重新自检</el-button>
+        <el-button type="primary" @click="qualityReportVisible = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>
@@ -3140,6 +3161,8 @@ const sbDialogueMissingDismissed = ref(false)
 /** 生成质量报告（后端 utils/storyboardQualityReport 产出）：生成完直接弹出来，见 applyQualityReport */
 const qualityReport = ref(null)
 const qualityReportVisible = ref(false)
+/** 「重新自检」按钮的 loading */
+const qualityReportRechecking = ref(false)
 const videoErrorMsg = ref('')
 // 一键全流程流水线
 const pipelineRunning = ref(false)
@@ -6544,11 +6567,67 @@ async function polishUniversalSegmentsAfterGeneration(opts = {}) {
       }
       await pipelineRest()
     }
+
+    // ── 润色完成后重算质量报告 ──────────────────────────────────────────────
+    //
+    // 为什么必须重算：生成任务结束时那份报告校验的是**润色之前**的文本，而本函数紧接着
+    // 逐条重写了 universal_segment_text（实测 21 条约 80 秒）。不重算的话，用户看到的
+    // 「提示词格式 全部合规」对最终文本并不成立 —— 报告与结论会错位一整个润色周期。
+    if (polished > 0) {
+      await refreshQualityReportAfterPolish({ previous: qualityReport.value })
+    }
   } finally {
     universalOmniPolishRunning.value = false
     universalOmniPolishProgress.value = { current: 0, total: 0, label: '' }
   }
   return { polished, skipped: false }
+}
+
+/**
+ * 润色完成后重算并刷新质量报告（后端 /episodes/:id/storyboards/quality-report）。
+ *
+ * 失败不打扰用户（只 console.warn）：报告是辅助信息，不该因为一次自检失败弹错。
+ * 但如果结论**变差**了（例如润色把某条骨架写坏），要明确提示 —— 这正是重算的意义。
+ */
+async function refreshQualityReportAfterPolish(opts = {}) {
+  const epId = currentEpisodeId.value
+  if (!epId) return
+  try {
+    const data = await storyboardsAPI.episodeQualityReport(epId, { beats: true, stage: 'after_polish' })
+    const report = data?.quality_report
+    if (!report) return
+    const prev = opts.previous
+    qualityReport.value = report
+    const worse = (!prev || prev.verdict === 'ok') && report.verdict !== 'ok'
+    if (worse) {
+      ElMessage.warning(`润色后复核发现新问题：${report.headline}`)
+      qualityReportVisible.value = true
+    } else {
+      ElMessage.success('质量报告已更新（含润色后复核）')
+    }
+  } catch (e) {
+    console.warn('[FilmCreate] 润色后质量报告刷新失败:', e?.message)
+  }
+}
+
+/** 「重新自检」：手动触发一次报告重算（与润色后复核走同一接口） */
+async function onRecheckQuality() {
+  const epId = currentEpisodeId.value
+  if (!epId) return
+  qualityReportRechecking.value = true
+  try {
+    const data = await storyboardsAPI.episodeQualityReport(epId, { beats: true, stage: 'manual' })
+    if (data?.quality_report) {
+      qualityReport.value = data.quality_report
+      ElMessage.success('已重新自检')
+    } else {
+      ElMessage.warning('自检未返回结果')
+    }
+  } catch (e) {
+    ElMessage.error(e?.message || '自检失败')
+  } finally {
+    qualityReportRechecking.value = false
+  }
 }
 
 /** 为视频生成获取参考图的真实 URL */

@@ -1207,7 +1207,10 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
  * @param {object} db
  * @param {object} log
  * @param {number} episodeIdNum
- * @param {{requestedCount?:number|null, requestedDuration?:number|null, styleZh?:string, saveRepaired?:number, saveFatal?:number}} [opts]
+ * @param {{requestedCount?:number|null, requestedDuration?:number|null, styleZh?:string,
+ *          saveRepaired?:number, saveFatal?:number, stage?:string, skipBeats?:boolean}} [opts]
+ *   stage: 'generation' 生成任务结束时 | 'after_polish' 前端润色完成后的复核 | 'manual' 手动重新自检
+ *   skipBeats: 跳过剧情点那次 LLM 调用（只做确定性的台词/格式复核）
  */
 async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
   const requestedCount = opts.requestedCount != null ? Number(opts.requestedCount) : null;
@@ -1249,6 +1252,9 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
   // 2) 剧情点（叙事节拍）覆盖 —— LLM 语义判定。为什么不能用规则见 utils/beatCoverageCheck
   let beatCoverage = null;
   try {
+    if (opts.skipBeats) {
+      // 明确跳过：报告里 beat_total 会是 0，界面显示「未检查」而不是伪造一个结论
+    } else {
     beatCoverage = await checkBeatCoverage(db, log, scriptContent, storyboards);
     if (beatCoverage && beatCoverage.missing.length > 0) {
       log.warn('[分镜] 剧情点未全部覆盖 —— 语义判定认为以下剧本节拍没有落到任何分镜（请人工确认，必要时补镜）', {
@@ -1259,6 +1265,7 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
       });
     } else if (beatCoverage) {
       log.info('[分镜] 剧情点覆盖检查通过', { episode_id: episodeIdNum, total: beatCoverage.total });
+    }
     }
   } catch (e) {
     log.warn('[分镜] 剧情点覆盖检查失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
@@ -1298,6 +1305,7 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
       formatReport,
       requestedCount,
       requestedDuration,
+      stage: opts.stage || 'generation',
     });
   } catch (e) {
     log.warn('[分镜] 质量报告生成失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
@@ -1873,4 +1881,6 @@ module.exports = {
   splitStoryboardByAudio,
   /** 供测试在数据库副本上验证入库行为（返回 { saved, formatReport }） */
   saveStoryboards,
+  /** 按需重算自检 + 质量报告（「重新自检」按钮 / 润色完成后的复核都走它） */
+  runStoryboardSelfChecks,
 };

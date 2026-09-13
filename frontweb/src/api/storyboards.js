@@ -67,6 +67,18 @@ function postUniversalSegmentNdjsonStream(url, body, onDelta) {
 }
 
 export const storyboardsAPI = {
+  /**
+   * 生成质量报告（按需重算）。
+   * 生成任务结束时的那份报告校验的是**润色之前**的文本，而前端随后会逐条重写
+   * universal_segment_text，所以润色完成后要再调一次刷新结论。
+   * @param {number} episodeId
+   * @param {{beats?: boolean, stage?: 'after_polish'|'manual'}} [opts]
+   */
+  episodeQualityReport(episodeId, opts = {}) {
+    const beats = opts.beats === false ? '0' : '1'
+    const stage = opts.stage ? `&stage=${encodeURIComponent(opts.stage)}` : ''
+    return request.get(`/episodes/${episodeId}/storyboards/quality-report?beats=${beats}${stage}`)
+  },
   get(id) {
     return request.get(`/storyboards/${id}`)
   },

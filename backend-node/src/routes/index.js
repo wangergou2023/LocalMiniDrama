@@ -224,6 +224,8 @@ function setupRouter(cfg, db, log) {
   r.post('/episodes/:episode_id/props/extract', prop.extractProps);
   r.post('/episodes/:episode_id/characters/extract', stub.episodeCharactersExtract);
   r.get('/episodes/:episode_id/storyboards', storyboards.episodeStoryboardsGet);
+  // 生成质量报告（按需重算：润色完成后刷新 / 手动重新自检）
+  r.get('/episodes/:episode_id/storyboards/quality-report', storyboards.episodeQualityReport);
   r.post('/episodes/:episode_id/finalize', drama.finalizeEpisode);
   r.get('/episodes/:episode_id/download', drama.downloadEpisodeVideo);
 

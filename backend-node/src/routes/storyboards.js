@@ -443,6 +443,53 @@ function routes(db, log) {
         response.internalError(res, err.message);
       }
     },
+    /**
+     * 生成质量报告（按需重算）。
+     *
+     * 为什么要「按需重算」：生成任务结束时算的那份报告校验的是**润色之前**的文本，而前端
+     * 紧接着会逐条重写 universal_segment_text（实测 21 条约 80 秒）。所以润色完成后前端会
+     * 再调一次本接口刷新报告，界面上的结论才与最终文本对应。同接口也给「重新自检」按钮用。
+     *
+     * query:
+     *   beats=0  跳过剧情点那次 LLM 调用（只做确定性的台词/格式复核，毫秒级返回）
+     *   stage=after_polish|manual  标记这份报告的来源，界面据此显示「润色后复核」等
+     */
+    episodeQualityReport: async (req, res) => {
+      const episodeId = Number(req.params.episode_id);
+      if (!Number.isFinite(episodeId) || episodeId <= 0) {
+        return response.badRequest(res, '无效的剧集 ID');
+      }
+      try {
+        const episode = db.prepare('SELECT id FROM episodes WHERE id = ? AND deleted_at IS NULL').get(episodeId);
+        if (!episode) return response.notFound(res, '剧集不存在');
+        const wantBeats = String(req.query.beats ?? '1') !== '0';
+        const stage = req.query.stage === 'after_polish'
+          ? 'after_polish'
+          : req.query.stage === 'manual'
+            ? 'manual'
+            : 'generation';
+        const checks = await episodeStoryboardService.runStoryboardSelfChecks(db, log, episodeId, {
+          stage,
+          skipBeats: !wantBeats,
+        });
+        log.info('[分镜] 质量报告已重算', {
+          episode_id: episodeId,
+          stage,
+          beats: !!checks.beatCoverage,
+          verdict: checks.qualityReport ? checks.qualityReport.verdict : null,
+        });
+        response.success(res, {
+          quality_report: checks.qualityReport,
+          dialogue_coverage: checks.dialogueCoverage,
+          beat_coverage: checks.beatCoverage,
+          universal_segment_format: checks.formatReport,
+        });
+      } catch (err) {
+        log.error('storyboards episodeQualityReport', { error: err.message, episode_id: req.params.episode_id });
+        response.internalError(res, err.message || '质量报告计算失败');
+      }
+    },
+
     episodeStoryboardsGet: (req, res) => {
       try {
         const list = episodeStoryboardService.getStoryboardsForEpisode(db, req.params.episode_id);

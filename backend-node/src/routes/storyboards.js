@@ -575,7 +575,7 @@ function routes(db, log) {
         text = normalizeUniversalSegmentShotDurations(text, durationLabel, durationSec);
         text = normalizeUniversalSegmentAtImageSpacing(text);
         const nowIso = new Date().toISOString();
-        db.prepare('UPDATE storyboards SET universal_segment_text = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL').run(
+        db.prepare('UPDATE storyboards SET universal_segment_text = ?, universal_segment_text_en = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL').run(
           text,
           nowIso,
           sbId
@@ -638,7 +638,7 @@ function routes(db, log) {
       text = normalizeUniversalSegmentShotDurations(text, durationLabel, durationSec);
       text = normalizeUniversalSegmentAtImageSpacing(text);
       const nowIso = new Date().toISOString();
-      db.prepare('UPDATE storyboards SET universal_segment_text = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL').run(
+      db.prepare('UPDATE storyboards SET universal_segment_text = ?, universal_segment_text_en = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL').run(
         text,
         nowIso,
         sbId
@@ -760,7 +760,7 @@ function routes(db, log) {
       text = normalizeUniversalSegmentShotDurations(text, durationLabel, durationSec);
       text = normalizeUniversalSegmentAtImageSpacing(text);
       const nowIso = new Date().toISOString();
-      db.prepare('UPDATE storyboards SET universal_segment_text = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL').run(
+      db.prepare('UPDATE storyboards SET universal_segment_text = ?, universal_segment_text_en = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL').run(
         text,
         nowIso,
         sbId

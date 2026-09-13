@@ -17,6 +17,19 @@ const angleService = require('./angleService');
  */
 const DEFAULT_STORYBOARD_MAX_TOKENS = 16384;
 
+/**
+ * 规划分镜数用的「平均单镜秒数」上限（秒）—— 必须与前端 FilmCreate.vue 的
+ * STORYBOARD_PLAN_SECONDS 保持一致。
+ *
+ * 项目「每段秒数」(drama.metadata.video_clip_duration) 是**单镜时长上限**
+ * （本地 MiniMax H3 单镜最长 362 帧 = 15.08s），不是每镜的目标值。
+ * 若按「总时长 ÷ 每段秒数」规划镜数，配合「单镜 ≤ 每段」会形成代数死锁：
+ *   镜数 = 总时长÷每段、单镜 ≤ 每段、Σ单镜 ≈ 总时长  ⟹  单镜 = 每段
+ * 结果就是每个镜头都被顶到上限（全都 15s）。这里改用 8 秒平均折算镜数，
+ * 单镜时长交给 AI 在 [5.2, 每段秒数] 内按内容浮动。
+ */
+const STORYBOARD_PLAN_SECONDS = 8;
+
 /** 统一镜号（AI 可能返回字符串 "1"，须与 Set 去重键一致） */
 function normalizeStoryboardShotNumber(rawOrSb) {
   const raw =
@@ -485,7 +498,7 @@ function updateStoryboardRowFromDerived(db, existingId, episodeIdNum, d, sb, now
       image_prompt = ?, video_prompt = ?, characters = ?,
       shot_type = ?, angle = ?, angle_h = ?, angle_v = ?, angle_s = ?, movement = ?,
       lighting_style = ?, depth_of_field = ?, segment_index = ?, segment_title = ?,
-      creation_mode = ?, universal_segment_text = ?,
+      creation_mode = ?, universal_segment_text = ?, universal_segment_text_en = NULL,
       updated_at = ?
      WHERE id = ? AND episode_id = ? AND deleted_at IS NULL`
   ).run(
@@ -655,7 +668,10 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
   redistributeShotDurations(storyboards, {
     totalSec: deriveOpts.video_duration || deriveOpts.total_duration,
     maxSec: deriveOpts.maxClipDuration || deriveOpts.max_duration,
-    minSec: 1,
+    // 下限取本地 MiniMax H3 的官方验证下限：124 帧 ÷ 24fps = 5.17 秒。
+    // 低于此值时模型行为未经验证（画面崩坏/动作做不完）。若总时长不足以按此下限分配，
+    // 分配结果会超过 totalSec —— 这是有意为之：宁可总时长超一点，也不产出无效短片。
+    minSec: 5.2,
   });
   const style = (styleOverride && String(styleOverride).trim()) || cfg?.style?.default_style || '';
   const videoRatio = cfg?.style?.default_video_ratio || '16:9';
@@ -1238,10 +1254,13 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
       impliedFromTotal && impliedFromTotal > 0 ? impliedFromTotal : Math.round(Number(videoDuration) / Number(storyboardCount));
     if (clipFromProject) {
       const clip = Number(videoClipDuration);
+      // 「每段秒数」是单镜上限；规划镜数按 min(上限, 8s) 平均折算，避免每个镜头都被顶到上限
+      const plan = Math.min(clip, STORYBOARD_PLAN_SECONDS);
+      const shotCountHint = storyboardCount ? `（本次约 ${Number(storyboardCount)} 个）` : '';
       if (isEn) {
-        extraConstraint += `\nEach shot "duration" field: decide by content. Set it to how long the shot's dialogue, action and camera movement genuinely need (e.g. a fast verbal exchange or simple cut = 3-6s; a sustained slow push-in or tense standoff = up to ~${clip}s). Treat ~${clip}s as the per-shot CEILING, not a fixed target—do NOT make every shot the same value just to match the project clip length; vary by content. Keep the total of all shots near ~${Number(videoDuration)}s.`;
+        extraConstraint += `\nEach shot's "duration" MUST land within **5.2-${clip}s**:\n- **${clip}s is the per-shot CEILING**, not the target for every shot (the target model caps one continuous take at 362 frames = 15.08s)\n- The shot count is planned as total ÷ ${plan}${shotCountHint}, so durations should hover around **${plan}s** — do NOT max out every shot at ${clip}s\n- Shots with room for a full action arc or dialogue may take 10-${clip}s; lighter shots (one gesture, one short line) may take 5.2-7s\n- Do NOT pile several independent actions into one shot just to fill time, and do NOT write content that cannot finish inside ${clip}s — that is the signal to split it into another shot\n- **Floor is 5.2s** (the model's shortest single clip is 124 frames = 5.17s); never go below it\nThe total of all shot durations should come to about ${Number(videoDuration)}s.`;
       } else {
-        extraConstraint += `\n每个镜头的 **duration** 请按**内容实际需要**决定：对白密、动作快或信息量少的镜头应短（如 3-6 秒），运镜缓慢、情绪铺垫或冲突对峙可长（最多到约 ${clip} 秒）。把「每段约 ${clip} 秒」当作**单镜上限**，**不要**为了对齐项目每段秒数而把所有镜头写成同一个值，须按对白/动作/运镜长短自然**变化**；全片所有镜头时长之和约为 ${Number(videoDuration)} 秒。`;
+        extraConstraint += `\n每个镜头的 **duration** 必须落在 **5.2-${clip} 秒** 区间内：\n- **${clip} 秒是单镜上限，不是每个镜头的目标值**（目标模型一次连续运镜最长 362 帧 = 15.08 秒）\n- 分镜数按「总时长 ÷ ${plan}」规划${shotCountHint}，所以单镜时长应围绕 **${plan} 秒** 上下浮动，**不要每个镜头都写满 ${clip} 秒**\n- 内容撑得起完整动作弧线或对白的镜头可给 10-${clip} 秒；内容轻的镜头（一个动作、一句短对白）给 5.2-7 秒\n- 不要为填满时长而在一镜里堆砌多个互不相关的动作；也不要写 ${clip} 秒演不完的内容 —— 那是该再拆一个分镜的信号\n- **下限 5.2 秒**（目标模型单镜最短 124 帧 = 5.17 秒），任何镜头都不要更短\n全片所有镜头时长之和约为 ${Number(videoDuration)} 秒。`;
       }
     } else if (isEn) {
       extraConstraint += `\nEach shot target duration: approximately ${effectiveShotDuration}s (= total ${Number(videoDuration)}s ÷ ${Number(storyboardCount)} shots). Set each shot's duration field to this value, adjusting ±1s for dialogue/action length.`;

@@ -303,7 +303,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     ].join('\n');
     line3Required =
       slots[0].kind === '场景'
-        ? `环境、光影与陈设定性参考 ${slots[0].tag}。若 ${slots[0].tag} 为宫格或多画面拼图，禁止成片复刻其分格或并列布局，仅提取统一的室内空间与光线语义；须单镜头完整连续画面。`
+        ? `环境、光影与陈设定性参考 ${slots[0].tag}。若 ${slots[0].tag} 为宫格或多画面拼图，禁止成片复刻其分格或并列布局，仅提取统一的空间、光线与氛围语义；须单镜头完整连续画面。`
         : '本片段以首张参考图 @图片1 作为画面锚点展开。';
   }
 
@@ -392,7 +392,6 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     episodeScript = `${episodeScript.slice(0, SCRIPT_CAP)}\n...[EPISODE_SCRIPT_TRUNCATED]`;
   }
 
-  const mHeuristic = Math.min(8, Math.max(1, Math.round(durationSec / 5)));
   let shotPacingBlock = '';
   try {
     const all = db
@@ -410,22 +409,22 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     const segChange = ix > 0 && currSeg && prevSeg && currSeg !== prevSeg;
     shotPacingBlock = [
       'SHOT_PACING_AND_POSITION:',
-      `TOTAL_CLIP_SECONDS: ${durationLabel}（本条数据库分镜 = 一次成片 API 的整段时长；下文 M 个子分镜仅为同一时间轴内节拍拆分）`,
-      `M_HEURISTIC_ONLY: 约 ${mHeuristic}（不得照抄为最终 M；须结合剧本高潮/对白密度/转场/机位与 movement 等自决 1～8 的整数 M）`,
+      `TOTAL_CLIP_SECONDS: ${durationLabel}（本条数据库分镜 = 一次成片 API 的整段时长；只写 1 条分镜行）`,
+      'SINGLE_TAKE_ONLY: 本地 MiniMax H3 是单镜头连续画面模型，禁止内部切镜，禁止自选 M（恒为 1）',
       `SHOT_ORDER: ${ix >= 0 ? ix + 1 : '?'} / ${totalShots}`,
       `SHOT_POSITION_TAG: ${posTag}`,
       chunk('SEGMENT_TITLE_PREV', prevSeg || null),
       chunk('SEGMENT_TITLE_CURRENT', currSeg || null),
       chunk('SEGMENT_TITLE_NEXT', nextSeg || null),
       segChange
-        ? 'BOUNDARY_HINT: 段落标题相对上一镜已变化 → 转场/新叙事块概率高 → 可提高 M 或前几秒侧重空间/情绪铺垫再入冲突。'
-        : 'BOUNDARY_HINT: 同段落延续 → M 可保守；若 ACTION 内对白长、机位少，也可 M=1 但在单行内写满时间流动。',
+        ? 'BOUNDARY_HINT: 段落标题相对上一镜已变化 → 这是**新分镜条目**的信号，应在分镜层面拆分，而不是在同一条内切镜。'
+        : 'BOUNDARY_HINT: 同段落延续 → 在本条连续镜头内用运镜与节奏表现时间流动，不要切镜。',
     ].join('\n');
   } catch (_) {
     shotPacingBlock = [
       'SHOT_PACING_AND_POSITION:',
       `TOTAL_CLIP_SECONDS: ${durationLabel}`,
-      `M_HEURISTIC_ONLY: 约 ${mHeuristic}`,
+      'SINGLE_TAKE_ONLY: 本地 MiniMax H3 是单镜头连续画面模型，禁止内部切镜，禁止自选 M（恒为 1）',
     ].join('\n');
   }
 
@@ -482,16 +481,16 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
   } catch (_) {}
 
   const multiBeatContract = [
-    'MULTI_BEAT_OUTPUT（一条成片 API 内的多节拍文案）:',
-    '- 总行数 = 3 + M。M 为你选择的子分镜条数（时间轴节拍），整数 1～8。',
+    'SINGLE_TAKE_CONTRACT（一条成片 API = 一个连续镜头）:',
+    '- **固定 1 条分镜行**：本地 MiniMax H3 是单镜头连续画面模型，一次生成只拍一个连续镜头，不支持切镜/拼贴/分屏；多写分镜行会导致画面崩坏。',
     '- 第1行：「画面风格和类型:」…必须完全遵循下方 STYLE_HINT/STYLE_ZH 给定的风格；若 STYLE_ZH 已给定（例如“中国传统水墨画风格，泼墨写意技法…”），**整句只能使用该给定风格，禁止再叠加“真人写实、电影风格、高清画质、写实摄影、真实人物”等与之冲突的修饰词**；风格描述内部必须自洽、无相互矛盾项。',
-    `- 第2行：必须为「生成一个由以下M个分镜组成的视频。」（将 M 替换为你的整数；与下文实际「分镜1…分镜M」条数一致）。`,
+    '- 第2行：必须逐字为「生成一个由以下 1 个分镜组成的视频。」',
     '- 第3行：必须逐字等于 LINE3_REQUIRED（见下）。',
-    '- 第4行到第(3+M)行：依次为「分镜1： T1秒:」「分镜2： T2秒:」…「分镜M： TM秒:」；每行冒号后先写秒数再写该子时段内的动态影像与运镜描写。',
-    `- 约束：T1+T2+…+TM 必须严格等于 TOTAL_CLIP_SECONDS（数值与 ${durationLabel} 一致）；每个 Tk>0；子分镜序号连续无跳号。`,
-    '- 若 M=1：即仅一行「分镜1： TOTAL秒:」写满整段；若 M>1：每行只覆盖本子时段，前后行衔接成连续时间线，避免剧情跳跃或重复前一行已完成的动作。',
-    '- 本镜的「分镜1」不得重演上一分镜结尾已完成的情景（见 NEIGHBOR_SEQUENCE_RULE），应从上一镜结果后的新状态推进并派生本镜新动作；「分镜M」结尾留给下一分镜做状态承接。',
-    '- 禁止额外说明行、markdown、英文小标题；禁止把「子分镜」写成多次独立成片 API。',
+    `- 第4行（且只有这一行）：「分镜1： ${durationLabel}秒: 」+ 该连续镜头的动态影像与运镜描写（同一镜头内可含两步运镜衔接，如 缓推→横移；参考图用 @图片N）。`,
+    `- 约束：T1 必须严格等于 TOTAL_CLIP_SECONDS（=${durationLabel}）；**禁止出现「分镜2：」及之后的任何行**。`,
+    '- **禁止**：「切镜到」「镜头2」「第二个镜头」「随后切换到」「镜头切换」等任何多镜头描述；需要多个镜头时应拆成多个分镜条目，而不是在同一条里切镜。',
+    '- 本镜不得重演上一分镜结尾已完成的情景（见 NEIGHBOR_SEQUENCE_RULE），应从上一镜结果后的新状态推进并派生本镜新动作；本镜结尾留给下一分镜做状态承接。',
+    '- 禁止额外说明行、markdown、英文小标题。',
   ].join('\n');
 
   const userPrompt = [

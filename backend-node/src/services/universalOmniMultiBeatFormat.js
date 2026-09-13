@@ -3,7 +3,9 @@
  */
 
 const DEFAULT_LINE3 =
-  '环境、光影与陈设定性参考 @图片1。若 @图片1 为宫格或多画面拼图，禁止成片复刻其分格或并列布局，仅提取统一的室内空间与光线语义；须单镜头完整连续画面。';
+  // 注意：措辞必须与场景类型无关。此处原为「仅提取统一的室内空间与光线语义」，
+  // 系上游从室内样板沿用（f50a2ee），对户外山道/街景等场景会与剧本直接冲突。
+  '环境、光影与陈设定性参考 @图片1。若 @图片1 为宫格或多画面拼图，禁止成片复刻其分格或并列布局，仅提取统一的空间、光线与氛围语义；须单镜头完整连续画面。';
 
 function trim(s) {
   return s != null && String(s).trim() ? String(s).trim() : '';
@@ -18,10 +20,13 @@ function normalizeUniversalSegmentTextNewlines(text) {
     .trim();
 }
 
-/** 根据总秒数决定子分镜数 M（约每 5 秒一拍，1–8） */
-function chooseBeatCount(durationSec) {
-  const dur = Math.max(1, Math.min(120, Math.round(Number(durationSec) || 5)));
-  return Math.min(8, Math.max(1, Math.round(dur / 5)));
+/**
+ * 子分镜数恒为 1。本地 MiniMax H3 是**单镜头连续画面**模型，一次生成只拍一个连续镜头、
+ * 不支持切镜；原先按「每 5 秒一拍」拆成 1–8 段，会把多个镜头塞进同一次生成导致画面崩坏。
+ * 需要多个镜头时应在分镜层面拆成多条，而不是在这里再分子分镜。
+ */
+function chooseBeatCount() {
+  return 1;
 }
 
 /** 将总秒数拆成 M 个正整数且和为 dur */

@@ -335,6 +335,16 @@ detailed_description: start with one or two English sentences establishing the s
   Camera movement is written as natural English inside the sentence (type, amplitude, speed).
   A speaking subject is written <Subject 2> (S1) says, <d>[Chinese] verbatim line</d>.
   Dialogue crossing a cut uses <scenetrans> on both sides; speech cut off by the end uses <cutoff>.
+  INTRA-SHOT CUTS (H3 native multi-shot) — HARD RULES:
+  A single clip MAY contain 2-4 cuts inside it, marked with the model's own notation:
+  [Shot 1] … / [Shot 2] At 00:03.200, the camera cuts to … / [Shot 3] At 00:05.600, …
+  Use them ONLY when this shot's ACTION is a fight / chase / combo / rapid action burst whose beats one
+  unbroken camera move cannot cover — then push the establishing beat into the first 1-2 seconds of [Shot 1]
+  and give the remaining time to the clash. Every other shot stays single-shot.
+  [Shot 1] carries NO timestamp; every later shot carries "At MM:SS.mmm,"; timestamps strictly increase and
+  stay below the clip duration; numbering starts at 1 and is consecutive; at most 4 shots.
+  Never express a cut with wording like "cut to shot 2" — only the notation above creates a cut.
+  Never write 分镜2：-style lines (one universal_segment_text = one generation call).
   Target 200-350 English words for a 5-10 s single clip (cover composition, subject, environment, action,
   camera, sound and dialogue); dialogue-dense clips prioritise the complete spoken timeline.
 overall_soundscape: ambience and physical sounds across the whole clip (shot-synced events stay in
@@ -380,6 +390,14 @@ ${DEFAULT_LINE3}`;
 - 运镜写成自然的英文句子（类型、幅度、速度）。
 - 说话人必须写成：<Subject 2> (S1) says, <d>[Chinese] 台词原文</d>
 - 同一句台词跨切镜：两侧都写 <scenetrans>；被片尾截断用 <cutoff>。
+- **镜内剪辑点（H3 原生多镜头）—— 硬性规则**：一次生成内**允许 2-4 个镜头**，用模型自己的记号表达：
+    [Shot 1] … / [Shot 2] At 00:03.200, the camera cuts to … / [Shot 3] At 00:05.600, …
+  **只在**本镜 ACTION 是**打斗/追击/连招/快速动作爆发**、单个不中断的运镜演不完这些拍时才用；
+  此时把定场压进 [Shot 1] 的前 1-2 秒，其余时长全给交锋。其余镜头一律单镜。
+  [Shot 1] **不带**时间戳；其后每拍必须带 "At MM:SS.mmm,"；时间严格递增且小于本镜时长；
+  编号从 1 开始连续；**最多 4 镜**。
+  **禁止**用「切镜到」「镜头2」这类叙述性措辞表达剪辑 —— 只有上面的记号才算剪辑点；
+  也**禁止**「分镜2：」那类**行**（一条 universal_segment_text = 一次生成调用）。
 - 单镜 5-10 秒目标 200-350 个英文词：构图、主体、环境、动作、运镜、音效、对白都要写全；
   对白多的镜头以**把话说完**为先，不必机械凑字数。
 

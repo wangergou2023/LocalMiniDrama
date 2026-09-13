@@ -7,6 +7,22 @@ const DEFAULT_LINE3 =
   // 系上游从室内样板沿用（f50a2ee），对户外山道/街景等场景会与剧本直接冲突。
   '环境、光影与陈设定性参考 <Picture 1>。若 <Picture 1> 为宫格或多画面拼图，禁止成片复刻其分格或并列布局，仅提取统一的空间、光线与氛围语义；须单镜头完整连续画面。';
 
+/**
+ * 用于**分析**的正文：Ref2VA 六段结构只有 `detailed_description` 里有真正的镜头与剪辑点，
+ * 直接拿整条文本去数 `[Shot N]` 会把 retention_analysis 里的「(appears in [Shot 1])」也算进来
+ * （实测因此报出「镜内剪辑点 6 个 > 上限 4」「编号不连续 [Shot 1] → [Shot 1]」这类假警）。
+ */
+function analysisTextOf(ust) {
+  const t = String(ust || '');
+  if (!/^\s*subject_definitions\s*[:：]/im.test(t)) return t;
+  try {
+    const { parseRef2vaSections } = require('./ref2vaFormat');
+    const dd = parseRef2vaSections(t).sections.detailed_description;
+    if (dd && String(dd).trim()) return String(dd);
+  } catch (_) {}
+  return t;
+}
+
 function trim(s) {
   return s != null && String(s).trim() ? String(s).trim() : '';
 }
@@ -216,7 +232,7 @@ function checkFightPacing(rows) {
     n: Number(r.storyboard_number) || 0,
     loc: String(r.location || '').trim(),
     fight: detectFightShot(r),
-    cuts: parseCutMarkers(r.universal_segment_text).length,
+    cuts: parseCutMarkers(analysisTextOf(r.universal_segment_text)).length,
   }));
   const byN = new Map(info.map((x) => [x.n, x]));
   const isFightSeqNeighbour = (x) => {
@@ -560,10 +576,17 @@ function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
   // 打斗节奏自检（见 checkFightPacing）：只报**真的坏了**的 —— 定场挤压。
   // 初版规则「打斗镜没切拍就报警」在 drama4 上产生 8 条假警、0 条真问题，已废弃。
   let pacing = { fights: 0, cut: 0, split_sequence: 0, single_beat: 0, tail_crushed: [], cuts_without_fight: [] };
+  // 两套格式并存：六段结构走官方校验器，旧四行块走原校验器。
+  // （不分派的话新格式会被旧校验器整批判为不合规 —— 实测 14/14 全是假警。）
+  const { validateRef2va } = require('./ref2vaFormat');
   for (const r of rows) {
-    const v = validateUniversalSegmentText(r.universal_segment_text, opts);
+    const raw = String(r.universal_segment_text || '');
+    const isRef2va = /^\s*subject_definitions\s*[:：]/im.test(raw);
+    const v = isRef2va
+      ? validateRef2va(raw, { durationSec: Number(r.duration) || undefined })
+      : validateUniversalSegmentText(raw, opts);
     if (!v.ok) samples.push({ id: r.id ?? null, title: r.title || '', problems: v.problems });
-    const cuts = parseCutMarkers(r.universal_segment_text).length;
+    const cuts = parseCutMarkers(analysisTextOf(raw)).length;
     if (cuts >= 2) multiShot += 1;
     cutTotal += cuts;
   }
@@ -612,6 +635,7 @@ module.exports = {
   secToCutTime,
   cutTimeToSec,
   normalizeUniversalSegmentTextNewlines,
+  analysisTextOf,
   chooseBeatCount,
   splitDurationSeconds,
   buildFallbackUniversalMultiBeatText,

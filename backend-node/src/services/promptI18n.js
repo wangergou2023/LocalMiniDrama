@@ -96,10 +96,14 @@ function getStoryboardSystemPrompt(cfg) {
 [Task] Break down the novel script into storyboard shots based on **independent action units**.
 
 [Shot Breakdown Principles]
-1. **Action Unit Division**: Each storyboard shot = **one single continuous take**, corresponding to one narrative beat.
-   **Default to one action per shot; internal cuts are forbidden.**
-   - The target video model (local MiniMax H3) shoots a **single continuous take** per generation; writing
-     "Cut to Shot 2 ..." corrupts the picture — it is a hard error
+1. **Action Unit Division**: Each storyboard shot = **one continuous take**, corresponding to one narrative beat.
+   **Default to one action per shot; intra-shot cuts are the exception, not the norm.**
+   - The target video model (local MiniMax H3) natively supports 2-4 cuts **inside one generation**,
+     marked with its own notation: "[Shot 1] … [Shot 2] At 00:03.200, the camera cuts to …".
+     Prose like "Cut to Shot 2 …" is still a hard error — only that notation expresses a cut.
+   - Use intra-shot cuts **only** for a **fight / chase / combo / rapid action burst** whose beats one
+     unbroken camera move cannot cover. Those beats must then stay in ONE shot entry — do not split one
+     fight across several shots, that is exactly what breaks its continuity.
    - At most 2-3 consecutive actions per shot, and they must share **one space and one subject** (setup → action → settle)
    - When a script passage contains several actions, subjects or scene changes, **split it into several shots**
      instead of packing it into one
@@ -192,10 +196,13 @@ function getStoryboardSystemPrompt(cfg) {
 【任务】将小说剧本按**独立动作单元**拆解为分镜头方案。
 
 【分镜拆解原则】
-1. **动作单元划分**：每个分镜 = **一次单镜头连续拍摄**，对应剧本中的一个叙事节拍。
-   **默认一个分镜只做一件事；严禁内部切镜。**
-   - 目标视频模型（本地 MiniMax H3）是**单镜头连续画面**模型，一次生成只拍一个连续镜头；写
-     "切镜到…""镜头2…"会导致画面崩坏，属于严重错误
+1. **动作单元划分**：每个分镜 = **一次连续拍摄**，对应剧本中的一个叙事节拍。
+   **默认一个分镜只做一件事；镜内切镜是例外，不是常态。**
+   - 目标视频模型（本地 MiniMax H3）**原生支持一次生成内 2-4 个镜头**，用它自己的记号表达：
+     "[Shot 1] … [Shot 2] At 00:03.200, the camera cuts to …"。
+     写「切镜到…」「镜头2…」这类**叙述性措辞**仍然是严重错误 —— 剪辑只能由上面的记号表达。
+   - **只有**当本镜是**打斗／追击／连招／快速动作爆发**、且单个不中断的运镜演不完这些拍时才用镜内切镜；
+     此时这些拍**必须留在同一条分镜里**，禁止把同一场打斗拆成多条分镜 —— 那正是打斗不连续的根源。
    - 一个分镜内最多 2-3 个连续动作，且必须**同一空间、同一主体**（起势→过程→收尾）
    - 当一段剧本含多个动作、多个主体或场景切换时，**必须拆成多个分镜**，而不是塞进一个分镜
    - **判断标准：一镜的内容如果 5 秒演不完，就必须拆镜**
@@ -288,10 +295,10 @@ function getStoryboardSystemPrompt(cfg) {
  * 全能片段描述统一格式说明（分镜批量生成 / 生成全能提示词 / 润色 共用）
  */
 function getUniversalOmniMultiBeatFormatSpec(cfg) {
-  const { DEFAULT_LINE3 } = require('./universalOmniMultiBeatFormat');
+  const { DEFAULT_LINE3, LINE3_MULTI } = require('./universalOmniMultiBeatFormat');
   if (isEnglish(cfg)) {
     return `
-[UNIVERSAL_SEGMENT_TEXT — SINGLE-SHOT FORMAT ONLY]
+[UNIVERSAL_SEGMENT_TEXT — BLOCK FORMAT]
 FORBIDDEN: SoulLens/SEEDANCE single-line rows (主体:/叙事动态:/空间:/[禁BGM]); FORBIDDEN @人物N — use @图片1, @图片2, … only.
 
 Field "universal_segment_text" is a **multi-line string** (use \\n in JSON). Structure:
@@ -299,14 +306,31 @@ Line 1: 画面风格和类型: <project style. When STYLE_ZH is given, copy it V
         else — never prepend 真人写实 / 电影风格 / 高清画质, they contradict a project style that
         does not contain them (e.g. ink wash). Only when no project style is given may you use
         the generic tags 真人写实, 电影风格, 高清画质.>
-Line 2: 生成一个由以下 1 个分镜组成的视频. (**exactly 1 — never emit 分镜2： or later**)
+Line 2: 生成一个由以下 1 个分镜组成的视频. (**always exactly 1 — one universal_segment_text = ONE
+        generation call. Never emit 分镜2： or any later line.**)
 Line 3 (copy verbatim): ${DEFAULT_LINE3}
-Line 4: 分镜1： T1秒: <cinematic Chinese prose for one continuous take; camera motion chain; light; emotion>
+        — but when this shot uses intra-shot cuts (see below), line 3 MUST be the multi-shot variant:
+        ${LINE3_MULTI}
+Line 4: 分镜1： T1秒: <cinematic Chinese prose for this clip; camera motion chain; light; emotion>
 T1 MUST equal this shot's JSON "duration" seconds exactly. Exactly one beat line, no extra lines.
 
-WHY EXACTLY ONE: the local MiniMax H3 model shoots a **single continuous take** per generation; it does
-not support cuts, montage or split screens. Multiple beats corrupt the picture. To show several shots,
-emit several storyboard entries instead of stacking them in one universal_segment_text.
+INTRA-SHOT CUTS (H3 native multi-shot) — HARD RULES:
+- One 分镜 line = one generation call, and that call MAY contain 2-4 cuts inside it, written with the
+  model's native notation (Chinese prose in the body; notation itself stays ASCII):
+      [Shot 1] <prose for beat 1>
+      [Shot 2] At 00:03.200, the camera cuts to <prose for beat 2>
+      [Shot 3] At 00:05.600, the camera cuts to <prose for beat 3>
+- Use cuts ONLY when this shot's ACTION is a **fight / chase / combo / rapid action burst** whose beats
+  a single unbroken camera move cannot cover. Every other shot stays single-shot.
+- Rules: [Shot 1] carries NO timestamp; each later shot carries \`At MM:SS.mmm,\`; timestamps strictly
+  increase and stay below T1; numbering starts at 1 and stays consecutive; at most 4 shots.
+- WHY cuts are required for fights: a 9-second single-take fight spends ~8 of those seconds establishing
+  the space and only ~0.8s on the actual clash (measured, 花果山对峙). Splitting the beats INSIDE one
+  generation keeps space, characters, lighting and audio perfectly consistent — that is how a fight
+  stays continuous. Do NOT spend separate storyboard entries on the beats of one fight: across clips
+  that consistency is lost.
+- STILL FORBIDDEN: 分镜2：/分镜3： lines, 「切镜到」「镜头2」「随后切换到」 wording, split screen, grid,
+  reproducing the reference collage's panels.
 
 STATE CONSISTENCY — HARD RULE (violating it fails the task):
 - The ENDING state of the 分镜1 line MUST agree with this shot's own ACTION and RESULT fields.
@@ -321,7 +345,8 @@ Reference tokens: @图片1 = scene/environment only; @图片2+ = characters in c
 Dialogue: @图片2 says:"verbatim line" or …嗓音…："line". No speech: end with 无对白。
 Narration: 旁白（画面无声）："verbatim narration"
 Camera: within one take you may chain two moves (push→pan, follow→pull back), synced to the action.
-FORBIDDEN: 「切镜到」「镜头2」「第二个镜头」「随后切换到」 or any multi-shot wording.`;
+FORBIDDEN: 「切镜到」「镜头2」「第二个镜头」「随后切换到」 or any narrative multi-shot wording — cuts are
+expressed ONLY through the \`[Shot N] At MM:SS.mmm,\` notation described above.`;
   }
   return `
 【universal_segment_text — 多子分镜段落格式（与「生成全能提示词」「润色」完全一致）】
@@ -331,10 +356,28 @@ FORBIDDEN: 「切镜到」「镜头2」「第二个镜头」「随后切换到�
 第1行：画面风格和类型: <项目风格。已给 STYLE_ZH 时必须**逐字照抄**，句内**不得**再出现
        「真人写实／电影风格／高清画质」——它们会与不含这些词的项目风格（如水墨）直接冲突。
        仅当完全没有给定项目风格时，才可用通用标签「真人写实, 电影风格, 高清画质」>
-第2行：生成一个由以下 1 个分镜组成的视频。（**固定为 1，禁止出现「分镜2：」及之后的行**）
+第2行：生成一个由以下 1 个分镜组成的视频。（**恒为 1** —— 一条 universal_segment_text = 一次成片调用。
+       禁止出现「分镜2：」及之后的**行**）
 第3行（必须逐字一致）：${DEFAULT_LINE3}
-第4行：分镜1： T1秒: <一个完整连续镜头的电影化中文长句>
-**硬性约束**：T1 必须严格等于本镜 JSON 的 duration（秒）；只允许 1 条子分镜行，禁止额外说明行。
+       —— 但本镜若使用**镜内剪辑点**（见下），第3行必须换成多镜形态：
+       ${LINE3_MULTI}
+第4行：分镜1： T1秒: <本段一次生成内的电影化中文长句>
+**硬性约束**：T1 必须严格等于本镜 JSON 的 duration（秒）；只允许 1 条分镜行，禁止额外说明行。
+
+**镜内剪辑点（H3 原生多镜头）—— 硬性规则**（这是打斗连续性的唯一正确做法）：
+- 一条「分镜1：」行 = 一次生成调用，但这一次生成内部**允许 2-4 个镜头**，用模型原生记号标出：
+      第1行正文开头： [Shot 1] <第1拍的散文>
+      第2拍：        [Shot 2] At 00:03.200, the camera cuts to <第2拍的散文>
+      第3拍：        [Shot 3] At 00:05.600, the camera cuts to <第3拍的散文>
+- **只在**本镜 ACTION 是**打斗／追击／连招／快速动作爆发**、且单个不中断的运镜**演不完**这些拍时才用；
+  其余镜头一律保持单镜。
+- 规则：[Shot 1] **不带**时间戳；其后每拍必须带 \`At MM:SS.mmm,\`；时间严格递增且小于 T1；
+  编号从 1 开始连续；**最多 4 镜**。
+- **为什么打斗必须切拍**：9 秒的单镜打斗实测会把约 8 秒花在定场与运镜上，真正的交锋只挤到最后
+  0.8 秒（「花果山对峙」就是这样）。把各拍放进**同一次生成**内切镜，空间、人物、光照、音轨天然一致
+  —— 这才叫「打斗连续」。**禁止**把同一场打斗的各拍拆成多条分镜条目：跨 clip 就丢掉了这份一致性。
+- **仍然禁止**：「分镜2：」「分镜3：」等行、「切镜到」「镜头2」「随后切换到」这类叙述性措辞、
+  分屏、宫格、复刻参考拼图的分格。剪辑**只能**通过上面的 \`[Shot N] At MM:SS.mmm,\` 记号表达。
 
 **状态一致性（硬性，违反即失败）**：
 - 正文的**收尾状态**必须与本镜自己的 ACTION / RESULT 一致。
@@ -344,23 +387,26 @@ FORBIDDEN: 「切镜到」「镜头2」「第二个镜头」「随后切换到�
 - 在**更早的镜头里已经发生、现在只是持续**的状态，只用**静态措辞**（横卧／静置／散落／已倒／昏迷不醒）；
   **禁止**用动作措辞（倒下／倒地／栽倒／扑倒）—— 视频模型会据此再演一次。
 
-**为什么只能有 1 条**：本地 MiniMax H3 是**单镜头连续画面**模型，一次生成只拍一个连续镜头，
-不支持切镜、拼贴、分屏。写多个子分镜会让画面崩坏。需要多个镜头时，请**拆成多个分镜条目**，
-而不是塞进同一条的 universal_segment_text 里。
-
 子分镜正文写法（电影化中文长句，参考产品范例）：
 - **参考图**：仅用 @图片1、@图片2…（阿拉伯数字）；@图片1 只写环境/光影/陈设；角色从 @图片2 起按 characters[] 顺序；有道具则继续 @图片3 …
 - **运镜**：同一镜头内可含两步运镜衔接（如 缓推→横移、跟拍→拉回），与人物动作同步
 - **对白**：有 dialogue 时必须写出原文，格式如 @图片2 的嗓音…："对白原文" 或 @图片2 说："对白原文"；无对白则句末写 **无对白。**
 - **解说**：有 narration 时写在句末：**旁白（画面无声）："解说原文"**
 - **禁止**：概括式台词（如「他说了一句重要的话」）、@人物N、markdown、SoulLens 段标签
-- **禁止**：「切镜到」「镜头2」「第二个镜头」「随后切换到」「镜头切换」等任何多镜头描述
+- **禁止**：「切镜到」「镜头2」「第二个镜头」「随后切换到」「镜头切换」等任何叙述性多镜头措辞
 
 范例结构（勿照抄剧情与风格，仅学排版；第1行必须换成项目自己的风格）：
+单镜（默认）：
 画面风格和类型: <项目风格 STYLE_ZH 逐字照抄>
 生成一个由以下 1 个分镜组成的视频。
 ${DEFAULT_LINE3}
-分镜1： 15秒: 镜头从 @图片1 的雨夜街口缓缓推近，@图片2 撑伞立于积水倒影中，雨丝穿过侧逆光… @图片2 的嗓音低沉："台词原文"`;
+分镜1： 15秒: 镜头从 @图片1 的雨夜街口缓缓推近，@图片2 撑伞立于积水倒影中，雨丝穿过侧逆光… @图片2 的嗓音低沉："台词原文"
+
+打斗镜（镜内切拍，第3行换成多镜形态）：
+画面风格和类型: <项目风格 STYLE_ZH 逐字照抄>
+生成一个由以下 1 个分镜组成的视频。
+${LINE3_MULTI}
+分镜1： 9秒: [Shot 1] 承接上一镜余势，@图片2 落在 @图片1 石台之前，众小猴惊叫四散。[Shot 2] At 00:03.000, the camera cuts to 近景：@图片2 抡圆 @图片4 金箍棒当头劈下，棒身拉出凌厉弧线。[Shot 3] At 00:05.600, the camera cuts to @图片3 抄棒横架，两棒相交迸出火星，气浪荡开一圈尘雾，二猴怒目相对。无对白。`;
 }
 
 /**
@@ -511,7 +557,7 @@ function getStoryboardUserPromptSuffix(cfg, shotDuration) {
     : '综合对话、动作、情绪估算每镜时长（秒）';
   return `
 
-【分镜要素】每个分镜 = **一次单镜头连续拍摄**（**严禁内部切镜**，目标模型不支持），描述要详尽具体：
+【分镜要素】每个分镜 = **一次连续拍摄**（默认单镜；打斗/追击/连招镜可按拍镜内切镜，用 "[Shot 1] … [Shot 2] At MM:SS.mmm, the camera cuts to …" 记号；叙述性「切镜到/镜头2」仍然禁止），描述要详尽具体：
 1. **镜头标题(title)**：用3-5个字概括该镜头的核心内容或情绪
 2. **时间**：[清晨/午后/深夜/具体时分+详细光线描述]
 3. **地点**：[场景完整描述+空间布局+环境细节]
@@ -1056,7 +1102,7 @@ function getDefaultPromptBody(key) {
       return '你是一位专业的剧本道具分析师，擅长从剧本中提取具有视觉特征的关键道具。\n\n你的任务是根据提供的剧本内容，提取并整理所有对剧情有重要作用或有特殊视觉特征的关键道具。\n\n要求：\n1. 只提取对剧情发展有重要作用、或有特殊视觉特征的关键道具。\n2. 普通的生活用品（如普通的杯子、笔）如果无特殊剧情意义不需要提取。\n3. 归属者、剧中人名等**只**写在 "description"，**不要**写进 "image_prompt"。\n4. "image_prompt" 按项目语言撰写（中文项目优先用中文），按「产品主图 / 资产白模照」标准撰写：只描述该道具本体（造型、材质、颜色、工艺与磨损），并强制纯色无缝棚拍背景、无场景无杂物。匹配项目中文提示词语音（融入真实尺度、次要元素原则）。\n5. "image_prompt" 须明确排除人物、手、家具、台面、其他物体与环境叙事元素。\n6. "image_prompt" **禁止**出现剧本人名、地名、组织名、台词、剧情专有词；用泛化视觉词替代，且**禁止无依据扩写**（不凭空加配饰、品牌叙事、煽情形容词）。';
 
     case 'storyboard_user_suffix':
-      return '【分镜要素】每个分镜 = **一次单镜头连续拍摄**（**严禁内部切镜**，目标模型不支持），描述要详尽具体：\n1. **镜头标题(title)**：用3-5个字概括该镜头的核心内容或情绪\n2. **时间**：[清晨/午后/深夜/具体时分+详细光线描述]\n3. **地点**：[场景完整描述+空间布局+环境细节]\n4. **镜头设计**：**景别(shot_type)**、**镜头角度(angle)**、**运镜方式(movement)**\n5. **人物行为**：**详细动作描述**\n6. **对话/独白**：提取该镜头中的完整对话或独白内容（如无对话则为空字符串）\n7. **画面结果**：动作的即时后果+视觉细节+氛围变化\n8. **环境氛围**：光线质感+色调+声音环境+整体氛围\n9. **声音设计**：bgm_prompt 必须填空字符串""或"无背景音乐/禁BGM"；不要为单个片段设计背景音乐。sound_effect 只写现场环境声、动作音效、对白/旁白音色与口型同步要求\n10. **观众情绪**：[情绪类型]（[强度：↑↑↑/↑↑/↑/→/↓]）\n\n**dialogue字段说明**：角色名："台词内容"。无对话时填空字符串""。\n**scene_id**：从上方场景列表中选择最匹配的背景ID，如无合适背景则填null。\n**duration时长**：综合对话、动作、情绪估算每镜时长（具体目标秒数由系统自动注入）。\n**声音一致性**：所有镜头默认无BGM；若有对白/旁白，sound_effect 须补充音色与情绪强度。';
+      return '【分镜要素】每个分镜 = **一次连续拍摄**（默认单镜；打斗/追击/连招镜可按拍镜内切镜，用 `[Shot 1] … [Shot 2] At MM:SS.mmm, the camera cuts to …` 记号；叙述性「切镜到/镜头2」仍然禁止），描述要详尽具体：\n1. **镜头标题(title)**：用3-5个字概括该镜头的核心内容或情绪\n2. **时间**：[清晨/午后/深夜/具体时分+详细光线描述]\n3. **地点**：[场景完整描述+空间布局+环境细节]\n4. **镜头设计**：**景别(shot_type)**、**镜头角度(angle)**、**运镜方式(movement)**\n5. **人物行为**：**详细动作描述**\n6. **对话/独白**：提取该镜头中的完整对话或独白内容（如无对话则为空字符串）\n7. **画面结果**：动作的即时后果+视觉细节+氛围变化\n8. **环境氛围**：光线质感+色调+声音环境+整体氛围\n9. **声音设计**：bgm_prompt 必须填空字符串""或"无背景音乐/禁BGM"；不要为单个片段设计背景音乐。sound_effect 只写现场环境声、动作音效、对白/旁白音色与口型同步要求\n10. **观众情绪**：[情绪类型]（[强度：↑↑↑/↑↑/↑/→/↓]）\n\n**dialogue字段说明**：角色名："台词内容"。无对话时填空字符串""。\n**scene_id**：从上方场景列表中选择最匹配的背景ID，如无合适背景则填null。\n**duration时长**：综合对话、动作、情绪估算每镜时长（具体目标秒数由系统自动注入）。\n**声音一致性**：所有镜头默认无BGM；若有对白/旁白，sound_effect 须补充音色与情绪强度。';
 
     case 'first_frame_prompt':
       return '你是一个专业的电影分镜图像生成提示词专家。请根据提供的镜头信息，生成适合AI图像生成的提示词。\n\n重要：这是镜头的首帧 - 一个完全静态的画面，展示动作发生之前的初始状态。\n\n核心规则：\n1. 聚焦初始静态状态 - 动作发生之前的那一瞬间，禁止包含任何动作或运动描述\n2. 描述角色在画面中的位置（画面左/中/右）、朝向（面向/背对/侧面）、初始姿态和表情\n3. 如提供了角色外貌信息，必须将其融入提示词（仅使用固定身份特征：脸型、五官、发型、肤质、标记等，严禁添加或推断任何服装、衣着、服饰描述，服装由参考图决定）\n\n【电影语言规范（必须应用）】\n\n构图规则（根据景别选择）：\n- 三分法：主体置于三分线交点，稳定平衡，适合大多数叙事镜头\n- 框架构图：用门窗/树枝/栏杆形成自然画框，突出主体，增加纵深\n- 中心构图：对称庄重，适合特写和仪式感场景\n- 前景遮挡：前景虚化元素增加层次感\n\n光线设计（必须描述）：\n- 光源方向：左侧光/右侧光/顶光/逆光（轮廓光）/底光\n- 光线质感：硬光（强烈阴影，戏剧张力）/ 柔光（柔和过渡，自然温馨）\n- 色温：暖光（金黄/橙红，温暖怀旧）/ 冷光（蓝调/青白，冷漠疏离）\n\n景深设置：\n- 特写/近景：浅景深，背景虚化，突出人物情绪\n- 中景：中等景深，人物与环境均清晰\n- 远景/全景：深景深，前后均清晰，交代空间关系';
@@ -1440,12 +1486,19 @@ The USER message includes MULTI_BEAT_OUTPUT, TOTAL_CLIP_SECONDS, SHOT_PACING_AND
 FORBIDDEN output styles: SoulLens single-line (主体:/叙事动态:/禁BGM tag); @人物N as image tokens. Use ONLY the multi-beat block below — same as「全能分镜模式」batch storyboard output.
 ${specZh}
 
-This is **one** API clip whose wall-clock length is TOTAL_CLIP_SECONDS. It is a **single continuous take** —
-write exactly **ONE** beat line「分镜1： T1秒:」. T1 MUST equal TOTAL_CLIP_SECONDS exactly.
+This is **one** API clip whose wall-clock length is TOTAL_CLIP_SECONDS. Write exactly **ONE** beat line
+「分镜1： T1秒:」. T1 MUST equal TOTAL_CLIP_SECONDS exactly.
 
-**Why exactly one**: the local MiniMax H3 model shoots a single continuous take per generation; it does not
-support cuts, montage or split screens. Multiple beats corrupt the picture. To show several shots, split them
-into separate storyboard entries instead.
+**Intra-shot cuts (H3 native multi-shot)**: that single 分镜1 line MAY contain 2-4 cuts, expressed only
+through the model's own notation — "[Shot 1] … [Shot 2] At 00:03.200, the camera cuts to …" — and only when
+this shot is a **fight / chase / combo / rapid action burst** whose beats one unbroken camera move cannot
+cover. PROLOGUE / PRESERVE_CUTS tells you how many cuts the current draft already uses: keep that count.
+When you use cuts, line 3 MUST be the multi-shot LINE3 (LINE3_REQUIRED will be the multi variant).
+**Why**: a 9-second single-take fight spends ~8 of those seconds establishing the space and only ~0.8s on
+the clash (measured). Beats inside ONE generation keep space, characters, lighting and audio consistent —
+that is what makes a fight continuous. Do NOT spend separate storyboard entries on the beats of one fight.
+For every other shot stay single-shot: 分镜2：/分镜3： lines are always forbidden, and so is narrative
+「切镜到」「镜头2」「随后切换到」 wording.
 
 Output structure (no lines before or after this block):
 
@@ -1454,13 +1507,13 @@ Line 1 — exactly:
 NOTHING — do NOT add 真人写实 / 电影风格 / 高清画质, they contradict a project style that does not
 contain them (e.g. 水墨/国画/动画). Use those generic tags ONLY when no project style is given at all.>
 
-Line 2 — exactly (one single shot, never 分镜2):
+Line 2 — exactly (always 1; never 分镜2):
 生成一个由以下 1 个分镜组成的视频。
 
 Line 3 — copy LINE3_REQUIRED from the USER message verbatim.
 
-Line 4 — the single beat line (exactly one, no more):
-分镜1： T1秒: <Rich cinematic Chinese prose for this one continuous take: camera motion chain (≥2 moves when T1≥5s), @图片N bindings per IMAGE_SLOT_MAP, light, emotion. Dialogue: …说："verbatim" or …："verbatim". No speech: 无对白。 Narration: 旁白（画面无声）："verbatim". Avoid static snapshot captions. Forbidden: 「切镜到」「镜头2」「随后切换到」 or any multi-shot wording.>
+Line 4 — the single beat line (exactly one 分镜1 line, no more lines):
+分镜1： T1秒: <Rich cinematic Chinese prose for this clip: camera motion chain (≥2 moves when T1≥5s), @图片N bindings per IMAGE_SLOT_MAP, light, emotion. If you use intra-shot cuts, start with "[Shot 1]" and mark each later beat with "[Shot 2] At MM:SS.mmm, the camera cuts to …". Dialogue: …说："verbatim" or …："verbatim". No speech: 无对白。 Narration: 旁白（画面无声）："verbatim". Avoid static snapshot captions. Forbidden: 分镜2： lines and narrative 「切镜到」「镜头2」「随后切换到」 wording.>
 
 DIALOGUE — CRITICAL (when USER message contains DIALOGUE_VERBATIM):
 - Every line listed under「必须逐字出现在输出中的台词」MUST appear in the 分镜1 line inside 「」, character-for-character (only spacing around @图片N may vary).
@@ -1476,11 +1529,11 @@ Reference images — CRITICAL (applies to the 分镜1 line’s prose):
 - No @姓名 as image token; no markdown.
 
 Single-take pacing (professional):
-- Read SHOT_PACING_AND_POSITION, EPISODE_SCRIPT, NEIGHBOR_* , STORYBOARD FIELDS (movement, shot_type, dialogue density) only to decide **how this one continuous take moves and paces** — never to introduce cuts.
+- Read SHOT_PACING_AND_POSITION, EPISODE_SCRIPT, NEIGHBOR_* , STORYBOARD FIELDS (movement, shot_type, dialogue density) to decide **how this clip moves and paces**. Cuts are allowed ONLY as the "[Shot N] At MM:SS.mmm," notation, and only for a fight/chase/combo burst.
 - T1 must equal TOTAL_CLIP_SECONDS exactly.
 
 Scene reference layout — CRITICAL (when SCENE_REFERENCE_LAYOUT applies):
-- Reference may be multi-panel; do NOT make the final video mimic grids. The 分镜1 line’s prose should reinforce: one continuous full frame, no split-screen collage in the delivered clip.
+- Reference may be multi-panel; do NOT make the final video mimic grids. The 分镜1 line’s prose should reinforce: no split-screen collage in the delivered clip (intra-shot cuts are real editorial cuts, not panels).
 
 If CURRENT_UNIVERSAL_SEGMENT is non-empty, preserve narrative beats but rewrite to satisfy MULTI_BEAT_OUTPUT, duration sum, and IMAGE_SLOT_MAP.`;
 }
@@ -1495,7 +1548,8 @@ ADDITIONAL_POLISH_MODE (short drama enhancement — still MUST obey MULTI_BEAT_O
 - You receive FULL_EPISODE_SCRIPT plus NEIGHBOR blocks and structured fields. Use them only for **continuity** and **information completeness**; do NOT invent plot absent from SCRIPT + STORYBOARD FIELDS + CURRENT omni draft.
 - **Information parity**: every script-relevant fact must appear in the single 分镜1 line, without losing information when expanding; if the draft was an old SoulLens single-line, **rewrite** into this multi-beat block; keep the same facts and total seconds.
 - **Re-polish / anti-stagnation**: USER may click polish repeatedly on the same draft. Each response MUST deliver **substantially rephrased** Chinese on lines 1, 2 (if M changes), and the body line — same facts, same total seconds, same @图片 bindings, but **not** a copy-paste of CURRENT_OMNI_DRAFT except line 3 which must stay **character-identical** to LINE3_REQUIRED. If you would otherwise output nearly identical prose, deliberately vary verbs, clause order, and camera wording while preserving meaning.
-- **Short drama rhythm**: vertical-drama density — stakes, micro-expressions, blocking, camera motion; express it inside the single continuous take.
+- **Short drama rhythm**: vertical-drama density — stakes, micro-expressions, blocking, camera motion; express it inside the single 分镜1 line (intra-shot cuts are available for fight/chase bursts, per the base rules; keep the cut count the draft already uses).
+- **Cut markers are structural**: if the draft contains "[Shot N] At MM:SS.mmm," markers, copy them back **character-for-character** — same count, same numbering, same timestamps. Never renumber, retime, merge or drop them, and never translate them. Removing a cut turns a fight back into one mushy take.
 - **Inner monologue & dialogue**: brief 心想 / 「」 only when supported by DIALOGUE / NARRATION / SCRIPT / draft. When DIALOGUE_VERBATIM is present, **every** listed line must remain verbatim in 「」 after polish; rephrase motion/camera text freely but **not** quoted dialogue.
 - **Neighbors**: align entry/exit with NEIGHBOR_* ; no redundant retelling of the previous shot.
 - **State consistency (HARD)**: the body line's ENDING state MUST agree with this shot's ACTION / RESULT, and its

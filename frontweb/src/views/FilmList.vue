@@ -362,6 +362,7 @@ import { aiAPI } from '@/api/ai'
 import { imagesAPI } from '@/api/images'
 import { taskAPI } from '@/api/task'
 import { getStyleLabel } from '@/constants/styleOptions'
+import { DEFAULT_VIDEO_CLIP_DURATION } from '@/utils/scriptDurationEstimate'
 
 const router = useRouter()
 const { isDark, toggle: toggleTheme } = useTheme()
@@ -673,7 +674,7 @@ async function submitNew() {
   if (!title) return
   newSaving.value = true
   try {
-    const drama = await dramaAPI.create({ title, description: newForm.value.description?.trim() || undefined, metadata: { aspect_ratio: newForm.value.aspect_ratio || '16:9', video_resolution: newForm.value.video_resolution || '720p' } })
+    const drama = await dramaAPI.create({ title, description: newForm.value.description?.trim() || undefined, metadata: { aspect_ratio: newForm.value.aspect_ratio || '16:9', video_resolution: newForm.value.video_resolution || '720p', video_clip_duration: DEFAULT_VIDEO_CLIP_DURATION } })
     showNewDialog.value = false
     ElMessage.success('项目已创建')
     loadList()

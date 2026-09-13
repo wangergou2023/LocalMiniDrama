@@ -7,6 +7,10 @@
  * @returns {{ ok:true, userPrompt:string, durationLabel:string, durationSec:number, sbId:number, episodeId:number, storyboardNumber:number } | { ok:false, code:'not_found'|'bad_request', message:string }}
  */
 function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
+  const {
+    pickUniversalLine3, parseCutMarkers, MAX_INTRA_SHOTS, LINE3_NO_SCENE_MULTI,
+    detectFightShot, FIGHT_INTRA_SHOTS,
+  } = require('./universalOmniMultiBeatFormat');
   const bodyIn = reqBody && typeof reqBody === 'object' ? reqBody : {};
   const forceWithoutReferenceImages = !!bodyIn.force_without_reference_images;
 
@@ -289,6 +293,19 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
 
   let imageSlotMapBlock;
   let line3Required;
+  // 草稿里已有的**镜内剪辑点**数量：本轮必须保持，否则「润色」会把打斗镜的切拍抹掉，
+  // 又退回「一条连续运镜演完 5 拍」的老样子（实测打斗只挤在最后 0.8 秒就是这么来的）。
+  const draftCutCount = parseCutMarkers(sb.universal_segment_text).length;
+  // 打斗/动作爆发镜：即使草稿还是老的单镜写法，也要切拍 —— 只靠提示词里说「打斗镜可以切拍」
+  // 模型会保守地不动（实测 sb349 写着「当头劈下/抄棒横架/火星迸溅」仍输出「单镜头连续画幅」）。
+  const fight = detectFightShot(sb);
+  const targetCuts = draftCutCount >= 2
+    ? Math.min(MAX_INTRA_SHOTS, draftCutCount)          // 已有剪辑点 → 原样保持
+    : (fight.fight ? FIGHT_INTRA_SHOTS : 1);             // 没剪辑点 → 打斗镜切 3 拍，其余保持单镜
+  const intraShots = Math.max(1, Math.min(MAX_INTRA_SHOTS, targetCuts));
+  const isMultiShot = intraShots >= 2;
+  const keepingDraftCuts = draftCutCount >= 2;
+  const cuttingForFight = !keepingDraftCuts && fight.fight;
   if (slots.length === 0) {
     imageSlotMapBlock = [
       'IMAGE_SLOT_MAP（无图强制模式：尚无已上传场景/角色/道具参考图；视频 API 当前无实际参考图槽位。若正文仍写 @图片N，仅表示与将来补图顺序对齐的占位，出片前须核对）:',
@@ -301,10 +318,13 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
       'IMAGE_SLOT_MAP（全能模式提交视频时参考图顺序；正文仅可使用下列占位符，与 API 一致）:',
       ...slots.map((s) => `${s.tag} = ${s.kind}「${s.summary}」`),
     ].join('\n');
-    line3Required =
-      slots[0].kind === '场景'
-        ? `环境、光影与陈设定性参考 ${slots[0].tag}。若 ${slots[0].tag} 为宫格或多画面拼图，禁止成片复刻其分格或并列布局，仅提取统一的空间、光线与氛围语义；须单镜头完整连续画面。`
-        : '本片段以首张参考图 @图片1 作为画面锚点展开。';
+    // 第3行随本镜是否镜内切镜而变：单镜形态含「须单镜头完整连续画面」，
+    // 与正文里的 [Shot 2] At MM:SS.mmm 直接冲突，多镜时必须换成多镜形态。
+    line3Required = slots[0].kind === '场景'
+      ? pickUniversalLine3(true, intraShots).replace(/@图片1/g, slots[0].tag)
+      : (isMultiShot
+          ? LINE3_NO_SCENE_MULTI
+          : '本片段以首张参考图 @图片1 作为画面锚点展开。');
   }
 
   const charCount = charNamesOrdered.length;
@@ -374,7 +394,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     ? [
         'SCENE_REFERENCE_LAYOUT（场景参考图可能是多宫格/多视角拼图，仅作内容与空间参考，成片禁止模仿拼图）:',
         '- 场景槽位（通常为 @图片1）常见为四宫格、九宫格或带分割线的多视角场景图：只提取家具、装修、色调、空间关系与光影，不要在提示中引导模型生成「分屏、宫格、多画面并列、复刻参考图网格」。',
-        '- 每一个「分镜k： Tk秒:」所在行的正文里都应点明：单镜头连续画幅、无成片宫格分屏；参考拼图仅用于理解空间与光线。',
+        '- 正文里应点明：无成片宫格分屏；参考拼图仅用于理解空间与光线。镜内剪辑点是**真正的剪辑**（不是拼贴），不要把它写成宫格/分屏。',
       ].join('\n')
     : '';
 
@@ -410,21 +430,21 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     shotPacingBlock = [
       'SHOT_PACING_AND_POSITION:',
       `TOTAL_CLIP_SECONDS: ${durationLabel}（本条数据库分镜 = 一次成片 API 的整段时长；只写 1 条分镜行）`,
-      'SINGLE_TAKE_ONLY: 本地 MiniMax H3 是单镜头连续画面模型，禁止内部切镜，禁止自选 M（恒为 1）',
+      `INTRA_SHOT_CUTS: ${intraShots}（H3 镜内镜头数；用 [Shot N] At MM:SS.mmm, 记号表达，禁写「分镜2：」行）`,
       `SHOT_ORDER: ${ix >= 0 ? ix + 1 : '?'} / ${totalShots}`,
       `SHOT_POSITION_TAG: ${posTag}`,
       chunk('SEGMENT_TITLE_PREV', prevSeg || null),
       chunk('SEGMENT_TITLE_CURRENT', currSeg || null),
       chunk('SEGMENT_TITLE_NEXT', nextSeg || null),
       segChange
-        ? 'BOUNDARY_HINT: 段落标题相对上一镜已变化 → 这是**新分镜条目**的信号，应在分镜层面拆分，而不是在同一条内切镜。'
-        : 'BOUNDARY_HINT: 同段落延续 → 在本条连续镜头内用运镜与节奏表现时间流动，不要切镜。',
+        ? 'BOUNDARY_HINT: 段落标题相对上一镜已变化 → 这是**新分镜条目**的信号，应在分镜层面拆分；不要靠镜内剪辑点来跨段落。'
+        : 'BOUNDARY_HINT: 同段落延续 → 优先用运镜与节奏表现时间流动；只有打斗/追击/连招爆发才用镜内剪辑点。',
     ].join('\n');
   } catch (_) {
     shotPacingBlock = [
       'SHOT_PACING_AND_POSITION:',
       `TOTAL_CLIP_SECONDS: ${durationLabel}`,
-      'SINGLE_TAKE_ONLY: 本地 MiniMax H3 是单镜头连续画面模型，禁止内部切镜，禁止自选 M（恒为 1）',
+      'INTRA_SHOT_CUTS: 1（无法读取当前草稿时的保守默认：单镜）',
     ].join('\n');
   }
 
@@ -478,7 +498,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
         fmtN(nextFull, 'NEIGHBOR_NEXT_DETAIL'),
         '',
         'NEIGHBOR_SEQUENCE_RULE（避免与相邻分镜重复，违反即失败）:',
-        '- 本分镜的「分镜1」（开头子节拍）**严禁**重演 NEIGHBOR_PREV_DETAIL 里上一镜已完成的动作/结局。例如上一镜结尾是「抛刀化寒光射向分身」或「二人对视蓄势」，本镜开头不得再写一遍同样的抛刀/对视。',
+        '- 本分镜的开头（[Shot 1] 或分镜1 正文起句）**严禁**重演 NEIGHBOR_PREV_DETAIL 里上一镜已完成的动作/结局。例如上一镜结尾是「抛刀化寒光射向分身」或「二人对视蓄势」，本镜开头不得再写一遍同样的抛刀/对视。',
         '- 本分镜应在上一镜**结束后的新状态**上继续推进：先一句承接上一镜结果（如「寒光散去/蓄势后」），随即进入本镜自己的新动作，而不是把上一镜的动作再演一次。',
         '- 本分镜结尾也不得提前演出 NEIGHBOR_NEXT_DETAIL 中下一镜的核心动作；相邻两镜的「结束→开始」只做状态承接，不重复同一动作或同一情景整段。',
         '- 若本镜与上一镜题材连续（如「分身围攻」接「破分身」），明确把「上一镜的结果」作为本镜起点，再从该结果派生新动作，避免两镜都在演同一个挥刀/相撞/抛刀的瞬间。',
@@ -487,14 +507,25 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
   } catch (_) {}
 
   const multiBeatContract = [
-    'SINGLE_TAKE_CONTRACT（一条成片 API = 一个连续镜头）:',
-    '- **固定 1 条分镜行**：本地 MiniMax H3 是单镜头连续画面模型，一次生成只拍一个连续镜头，不支持切镜/拼贴/分屏；多写分镜行会导致画面崩坏。',
+    'BEAT_BLOCK_CONTRACT（一条成片 API = 一条「分镜1：」行）:',
+    '- **恒为 1 条分镜行**：禁止出现「分镜2：」及之后的**行**（那是我们库里的分镜条目，不是 H3 的镜头）。',
+    `- INTRA_SHOT_CUTS: ${intraShots} —— 本镜**镜内镜头数**（H3 的镜头，不是我们库里的分镜条目）。` +
+      (keepingDraftCuts
+        ? ' 当前草稿已有这些剪辑点，本轮**必须原样保持**：数量、编号、时间戳都不许改、不许删。'
+        : cuttingForFight
+          ? ` **本镜判定为打斗/动作爆发镜（命中：${fight.hits.slice(0, 6).join('、')}）→ 必须切成 ${intraShots} 拍**，` +
+            '把定场压进 [Shot 1] 的前 1-2 秒，其余时长全部给打斗本身；' +
+            '否则会出现「前 8 秒都在介绍环境、最后 0.8 秒才交锋」的实测问题。'
+          : ' 本轮保持单镜：本镜不是打斗镜，不要引入剪辑点。'),
+    '- 镜内切镜**只能**用 H3 原生记号表达：`[Shot 1] … [Shot 2] At 00:03.200, the camera cuts to …`；' +
+      '[Shot 1] 不带时间戳，其后每拍带 `At MM:SS.mmm,`，时间严格递增且小于本镜时长。' +
+      '**打斗镜的时间戳要按拍均分本镜时长**（例如 9 秒 3 拍 ≈ 00:03.000 / 00:06.000），不要全挤在开头或结尾。',
     '- 第1行：「画面风格和类型:」…必须完全遵循下方 STYLE_HINT/STYLE_ZH 给定的风格；若 STYLE_ZH 已给定（例如“中国传统水墨画风格，泼墨写意技法…”），**整句只能使用该给定风格，禁止再叠加“真人写实、电影风格、高清画质、写实摄影、真实人物”等与之冲突的修饰词**；风格描述内部必须自洽、无相互矛盾项。',
     '- 第2行：必须逐字为「生成一个由以下 1 个分镜组成的视频。」',
-    '- 第3行：必须逐字等于 LINE3_REQUIRED（见下）。',
-    `- 第4行（且只有这一行）：「分镜1： ${durationLabel}秒: 」+ 该连续镜头的动态影像与运镜描写（同一镜头内可含两步运镜衔接，如 缓推→横移；参考图用 @图片N）。`,
+    '- 第3行：必须逐字等于 LINE3_REQUIRED（见下）。**注意**：本镜有镜内剪辑点时，LINE3_REQUIRED 已是多镜形态（含「允许镜内切镜」），不得改回「须单镜头完整连续画面」。',
+    `- 第4行（且只有这一行）：「分镜1： ${durationLabel}秒: 」+ 本镜的动态影像与运镜描写（同一镜头内可含两步运镜衔接，如 缓推→横移；参考图用 @图片N）。`,
     `- 约束：T1 必须严格等于 TOTAL_CLIP_SECONDS（=${durationLabel}）；**禁止出现「分镜2：」及之后的任何行**。`,
-    '- **禁止**：「切镜到」「镜头2」「第二个镜头」「随后切换到」「镜头切换」等任何多镜头描述；需要多个镜头时应拆成多个分镜条目，而不是在同一条里切镜。',
+    '- **禁止**叙述性多镜头措辞：「切镜到」「镜头2」「第二个镜头」「随后切换到」「镜头切换」。剪辑只能通过 `[Shot N] At MM:SS.mmm,` 记号表达。',
     '- 本镜不得重演上一分镜结尾已完成的情景（见 NEIGHBOR_SEQUENCE_RULE），应从上一镜结果后的新状态推进并派生本镜新动作；本镜结尾留给下一分镜做状态承接。',
     '- **状态一致性（硬性，违反即失败）**：正文的**收尾状态**必须与本镜 ACTION / RESULT 一致。① 不得把 RESULT 里明确留在画面内的人或物写成「空无一人」「不见人影」「人影全无」这类**清场措辞**；② 描述「在更早的镜头里已经发生、现在只是持续」的状态，只用**静态措辞**（横卧／静置／散落／已倒／昏迷不醒），**禁止用会让人以为正在发生的动作措辞**（倒下／倒地／栽倒／扑倒）——视频模型会据此把已经演过的动作**再演一遍**。',
     '- 禁止额外说明行、markdown、英文小标题。',

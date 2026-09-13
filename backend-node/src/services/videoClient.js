@@ -3886,6 +3886,11 @@ async function callVideoApi(db, log, opts) {
       prompt: comfyPrompt,
       model,
       image_url: opts.image_url || opts.first_frame_url,
+      // 首尾帧：H3 参考路径用它们做 MiniMaxH3AddGuide 关键帧锚定（首帧 @frame_idx=0、尾帧 @-1）。
+      // 此前只传了 image_url，storyboards.first_frame_image_id / last_frame_image_id 在本地渲染里
+      // 完全没被用上 —— 用户绑定了尾帧也不会生效。
+      first_frame_url: opts.first_frame_url,
+      last_frame_url: opts.last_frame_url,
       reference_image_urls: opts.reference_urls,
       reference_labels: opts.reference_labels,
       reference_audio_urls: opts.reference_audio_urls,

@@ -61,10 +61,19 @@ function addSpeakingAction(zhText) {
  */
 const MASK_REF = /(?:@图片|参考图|<Picture)\s*(\d+)>?/g;
 const MASK_DLG = /<d>([\s\S]*?)<\/d>/g;
+/**
+ * H3 镜内剪辑记号（`[Shot 1]` / `[Shot 2] At 00:03.200,`）。
+ *
+ * 为什么要掩码：这是**结构性记号**，H3 靠它决定在哪里切镜。翻译模型一旦「顺手」把它译成
+ * 「第二个镜头，从 3.2 秒起」之类的中文散文，剪辑点就没了 —— 打斗镜会退回一条连续运镜，
+ * 又变成前 8 秒定场、最后 0.8 秒交锋。所以整个记号（含时间戳）物理上不参与翻译，翻完原样填回。
+ */
+const MASK_CUT = /\[Shot\s+(\d+)\](?:\s*At\s+(?:\d{1,2}:)?\d{2}:\d{2}\.\d{3})?(?:\s*,?\s*(?:the camera cuts to|the camera cut to|the shot cuts to|the shot cut to|we cut to|cutting to))?/g;
 
 function maskSegmentText(text) {
   const refs = [];
   const dlgs = [];
+  const cuts = [];
   let out = String(text || '');
   // 先挖对白（对白里可能含标签，必须先保护）
   out = out.replace(MASK_DLG, (_m, inner) => {
@@ -75,11 +84,16 @@ function maskSegmentText(text) {
     refs.push(n);
     return '#R' + (refs.length - 1) + '#';
   });
-  return { masked: out, refs, dlgs };
+  // 剪辑记号放在标签之后挖，避免与 #Rn# 冲突
+  out = out.replace(MASK_CUT, (m) => {
+    cuts.push(m);
+    return '#C' + (cuts.length - 1) + '#';
+  });
+  return { masked: out, refs, dlgs, cuts };
 }
 
 /** 还原占位符；参考标签统一规范成 <Picture N>（comfyuiClient 认这个形式） */
-function unmaskSegmentText(text, refs, dlgs) {
+function unmaskSegmentText(text, refs, dlgs, cuts) {
   let out = String(text || '');
   out = out.replace(/#R(\d+)#/g, (_m, i) => {
     const n = refs[Number(i)];
@@ -88,6 +102,10 @@ function unmaskSegmentText(text, refs, dlgs) {
   out = out.replace(/#D(\d+)#/g, (_m, i) => {
     const inner = dlgs[Number(i)];
     return inner == null ? _m : '<d>' + inner + '</d>';
+  });
+  out = out.replace(/#C(\d+)#/g, (_m, i) => {
+    const raw = (cuts || [])[Number(i)];
+    return raw == null ? _m : raw;
   });
   return out;
 }
@@ -98,6 +116,8 @@ const SYSTEM_PROMPT = [
   'The text you receive contains placeholders that MUST be preserved exactly as written:',
   '  #R0#, #R1#, #R2# …   stand for reference assets (scene / character / prop images)',
   '  #D0#, #D1#, #D2# …   stand for blocks of spoken dialogue',
+  '  #C0#, #C1#, #C2# …   stand for on-screen cut markers (they carry the shot number and the exact',
+  '                        cut timestamp of an intra-shot edit, e.g. [Shot 2] At 00:03.200,)',
   '',
   'RULES (follow exactly):',
   '1. Translate everything else into natural, concrete English.',
@@ -109,6 +129,10 @@ const SYSTEM_PROMPT = [
   '4. Keep speaker IDs such as (S1), (S2) attached to the same sentence they were attached to.',
   '5. Keep the opening style sentence, the shot heading (e.g. "分镜1： 9秒:" → "Shot 1, 9 seconds:"),',
   '   and any "no split screen / no grid" constraints.',
+  '5b. A #Cn# placeholder marks an editorial cut INSIDE the clip. Leave it exactly where it was, do not',
+  '    translate or explain it, and make the prose right after it start the next shot (e.g.',
+  '    "#C1# the camera cuts to a close-up of …"). Never drop it: dropping it turns a two-shot fight',
+  '    sequence back into one unbroken take.',
   '6. Whenever a #Dn# placeholder follows, the speaker MUST be described as actively speaking on',
   '   screen with the mouth visibly moving, e.g. "#R3# says in a gentle, clear voice: #D0#".',
   '   A phrase that only names a voice quality (e.g. "his voice is gentle and clear:") is NOT',
@@ -171,7 +195,7 @@ async function ensureEnglishSegmentText(db, log, storyboardId, zhText, opts = {}
   // 标签与对白先挖成占位符，翻译只处理散文 → 翻完再填回，保证它们逐字不变。
   // 不能指望译模型自觉保留：实测它会时而保留 @图片N、时而规范成 <Picture N>、时而整段丢掉，
   // 导致校验对不上（labels:[0,14] / [14,0]）→ 误判失败 → 白回退中文正文。
-  const { masked, refs, dlgs } = maskSegmentText(marked);
+  const { masked, refs, dlgs, cuts } = maskSegmentText(marked);
 
   let en = null;
   try {
@@ -193,10 +217,12 @@ async function ensureEnglishSegmentText(db, log, storyboardId, zhText, opts = {}
   // 还原前先确认译模型没弄坏占位符（丢了任何一个就说明翻译不可信）
   const gotRef = (en.match(/#R\d+#/g) || []).length;
   const gotDlg = (en.match(/#D\d+#/g) || []).length;
-  if (gotRef !== refs.length || gotDlg !== dlgs.length) {
+  const gotCut = (en.match(/#C\d+#/g) || []).length;
+  if (gotRef !== refs.length || gotDlg !== dlgs.length || gotCut !== cuts.length) {
     log.warn('[分镜英译] 占位符数量不符，回退中文正文', {
       storyboard_id: id, ref_expect: refs.length, ref_got: gotRef,
       dlg_expect: dlgs.length, dlg_got: gotDlg,
+      cut_expect: cuts.length, cut_got: gotCut,
     });
     return null;
   }
@@ -208,7 +234,7 @@ async function ensureEnglishSegmentText(db, log, storyboardId, zhText, opts = {}
     log.warn('[分镜英译] 译模型擅自添加了 <d> 标签，已剥除', { storyboard_id: id, stray: strayD });
     en = en.replace(/<\/?d>/g, '');
   }
-  en = unmaskSegmentText(en, refs, dlgs);
+  en = unmaskSegmentText(en, refs, dlgs, cuts);
 
   // 4. 校验：参考标签与台词块必须原样保留，否则不采用（宁可回退中文也不要用坏的 prompt）
   //

@@ -36,6 +36,20 @@ export const STORYBOARD_PLAN_SECONDS = 8
 /** 单镜时长下限（秒）—— 本地 MiniMax H3 官方验证的下限 124 帧 ÷ 24fps = 5.17s */
 export const STORYBOARD_MIN_SECONDS = 5.2
 
+/**
+ * 新建项目的「每段秒数」默认值（秒）—— 即**单镜时长上限**。
+ *
+ * 为什么是 15 而不是 5：这个字段是**上限**，不是每镜目标值（单镜时长由 AI 在
+ * [5.2, 上限] 内按内容浮动）。旧默认 5 会直接撞上 5.2 的地板 —— `maxSec(5) < minSec(5.2)`
+ * 使 `Math.max(minSec, Math.min(maxSec, x))` 恒等于 5.2，于是**每个镜头都被钉死在 5.2 秒**，
+ * 提示词里还会写出不可能的「5.2-5 秒区间」。15 也是本地 H3 的上限（362 帧 = 15.08s），
+ * 选它等于「不人为限制」，让时长完全由内容决定。
+ */
+export const DEFAULT_VIDEO_CLIP_DURATION = 15
+
+/** 「每段秒数」下拉的可选值（与 FilmCreate 一键全流程的选项一致） */
+export const VIDEO_CLIP_DURATION_OPTIONS = [4, 5, 8, 10, 12, 15]
+
 export function estimateVideoDurationSecFromCharLen(charLen) {
   const len = Math.max(0, Math.floor(Number(charLen) || 0))
   if (len < 1) return null
@@ -43,4 +57,11 @@ export function estimateVideoDurationSecFromCharLen(charLen) {
   return Math.min(600, Math.max(10, raw))
 }
 
-export default { estimateVideoDurationSecFromCharLen, SCRIPT_CHARS_PER_SECOND, STORYBOARD_PLAN_SECONDS, STORYBOARD_MIN_SECONDS }
+export default {
+  estimateVideoDurationSecFromCharLen,
+  SCRIPT_CHARS_PER_SECOND,
+  STORYBOARD_PLAN_SECONDS,
+  STORYBOARD_MIN_SECONDS,
+  DEFAULT_VIDEO_CLIP_DURATION,
+  VIDEO_CLIP_DURATION_OPTIONS,
+}

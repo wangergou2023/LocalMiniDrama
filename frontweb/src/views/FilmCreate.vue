@@ -2861,6 +2861,15 @@
             </span>
             <span v-else style="color: #67c23a">全部合规</span>
           </el-descriptions-item>
+          <el-descriptions-item label="镜内切拍">
+            <span v-if="qualityReport.stats.fights_without_cuts" style="color: #e6a23c">
+              {{ qualityReport.stats.fights_without_cuts }} 个打斗镜未切拍
+            </span>
+            <span v-else-if="qualityReport.stats.multi_shot" style="color: #67c23a">
+              {{ qualityReport.stats.multi_shot }} 镜已切拍
+            </span>
+            <span v-else style="color: #909399">无打斗镜</span>
+          </el-descriptions-item>
         </el-descriptions>
 
         <div v-if="qualityReport.missing_dialogue && qualityReport.missing_dialogue.length" style="margin-top: 14px">
@@ -2881,6 +2890,31 @@
           </div>
           <div v-for="(b, i) in qualityReport.missing_beats" :key="i" style="line-height: 1.7; font-size: 13px">
             · {{ b.beat }}<span v-if="b.reason" style="color: #909399"> —— {{ b.reason }}</span>
+          </div>
+        </div>
+
+        <div v-if="qualityReport.fights_without_cuts && qualityReport.fights_without_cuts.length" style="margin-top: 14px">
+          <div style="font-weight: 600; margin-bottom: 6px; color: #e6a23c">
+            以下打斗镜没有镜内切拍（仍是一条连续运镜）：
+          </div>
+          <div v-for="(f, i) in qualityReport.fights_without_cuts" :key="i" style="line-height: 1.7; font-size: 13px">
+            · 镜{{ f.storyboard_number != null ? f.storyboard_number : '?' }} {{ f.title }}
+            <span v-if="f.hits && f.hits.length" style="color: #909399">（命中打斗词：{{ f.hits.join('、') }}）</span>
+          </div>
+          <div style="margin-top: 6px; font-size: 12px; color: #909399">
+            本地 H3 支持一次生成内切镜（<code>[Shot N] At MM:SS.mmm,</code>）。不切拍时打斗多半会退化成
+            「大半时长在介绍环境、真正的交锋只挤在最后一瞬」（实测 9 秒的打斗镜只有最后约 0.8 秒在打）。
+            在这些镜上点「生成全能提示词」重写一次即可自动切成按拍的多镜头。
+          </div>
+        </div>
+
+        <div v-if="qualityReport.cuts_without_fight && qualityReport.cuts_without_fight.length" style="margin-top: 10px">
+          <div style="font-weight: 600; margin-bottom: 6px; color: #909399">
+            以下非打斗镜却切了镜内拍（可能是模型自行加的，若本是一段连续表演建议改回单镜）：
+          </div>
+          <div v-for="(c, i) in qualityReport.cuts_without_fight" :key="i" style="line-height: 1.7; font-size: 13px">
+            · 镜{{ c.storyboard_number != null ? c.storyboard_number : '?' }} {{ c.title }}
+            <span style="color: #909399">（{{ c.cuts }} 拍）</span>
           </div>
         </div>
 
@@ -2951,7 +2985,7 @@ import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
 import { generationSettingsAPI } from '@/api/prompts'
 import { parseScriptIntoEpisodes, episodesListToPlainScript } from '@/utils/scriptEpisodes'
-import { estimateVideoDurationSecFromCharLen, STORYBOARD_PLAN_SECONDS } from '@/utils/scriptDurationEstimate'
+import { estimateVideoDurationSecFromCharLen, STORYBOARD_PLAN_SECONDS, DEFAULT_VIDEO_CLIP_DURATION } from '@/utils/scriptDurationEstimate'
 import { parseTaskResult } from '@/utils/taskResult'
 import { exportStoryboardSheet } from '@/utils/exportStoryboardSheet'
 import StylePickerButton from '@/components/StylePickerButton.vue'
@@ -3047,7 +3081,9 @@ const isStoryGenRunning = computed(() => {
 const generationStyle = ref('')
 const customStylePrompt = ref('')
 const projectAspectRatio = ref('16:9')
-const videoClipDuration = ref(5)
+// 「每段秒数」= **单镜时长上限**（不是每镜目标值）。默认取本地 H3 的上限 15s：
+// 旧默认 5 会撞上 5.2 的地板，使每个镜头都被钉死在 5.2 秒（详见 utils/scriptDurationEstimate.js）。
+const videoClipDuration = ref(DEFAULT_VIDEO_CLIP_DURATION)
 
 function aspectRatioPixels(aspectRatio, resolution) {
   const res = String(resolution || '720p').toLowerCase()
@@ -3640,7 +3676,7 @@ const gridMode = ref('single') // 序列图模式：single / quad_grid / nine_gr
 /** 用于估算的每段时长（秒），与一键成片处「X秒/段」一致；这是**单镜时长上限** */
 function clipSecondsForStoryboardEstimate() {
   const c = Number(videoClipDuration.value)
-  return Math.max(2, Math.min(60, Number.isFinite(c) && c > 0 ? c : 5))
+  return Math.max(2, Math.min(60, Number.isFinite(c) && c > 0 ? c : DEFAULT_VIDEO_CLIP_DURATION))
 }
 
 /**
@@ -5094,7 +5130,7 @@ async function loadDrama() {
     }
     projectAspectRatio.value = (d.metadata && d.metadata.aspect_ratio) ? d.metadata.aspect_ratio : '16:9'
     storeVideoResolution.value = (d.metadata && d.metadata.video_resolution) ? d.metadata.video_resolution : '720p'
-    videoClipDuration.value = (d.metadata && d.metadata.video_clip_duration) ? Number(d.metadata.video_clip_duration) : 5
+    videoClipDuration.value = (d.metadata && d.metadata.video_clip_duration) ? Number(d.metadata.video_clip_duration) : DEFAULT_VIDEO_CLIP_DURATION
     storyboardIncludeNarration.value = !!(d.metadata && d.metadata.storyboard_include_narration)
     storyboardUniversalOmni.value = !!(d.metadata && d.metadata.storyboard_universal_omni)
     storyboardUseFirstLastFrame.value = !!(d.metadata && d.metadata.storyboard_use_first_last_frame)
@@ -5497,7 +5533,7 @@ async function saveProjectSettings(includeGenerationStyle = false) {
     story_style: storyStyle.value || undefined,
     aspect_ratio: projectAspectRatio.value || '16:9',
     video_resolution: videoResolution.value || '720p',
-    video_clip_duration: videoClipDuration.value || 5,
+    video_clip_duration: videoClipDuration.value || DEFAULT_VIDEO_CLIP_DURATION,
     storyboard_include_narration: !!storyboardIncludeNarration.value,
     storyboard_universal_omni: !!storyboardUniversalOmni.value,
     storyboard_use_first_last_frame: !!storyboardUseFirstLastFrame.value,
@@ -6350,7 +6386,7 @@ function universalSegmentDurationSecForSb(sb) {
       ? dRow
       : Number.isFinite(dProj) && dProj > 0
         ? dProj
-        : 5
+        : DEFAULT_VIDEO_CLIP_DURATION
 }
 
 /** 提交视频 API 时使用的时长：优先本分镜配置，其次项目「每段秒数」 */

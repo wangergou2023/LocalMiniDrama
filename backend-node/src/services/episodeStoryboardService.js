@@ -1279,6 +1279,13 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
       checked: stored.checked,
       noncompliant: stored.noncompliant,
       noncompliant_sample: stored.samples,
+      // 镜内剪辑点（H3 原生多镜头）：打斗镜该切拍却还是单镜，是最该被点出来的问题
+      multi_shot: stored.multi_shot,
+      cut_total: stored.cut_total,
+      fights_without_cuts: stored.fights_without_cuts,
+      fights_without_cuts_sample: stored.fights_without_cuts_samples,
+      cuts_without_fight: stored.cuts_without_fight,
+      cuts_without_fight_sample: stored.cuts_without_fight_samples,
       // 入库时被自动修复/换成兜底的数量由 saveStoryboards 侧提供；部分恢复路径拿不到，记 0
       repaired: Number(opts.saveRepaired) || 0,
       fatal: Number(opts.saveFatal) || 0,
@@ -1289,6 +1296,13 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
         noncompliant: stored.noncompliant,
         checked: stored.checked,
         sample: stored.samples,
+      });
+    }
+    if (stored.fights_without_cuts > 0) {
+      log.warn('[分镜] 有打斗镜没有镜内切拍（会退化成「大半时长在定场、交锋只挤在最后一瞬」）', {
+        episode_id: episodeIdNum,
+        count: stored.fights_without_cuts,
+        sample: stored.fights_without_cuts_samples,
       });
     }
   } catch (e) {

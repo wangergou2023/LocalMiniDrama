@@ -11,6 +11,152 @@ function trim(s) {
   return s != null && String(s).trim() ? String(s).trim() : '';
 }
 
+/**
+ * H3 原生**镜内剪辑记号**。
+ *
+ * 背景（本文件最重要的更正）：`chooseBeatCount` 顶部那段「H3 是单镜头模型、不支持切镜」的结论
+ * **是错的**。官方 H3 提示词规范明确支持一次生成内多镜头，用 `[Shot N]` 标记每一镜、
+ * 用 `At MM:SS.mmm, the camera cuts to …` 标记剪辑点，并给出完整示例：
+ *   `[Shot 1] … says: <d>[English] First batch of the morning.</d>
+ *    [Shot 2] At 00:05.000, the camera cuts to a close-up of steam rising from the sliced bread
+ *    while the baker's final words carry over from the previous shot.`
+ * 全篇唯一的「偏好单镜」是 **FL2VA 专属**（首末帧插值任务），Ref2VA 不受此限。
+ *
+ * 所以「分镜」（我们库里的 storyboard = 一次成片 API）与「[Shot N]」（这次生成内部的镜头）
+ * 是**两个层级**，不冲突：一条 universal_segment_text 仍然只写一条「分镜1：」行，
+ * 但它的正文里允许出现 `[Shot 2] At 00:03.000, the camera cuts to …` 这样的镜内剪辑点。
+ *
+ * 为什么必须放开：实测「花果山对峙」（drama2 镜10，9 秒）写成单镜后，前 ~8 秒全被定场与运镜
+ * 吃掉，真正「抡起金箍棒当头劈下 / 抄棒横架」的打斗只挤在最后 0.8 秒。打斗要连续，
+ * 只能靠一次生成内的多拍剪辑（空间、人物、光照、音轨天然一致），而不是跨 clip 硬接。
+ */
+const CUT_MARKER_RE = /\[Shot\s+(\d+)\]\s*(?:At\s+(?:(\d{1,2}):)?(\d{2}):(\d{2})\.(\d{3})\s*)?/g;
+
+/** 一次生成内允许的最大镜数。官方示例都是 2-3 镜；8 秒塞 4 拍已是极限。 */
+const MAX_INTRA_SHOTS = 4;
+
+function cutTimeToSec(h, m, s) {
+  return (Number(h) || 0) * 3600 + Number(m) * 60 + Number(s);
+}
+
+/**
+ * 秒 → `00:03.200`（官方记号的写法：`MM:SS.mmm`，两位分钟）。
+ * 官方示例全部是 `At 00:03.500` / `At 00:05.000` 这种两位分钟格式，
+ * 本项目的片段都在 15 秒内，因此不需要小时位。
+ */
+function secToCutTime(sec) {
+  const v = Math.max(0, Number(sec) || 0);
+  const m = Math.floor(v / 60);
+  const s = v % 60;
+  return String(m).padStart(2, '0') + ':' + s.toFixed(3).padStart(6, '0');
+}
+
+/** `[Shot 3] At 00:05.600` 或首镜 `[Shot 1]` */
+function formatCutMarker(n, atSec) {
+  if (atSec == null) return '[Shot ' + Number(n) + ']';
+  return '[Shot ' + Number(n) + '] At ' + secToCutTime(atSec);
+}
+
+/**
+ * 抽出正文里的镜内剪辑点（按出现顺序）。
+ * 同时接受官方两位分钟格式 `MM:SS.mmm` 与三位小时格式 `HH:MM:SS.mmm`。
+ * @returns {Array<{n:number, atSec:number|null, raw:string, index:number}>}
+ */
+function parseCutMarkers(text) {
+  const t = String(text || '');
+  const out = [];
+  CUT_MARKER_RE.lastIndex = 0;
+  let m;
+  while ((m = CUT_MARKER_RE.exec(t))) {
+    out.push({
+      n: Number(m[1]),
+      // 组：1=镜号，2=小时(可选)，3=分，4=秒，5=毫秒 —— 秒与毫秒要拼成 "03.200" 再转数
+      atSec: m[4] == null ? null : cutTimeToSec(m[2], m[3], m[4] + '.' + m[5]),
+      raw: m[0],
+      index: m.index,
+    });
+  }
+  return out;
+}
+
+/**
+ * 校验镜内剪辑点序列是否自洽（只在正文里确实写了 `[Shot N]` 时才检查）。
+ *
+ * @param {string} text 整条 universal_segment_text
+ * @param {number} [durationSec] 本镜时长（来自「分镜1： T秒:」行）；未知时跳过时间检查
+ * @returns {string[]} 问题列表（空数组 = 合规）
+ */
+function checkCutMarkers(text, durationSec) {
+  const problems = [];
+  const cuts = parseCutMarkers(text);
+  if (!cuts.length) return problems;
+  if (cuts.length > MAX_INTRA_SHOTS) {
+    problems.push(`镜内剪辑点 ${cuts.length} 个 > 上限 ${MAX_INTRA_SHOTS}`);
+  }
+  if (cuts[0].n !== 1) problems.push('首个镜内剪辑点必须是 [Shot 1]');
+  if (cuts[0].atSec != null && cuts[0].atSec !== 0) {
+    problems.push('[Shot 1] 不应带时间戳（首镜从 0.00 秒开始）');
+  }
+  for (let i = 1; i < cuts.length; i++) {
+    if (cuts[i].n !== cuts[i - 1].n + 1) {
+      problems.push(`镜内剪辑点编号不连续：[Shot ${cuts[i - 1].n}] → [Shot ${cuts[i].n}]`);
+    }
+    if (cuts[i].atSec == null) {
+      problems.push(`[Shot ${cuts[i].n}] 缺少剪辑时间戳（应为 "At MM:SS.mmm,"）`);
+      continue;
+    }
+    if (cuts[i - 1].atSec != null && cuts[i].atSec <= cuts[i - 1].atSec) {
+      problems.push(`镜内剪辑点时间未递增：${cuts[i - 1].atSec}s → ${cuts[i].atSec}s`);
+    }
+    const dur = Number(durationSec);
+    if (Number.isFinite(dur) && dur > 0 && cuts[i].atSec >= dur) {
+      problems.push(`镜内剪辑点 ${cuts[i].atSec}s 超出本镜时长 ${dur}s`);
+    }
+  }
+  return problems;
+}
+
+/** 从「分镜1： T秒:」行取本镜时长 */
+function parseBeatDurationSec(text) {
+  const m = String(text || '').match(/分镜\s*1\s*[:：]\s*([\d.]+)\s*秒/);
+  const v = m ? Number(m[1]) : NaN;
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+/**
+ * 本镜是不是**打斗/动作爆发**镜 —— 决定要不要镜内切拍。
+ *
+ * 为什么要判：提示词里只说「打斗镜可以切拍」时，模型会保守地保持单镜（实测 sb349：
+ * 明明写着「抡圆了当头劈下 / 抄棒横架相迎 / 两棒相交迸出火星」，输出仍是「单镜头连续画幅」一条）。
+ * 要让打斗真的切拍，就得给一个**确定性**的判定，再据此下明确指令。
+ *
+ * 判定用**强动作词**而不是「打」这种泛词（否则「打发」「打听」会误判）：
+ *   · 成对交锋词（交手/交锋/厮杀/对打/招架/举棒相迎/两棒相交/打到…）→ 命中一个即算
+ *   · 单字动作动词（劈/砍/刺/抡/砸/扫/架住/击中…）→ 需命中 ≥2 个不同词
+ *
+ * 词表来自真实数据的对照。实测「真假美猴王」21 镜里，只靠单字动词会**漏掉一半打斗镜** ——
+ * 镜10「抡起金箍棒当头就打」只命中「抡」一个，镜11/12/14「两猴打到南海/天宫/西天」一个都不命中
+ * （它们用的词是「打到」），镜16「抡棒一棒将其打死」也只命中「抡」。
+ *
+ * @param {{action?:string, description?:string, title?:string, result?:string}} sb
+ * @returns {{ fight: boolean, hits: string[] }}
+ */
+const FIGHT_PAIR_RE = /(打斗|交手|交锋|厮杀|对打|恶战|混战|斗法|招架|迎战|迎击|格挡|过招|拳脚|激战|鏖战|打到|就打|开打|相迎|相交|举棒|挥棒|抡起|一棒|火花|打死|击中|受伤|负伤)/g;
+const FIGHT_VERB_RE = /(劈|砍|斩|刺|抡|砸|扫|架住|横架|挡|撞|踢|踹|捣|戳|猛击|出拳|一掌|兵器)/g;
+
+function detectFightShot(sb) {
+  const src = [sb && sb.title, sb && sb.action, sb && sb.description, sb && sb.result]
+    .filter(Boolean).join(' ');
+  if (!src.trim()) return { fight: false, hits: [] };
+  const pairs = src.match(FIGHT_PAIR_RE) || [];
+  const verbs = Array.from(new Set(src.match(FIGHT_VERB_RE) || []));
+  const hits = pairs.concat(verbs);
+  return { fight: pairs.length > 0 || verbs.length >= 2, hits: Array.from(new Set(hits)) };
+}
+
+/** 打斗镜的目标镜内镜头数（3 拍：起势/交锋/结果。官方示例也都是 2-3 镜） */
+const FIGHT_INTRA_SHOTS = 3;
+
 /** 保留多行，仅规范换行 */
 function normalizeUniversalSegmentTextNewlines(text) {
   if (!text) return '';
@@ -21,9 +167,13 @@ function normalizeUniversalSegmentTextNewlines(text) {
 }
 
 /**
- * 子分镜数恒为 1。本地 MiniMax H3 是**单镜头连续画面**模型，一次生成只拍一个连续镜头、
- * 不支持切镜；原先按「每 5 秒一拍」拆成 1–8 段，会把多个镜头塞进同一次生成导致画面崩坏。
- * 需要多个镜头时应在分镜层面拆成多条，而不是在这里再分子分镜。
+ * 「分镜行」数恒为 1（一条 universal_segment_text = 一次成片 API = 一块骨架）。
+ *
+ * 注意这里说的是**分镜行**（`分镜1： T秒:` 那种整行），不是 H3 的镜内剪辑点。
+ * 历史上「每 5 秒一拍」拆成 1–8 **行** 的做法确实会把画面塞崩，因为拆出来的每一行都自带
+ * `分镜k： Tk秒:` 前缀，而 H3 从未被这样告知剪辑点在哪 —— 它只看到 8 段文字，于是同时演出。
+ * 正确写法见 CUT_MARKER_RE 的注释：仍然只有 1 行，但行内用官方记号
+ * `[Shot N] At MM:SS.mmm, the camera cuts to …` 明确标出每一拍与剪辑时刻。
  */
 function chooseBeatCount() {
   return 1;
@@ -101,14 +251,48 @@ function buildFallbackUniversalMultiBeatText(sb, d, styleHint) {
  */
 const LINE3_NO_SCENE = '本片段以首张参考图 @图片1 作为画面锚点展开。';
 
+/**
+ * LINE3 的**多镜形态**：本镜正文里会出现 `[Shot N] At MM:SS.mmm,` 镜内剪辑点时使用。
+ *
+ * 为什么必须换句而不能沿用 DEFAULT_LINE3：后者结尾是「须单镜头完整连续画面」，
+ * 与正文里的 `[Shot 2] At 00:03.000, the camera cuts to …` **直接冲突** ——
+ * 正是本项目反复吃亏的那类自相矛盾指令（一如「真人写实」撞上水墨风格）。
+ * 换成多镜形态后，「禁止复刻参考图宫格/分屏」这个**原意**（防的是把参考拼图搬进成片）
+ * 仍然保留，只是不再禁止镜内剪辑。
+ */
+const LINE3_MULTI = '环境、光影与陈设定性参考 @图片1。若 @图片1 为宫格或多画面拼图，禁止成片复刻其分格或并列布局，仅提取统一的空间、光线与氛围语义；本条为一次生成内的连续多镜头剪辑，允许镜内切镜（见 [Shot N] 剪辑点），但禁止成片宫格、分屏与多画面并列。';
+
+/** 多镜形态：本镜没有场景参考图时（scene_id 为空） */
+const LINE3_NO_SCENE_MULTI = '本片段以首张参考图 @图片1 作为画面锚点展开；本条为一次生成内的连续多镜头剪辑，允许镜内切镜（见 [Shot N] 剪辑点），但禁止成片宫格与分屏。';
+
+/** 4 种合法 LINE3（单镜/多镜 × 有场景图/无场景图） */
+const LINE3_VARIANTS = [DEFAULT_LINE3, LINE3_NO_SCENE, LINE3_MULTI, LINE3_NO_SCENE_MULTI];
+
+/** 给定时长与镜内镜数时，该用哪一句 LINE3 */
+function pickUniversalLine3(hasScene, intraShots) {
+  const multi = Number(intraShots) >= 2;
+  if (multi) return hasScene ? LINE3_MULTI : LINE3_NO_SCENE_MULTI;
+  return hasScene ? DEFAULT_LINE3 : LINE3_NO_SCENE;
+}
+
 /** LINE3 是否属于任一合法形态 */
 function isUniversalLine3(text) {
-  const t = String(text || '');
+  let t = String(text || '');
   if (!t) return false;
-  if (t.includes(DEFAULT_LINE3) || t.includes(LINE3_NO_SCENE)) return true;
+  // 参考图标签可能被写成「参考图N」（MiniMax 官方 r2va 用词，见 universalSegmentPromptBundle 的 imgRef）
+  // 或 <Picture N>；比对前一律归一成 @图片N，否则完全正确的第3行会被误判为不合规。
+  t = t.replace(/参考图\s*(\d+)/g, '@图片$1').replace(/<Picture\s*(\d+)>/g, '@图片$1');
+  if (LINE3_VARIANTS.some((v) => t.includes(v))) return true;
   // 场景槽位不一定是 @图片1（极少见），按句式认
-  return /环境、光影与陈设定性参考 @图片\d+。若 @图片\d+ 为宫格或多画面拼图[^\n]*须单镜头完整连续画面。/.test(t)
-    || /本片段以首张参考图 @图片\d+ 作为画面锚点展开。/.test(t);
+  return /环境、光影与陈设定性参考 @图片\d+。若 @图片\d+ 为宫格或多画面拼图[^\n]*(须单镜头完整连续画面|允许镜内切镜)[^\n]*。/.test(t)
+    || /本片段以首张参考图 @图片\d+ 作为画面锚点展开。/.test(t)
+    || /本片段以首张参考图 @图片\d+ 作为画面锚点展开；[^\n]*允许镜内切镜[^\n]*。/.test(t);
+}
+
+/** LINE3 是不是**多镜**形态（正文有 [Shot 2]+ 时必须是） */
+function isMultiShotLine3(text) {
+  const t = String(text || '').replace(/参考图\s*(\d+)/g, '@图片$1');
+  return t.includes(LINE3_MULTI) || t.includes(LINE3_NO_SCENE_MULTI) || /允许镜内切镜/.test(t);
 }
 
 const SINGLE_SHOT_DECL_RE = /生成一个由以下\s*1\s*个分镜组成的视频/;
@@ -139,6 +323,17 @@ function validateUniversalSegmentText(text, opts = {}) {
 
   const beats = t.match(/分镜\s*\d+\s*[:：]/g) || [];
   if (beats.length !== 1) problems.push(`分镜行数 ${beats.length} ≠ 1`);
+
+  // 镜内剪辑点（H3 原生多镜记号）：只在正文确实写了 [Shot N] 时才检查。
+  // 多镜正文必须配多镜形态的 LINE3 —— 「须单镜头完整连续画面」和
+  // 「[Shot 2] At 00:03.000, the camera cuts to …」是自相矛盾的指令。
+  const cuts = parseCutMarkers(t);
+  if (cuts.length) {
+    for (const p of checkCutMarkers(t, parseBeatDurationSec(t))) problems.push(p);
+    if (cuts.length >= 2 && !isMultiShotLine3(t)) {
+      problems.push('正文有多个 [Shot N] 剪辑点，但第3行仍是单镜形态 LINE3（须单镜头完整连续画面）');
+    }
+  }
 
   // 已废弃格式的指纹
   if (/@人物\s*\d/.test(t)) problems.push('使用了禁止的 @人物N（应用 @图片N）');
@@ -224,6 +419,13 @@ function repairUniversalSegmentText(text, opts = {}) {
     line3 = DEFAULT_LINE3;
     changes.push('第3行不是合法 LINE3，已替换为规范原文');
   }
+  // 正文写了镜内剪辑点，第3行却还是单镜形态（「须单镜头完整连续画面」）→ 换成多镜形态。
+  // 这是**格式自相矛盾**，不是内容问题，属于「骨架错 → 只换骨架那几行」的范畴。
+  const cutCount = parseCutMarkers(lines.slice(beatIdx).join('\n')).length;
+  if (cutCount >= 2 && !isMultiShotLine3(line3)) {
+    line3 = pickUniversalLine3(/环境、光影与陈设定性参考/.test(line3), 2);
+    changes.push('正文含镜内剪辑点，第3行已换成多镜形态 LINE3');
+  }
 
   const fixed = [line1, line2, line3, ...extras, ...lines.slice(beatIdx)].join('\n').replace(/\r\n?/g, '\n');
   // 修完还不合规（例如正文里混进了 @人物N 或 [禁BGM]）就交给调用方走兜底
@@ -249,17 +451,64 @@ function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
     (r) => r && r.creation_mode === 'universal'
   );
   const samples = [];
+  let multiShot = 0;
+  let cutTotal = 0;
+  // 打斗镜与镜内切拍的一致性：**打斗镜没切拍**是最该被点出来的问题 ——
+  // 实测单镜打斗会把 ~90% 的时长花在定场与运镜上，真正的交锋只挤在最后一瞬。
+  // 只有调用方给的 row 里带 action/title 时才能判（saveStoryboards 的概要路径不一定带）。
+  const fightsWithoutCuts = [];
+  const cutsWithoutFight = [];
   for (const r of rows) {
     const v = validateUniversalSegmentText(r.universal_segment_text, opts);
     if (!v.ok) samples.push({ id: r.id ?? null, title: r.title || '', problems: v.problems });
+    const cuts = parseCutMarkers(r.universal_segment_text).length;
+    if (cuts >= 2) multiShot += 1;
+    cutTotal += cuts;
+    if (r.action || r.title) {
+      const f = detectFightShot(r);
+      if (f.fight && cuts < 2) {
+        fightsWithoutCuts.push({
+          id: r.id ?? null, title: r.title || '', storyboard_number: r.storyboard_number ?? null,
+          hits: f.hits.slice(0, 4),
+        });
+      } else if (!f.fight && cuts >= 2) {
+        cutsWithoutFight.push({
+          id: r.id ?? null, title: r.title || '', storyboard_number: r.storyboard_number ?? null, cuts,
+        });
+      }
+    }
   }
-  return { checked: rows.length, noncompliant: samples.length, samples: samples.slice(0, 5) };
+  return {
+    checked: rows.length,
+    noncompliant: samples.length,
+    samples: samples.slice(0, 5),
+    multi_shot: multiShot,
+    cut_total: cutTotal,
+    fights_without_cuts: fightsWithoutCuts.length,
+    fights_without_cuts_samples: fightsWithoutCuts.slice(0, 5),
+    cuts_without_fight: cutsWithoutFight.length,
+    cuts_without_fight_samples: cutsWithoutFight.slice(0, 5),
+  };
 }
 
 module.exports = {
   DEFAULT_LINE3,
   LINE3_NO_SCENE,
+  LINE3_MULTI,
+  LINE3_NO_SCENE_MULTI,
+  LINE3_VARIANTS,
   isUniversalLine3,
+  isMultiShotLine3,
+  pickUniversalLine3,
+  MAX_INTRA_SHOTS,
+  FIGHT_INTRA_SHOTS,
+  detectFightShot,
+  parseCutMarkers,
+  checkCutMarkers,
+  parseBeatDurationSec,
+  formatCutMarker,
+  secToCutTime,
+  cutTimeToSec,
   normalizeUniversalSegmentTextNewlines,
   chooseBeatCount,
   splitDurationSeconds,

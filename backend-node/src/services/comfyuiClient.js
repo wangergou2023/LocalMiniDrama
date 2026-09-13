@@ -683,7 +683,7 @@ function hasH3ReferenceNode(wf) {
  *  - 无 labels：每张参考图一个 LoadImage，逐张切槽（最多 9 张，节点 Autogrow 上限）。
  * 就地修改 apiPrompt，返回说明头（可为空串）。
  */
-function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles, audioLabels, dialogueSpeakers, shotSeconds, log) {
+function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles, audioLabels, dialogueSpeakers, shotSeconds, log, guideFrames) {
   let h3Id = null;
   for (const [nid, node] of Object.entries(apiPrompt)) {
     if (node && node.class_type === 'MiniMaxH3ReferenceToVideo') { h3Id = nid; break; }
@@ -811,13 +811,107 @@ function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles, 
       open_d: openD, close_d: closeD,
     });
   }
+
+  // 关键帧/首尾帧锚定（storyboard 的 first_frame / last_frame 图）。
+  // 见 applyH3GuideFramesToApi 顶部注释：Ref2VA 路径此前完全不用首尾帧图。
+  if (guideFrames && (guideFrames.first || guideFrames.last)) {
+    const guideNote = applyH3GuideFramesToApi(apiPrompt, h3Id, guideFrames, log);
+    if (guideNote) h3.__guideNote = guideNote;
+  }
   return header;
+}
+
+/**
+ * 把故事板的**首帧图 / 尾帧图**接成 H3 的关键帧锚点。
+ *
+ * 为什么走 MiniMaxH3AddGuide 而不是换工作流：
+ *   · `MiniMaxH3ImageToVideo` 确实自带 first_frame/last_frame 入参（I2VA/FL2VA），但它**不含**
+ *     多图参考（场景/角色/道具）——换成它等于丢掉本管线赖以保持一致性的 Ref2VA 参考。
+ *   · `MiniMaxH3AddGuide` 专门为此而设（节点原文：Anchor an image … at any frame of a MiniMax H3
+ *     video. Chain several nodes to anchor several frames.），它把关键帧写进 conditioning 的
+ *     `minimax_keyframes`，而 model_base.py 的 extra_conds 把 keyframes 与 refs 一起并进
+ *     `cond_video_latents`、一起交给 PackedLayout —— 两者**可共存**，所以 Ref2VA 参考与首尾帧锚定不冲突。
+ *   · 客户端注入节点是本文件既有做法（ref_images / ref_audios 都是运行时加的 LoadImage/LoadAudio），
+ *     不必新增工作流文件、也不必让用户在「AI 配置」里改选工作流。
+ *
+ * 接线（A03 实测结构）：136 MiniMaxH3ReferenceToVideo 输出 (0=conditioning, 1=latent) →
+ * 126 BasicGuider.conditioning。插入后变成 136 → guide → guide → 126。
+ * ADDGUIDE 必须有 latent（它按 latent 的真实帧数校验 frame_idx），因此复用 136 的 latent 输出；
+ * vae 必须接**视频** VAE（不是音频 VAE），直接复用 H3 节点上那个 vae 源，保证与主链同一设备/精度。
+ *
+ * frame_idx：首帧 = 0；尾帧 = -1（节点文档：Negative values are counted from the end of the video）。
+ *
+ * @returns {string} 说明串（写入日志），未接线时返回空串
+ */
+function applyH3GuideFramesToApi(apiPrompt, h3Id, guideFrames, log) {
+  const h3 = apiPrompt[h3Id];
+  if (!h3 || !h3.inputs) return '';
+  if (!guideFrames || (!guideFrames.first && !guideFrames.last)) return '';
+  // latent 只有 ReferenceToVideo / ImageToVideo 这类节点才有第二个输出；没有就不硬接
+  const vaeSrc = h3.inputs.vae;
+  if (!Array.isArray(vaeSrc)) {
+    if (log && log.warn) log.warn('[ComfyUI/H3] 首尾帧锚定跳过：H3 节点没有 vae 输入，无法编码关键帧');
+    return '';
+  }
+
+  // 找到消费 H3 conditioning 的下游节点（A03 里是 BasicGuider），把它的 conditioning 改接到 guide 链尾
+  let consumer = null;
+  let consumerKey = null;
+  for (const [nid, node] of Object.entries(apiPrompt)) {
+    if (!node || !node.inputs || nid === h3Id) continue;
+    for (const [k, v] of Object.entries(node.inputs)) {
+      if (Array.isArray(v) && v.length === 2 && String(v[0]) === String(h3Id) && Number(v[1]) === 0) {
+        consumer = nid;
+        consumerKey = k;
+        break;
+      }
+    }
+    if (consumer) break;
+  }
+  if (!consumer) {
+    if (log && log.warn) log.warn('[ComfyUI/H3] 首尾帧锚定跳过：找不到消费 H3 conditioning 的下游节点');
+    return '';
+  }
+
+  const notes = [];
+  // 首帧在前、尾帧在后（链式追加，顺序即 keyframes 数组顺序）
+  const plan = [];
+  if (guideFrames.first) plan.push({ tag: 'first', file: guideFrames.first, frameIdx: 0, label: '首帧' });
+  if (guideFrames.last && guideFrames.last !== guideFrames.first) {
+    plan.push({ tag: 'last', file: guideFrames.last, frameIdx: -1, label: '尾帧' });
+  }
+  if (!plan.length) return '';
+
+  let prevCond = [h3Id, 0];
+  for (const p of plan) {
+    const ldId = 'h3_kf_ld_' + p.tag;
+    const guideId = 'h3_kf_guide_' + p.tag;
+    apiPrompt[ldId] = { class_type: 'LoadImage', inputs: { image: p.file } };
+    apiPrompt[guideId] = {
+      class_type: 'MiniMaxH3AddGuide',
+      inputs: {
+        positive: prevCond,
+        latent: [h3Id, 1],
+        vae: vaeSrc,
+        image: [ldId, 0],
+        frame_idx: p.frameIdx,
+      },
+    };
+    prevCond = [guideId, 0];
+    notes.push(p.label + '(' + p.file + ' @frame_idx=' + p.frameIdx + ')');
+  }
+  // 把下游 guider 改接到 guide 链尾
+  apiPrompt[consumer].inputs[consumerKey] = prevCond;
+  return notes.join(' + ') + ' → node ' + consumer + '.' + consumerKey;
 }
 
 async function callComfyUIVideoApi(config, log, opts) {
   const { prompt, model, image_url, video_gen_id, files_base_url, storage_local_path, reference_image_urls, reference_labels, reference_audio_urls, voice_reference_url, voice_reference_name, dialogue_speakers } = opts;
   const reference_audio_names = opts.reference_audio_names;
-  const baseUrl = (config.base_url || "http://127.0.0.1:8188").replace(/\/$/, "");
+  // 故事板首帧/尾帧（首尾帧模式下用户在画布上绑定的图）。H3 参考路径用它做关键帧锚定；
+  // 非 H3 路径只看 image_url，不受影响。
+  const firstFrameUrl = opts.first_frame_url || opts.first_frame_local_path || null;
+  const lastFrameUrl = opts.last_frame_url || opts.last_frame_local_path || null;  const baseUrl = (config.base_url || "http://127.0.0.1:8188").replace(/\/$/, "");
 
   const fs = require("fs");
   const path = require("path");
@@ -976,8 +1070,38 @@ async function callComfyUIVideoApi(config, log, opts) {
 
     // H3 参考生视频：分组/拼图/说明头/动态槽位已由 applyH3RefsToApi 处理，跳过首帧图覆盖
     if (isH3Ref) {
-      const header = applyH3RefsToApi(apiPrompt, refImages || [], refLabelsArr, prompt || '', refAudios, voiceRefLabels, dialogue_speakers, frames / fps, log);
+      // 首尾帧图：上传/拷进 ComfyUI input 目录，作为关键帧锚点（可选）。
+      // 仅对本条分镜显式绑定的首帧/尾帧生效；没有绑定就完全不接线，行为与从前一致。
+      let guideFrames = null;
+      const wantFirst = firstFrameUrl ? String(firstFrameUrl).trim() : '';
+      const wantLast = lastFrameUrl ? String(lastFrameUrl).trim() : '';
+      // image_url 是「本镜主图」，在经典模式下等价于首帧 → 只有用户显式绑定了 first_frame 才当作关键帧，
+      // 否则会把每张参考图都变成首帧锚点，反而锁死运镜起点。
+      if (wantFirst || wantLast) {
+        try {
+          const gf = {};
+          if (wantFirst) {
+            const p = await prepareReferenceImages([wantFirst], inputDir, log, storage_local_path);
+            if (p && p.length) gf.first = p[0];
+          }
+          if (wantLast) {
+            const p = await prepareReferenceImages([wantLast], inputDir, log, storage_local_path);
+            if (p && p.length) gf.last = p[0];
+          }
+          if (gf.first || gf.last) guideFrames = gf;
+        } catch (e) {
+          log.warn('[ComfyUI/H3] 首尾帧图准备失败，本次不做关键帧锚定', { error: e.message });
+        }
+      }
+      const header = applyH3RefsToApi(apiPrompt, refImages || [], refLabelsArr, prompt || '', refAudios, voiceRefLabels, dialogue_speakers, frames / fps, log, guideFrames);
       log.info("[ComfyUI/H3] 参考生视频，参考图 " + (refImages ? refImages.length : 0) + " 张，参考音频 " + (refAudios ? refAudios.length : 0) + " 段" + (header ? '（含说明头）' : ''));
+      if (guideFrames) {
+        log.info('[ComfyUI/H3] 关键帧锚定已接线', {
+          first_frame: guideFrames.first || null,
+          last_frame: guideFrames.last || null,
+          note: apiPrompt['h3_kf_guide_last'] || apiPrompt['h3_kf_guide_first'] ? 'MiniMaxH3AddGuide' : '',
+        });
+      }
     } else {
       // 非 H3 工作流的通用注入（RandomNoise / LoadImage / CLIPTextEncode 对任何工作流都适用）
       for (const [nid, node] of Object.entries(apiPrompt)) {
@@ -1038,4 +1162,4 @@ async function callComfyUIVideoApi(config, log, opts) {
   throw new Error('ComfyUI 视频配置未选择工作流：请在「AI 配置 → 视频服务」中选择工作流文件（settings.workflow）');
 }
 
-module.exports = { callComfyUIImageApi, callComfyUIVideoApi, parseSize, hasH3ReferenceNode, applyH3RefsToApi, prepareReferenceAudios };
+module.exports = { callComfyUIImageApi, callComfyUIVideoApi, parseSize, hasH3ReferenceNode, applyH3RefsToApi, applyH3GuideFramesToApi, prepareReferenceAudios };

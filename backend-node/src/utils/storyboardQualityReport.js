@@ -33,6 +33,10 @@ function buildStoryboardQualityReport(opts = {}) {
   const universalChecked = formatReport ? Number(formatReport.checked) || 0 : 0;
   const universalRepaired = formatReport ? Number(formatReport.repaired) || 0 : 0;
   const universalFatal = formatReport ? Number(formatReport.fatal) || 0 : 0;
+  // 镜内剪辑点（H3 原生多镜头）：打斗镜该切拍却还是单镜 —— 见 universalOmniMultiBeatFormat 顶部注释。
+  const fightsWithoutCuts = formatReport ? Number(formatReport.fights_without_cuts) || 0 : 0;
+  const cutsWithoutFight = formatReport ? Number(formatReport.cuts_without_fight) || 0 : 0;
+  const multiShot = formatReport ? Number(formatReport.multi_shot) || 0 : 0;
 
   // 报告是在流程的哪一步算的。**这点很重要**：生成任务结束时算的那份，校验的是
   // 「前端润色之前」的文本；而前端随后会逐条重写 universal_segment_text（实测 21 条约 80 秒），
@@ -58,6 +62,8 @@ function buildStoryboardQualityReport(opts = {}) {
   let hasFatal = false;
   let hasMissingBeats = false;
   let hasRepairs = false;
+  let hasFightsWithoutCuts = false;
+  let hasCutsWithoutFight = false;
 
   if (missingDialogue.length > 0) {
     verdict = 'fail';
@@ -88,6 +94,24 @@ function buildStoryboardQualityReport(opts = {}) {
       `有 ${universalRepaired} 条全能提示词骨架被自动修正（例如风格句写成了「真人写实」与项目风格冲突）——正文已保留，出片不受影响`
     );
   }
+  // 打斗镜没切拍：不是格式错误（正文完全合规），但它会让打斗**看不出来** ——
+  // 实测单镜打斗把约 8/9 秒花在定场与运镜上，真正的交锋只挤在最后 0.8 秒。所以降 warn 并点名。
+  if (fightsWithoutCuts > 0) {
+    if (verdict === 'ok') verdict = 'warn';
+    hasFightsWithoutCuts = true;
+    reasons.push(
+      `有 ${fightsWithoutCuts} 个打斗镜没有镜内切拍（仍是「一条连续运镜」）——本地 H3 支持在一次生成内用 ` +
+      `[Shot N] At MM:SS.mmm, 切镜；不切拍时打斗多半会退化成「大半时长在介绍环境、交锋只在最后一瞬」。` +
+      `可在这些镜上点「生成全能提示词」重写一次`
+    );
+  }
+  if (cutsWithoutFight > 0) {
+    if (verdict === 'ok') verdict = 'warn';
+    hasCutsWithoutFight = true;
+    reasons.push(
+      `有 ${cutsWithoutFight} 个非打斗镜切了镜内拍（可能是模型自行加的）——若这些镜本来是一段连续表演，建议改回单镜，避免画面被无谓打散`
+    );
+  }
   if (shotCount === 0) {
     verdict = 'fail';
     reasons.push('没有生成任何分镜');
@@ -99,11 +123,13 @@ function buildStoryboardQualityReport(opts = {}) {
   let headline;
   if (hasMissingDialogue || hasFatal || shotCount === 0) {
     headline = '建议重跑';
-  } else if (hasMissingBeats && hasRepairs) {
-    headline = '可出片，但有节拍缺失待确认（含自动修正）';
+  } else if (hasMissingBeats && (hasRepairs || hasFightsWithoutCuts)) {
+    headline = '可出片，但有节拍缺失待确认（含待修项）';
   } else if (hasMissingBeats) {
     headline = '可出片，但有节拍缺失待确认';
-  } else if (hasRepairs) {
+  } else if (hasFightsWithoutCuts) {
+    headline = '可出片（打斗镜建议切拍）';
+  } else if (hasRepairs || hasCutsWithoutFight) {
     headline = '可出片（有自动修正）';
   } else {
     headline = '可出片';
@@ -141,9 +167,18 @@ function buildStoryboardQualityReport(opts = {}) {
       beat_total: beatCoverage ? Number(beatCoverage.total) || 0 : 0,
       beat_covered: beatCoverage ? Number(beatCoverage.covered) || 0 : 0,
       beat_missing: missingBeats.length,
+      multi_shot: multiShot,
+      fights_without_cuts: fightsWithoutCuts,
+      cuts_without_fight: cutsWithoutFight,
     },
     missing_dialogue: missingDialogue.map((m) => ({ speaker: m.speaker || '', line: m.line || '' })),
     missing_beats: missingBeats.map((b) => ({ beat: b.beat || '', reason: b.reason || '' })),
+    fights_without_cuts: formatReport && Array.isArray(formatReport.fights_without_cuts_sample)
+      ? formatReport.fights_without_cuts_sample
+      : [],
+    cuts_without_fight: formatReport && Array.isArray(formatReport.cuts_without_fight_sample)
+      ? formatReport.cuts_without_fight_sample
+      : [],
     shots,
   };
 }

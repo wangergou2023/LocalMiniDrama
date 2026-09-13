@@ -576,15 +576,11 @@ function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
   // 打斗节奏自检（见 checkFightPacing）：只报**真的坏了**的 —— 定场挤压。
   // 初版规则「打斗镜没切拍就报警」在 drama4 上产生 8 条假警、0 条真问题，已废弃。
   let pacing = { fights: 0, cut: 0, split_sequence: 0, single_beat: 0, tail_crushed: [], cuts_without_fight: [] };
-  // 两套格式并存：六段结构走官方校验器，旧四行块走原校验器。
-  // （不分派的话新格式会被旧校验器整批判为不合规 —— 实测 14/14 全是假警。）
+  // 只有一种格式：Ref2VA 官方六段结构（旧四行块格式已废弃）
   const { validateRef2va } = require('./ref2vaFormat');
   for (const r of rows) {
     const raw = String(r.universal_segment_text || '');
-    const isRef2va = /^\s*subject_definitions\s*[:：]/im.test(raw);
-    const v = isRef2va
-      ? validateRef2va(raw, { durationSec: Number(r.duration) || undefined })
-      : validateUniversalSegmentText(raw, opts);
+    const v = validateRef2va(raw, { durationSec: Number(r.duration) || undefined });
     if (!v.ok) samples.push({ id: r.id ?? null, title: r.title || '', problems: v.problems });
     const cuts = parseCutMarkers(analysisTextOf(raw)).length;
     if (cuts >= 2) multiShot += 1;

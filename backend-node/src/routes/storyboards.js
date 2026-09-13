@@ -9,7 +9,7 @@ const promptI18n = require('../services/promptI18n');
 const angleService = require('../services/angleService');
 const { buildUniversalSegmentUserPromptBundle } = require('../services/universalSegmentPromptBundle');
 const { normalizeUniversalSegmentShotDurations } = require('../services/universalSegmentDurationNormalize');
-const { repairUniversalSegmentText } = require('../services/universalOmniMultiBeatFormat');
+const ref2vaFormat = require('../services/ref2vaFormat');
 
 /**
  * 取项目**中文**画风（与提示词里的 STYLE_ZH 同源），供全能片段骨架修复用。
@@ -39,7 +39,11 @@ function resolveDramaStyleZh(db, storyboardId) {
  */
 function saveUniversalSegmentText(db, log, sbId, text, tag) {
   const styleZh = resolveDramaStyleZh(db, sbId);
-  const rep = repairUniversalSegmentText(text, { styleZh });
+  // 只有 Ref2VA 六段结构（旧四行块已废弃）；缺段机械补齐，保住模型写的 detailed_description
+  const rep = ref2vaFormat.repairRef2va(text, {
+    summaryFallback: styleZh,
+    soundscapeFallback: '',
+  });
   if (rep.fatal) {
     log.warn('[分镜] 全能片段骨架不合规且无法就地修复，原样保存', {
       storyboard_id: sbId, tag, reasons: rep.changes,

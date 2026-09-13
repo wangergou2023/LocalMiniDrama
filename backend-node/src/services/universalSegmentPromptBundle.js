@@ -320,11 +320,10 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     ].join('\n');
     // 第3行随本镜是否镜内切镜而变：单镜形态含「须单镜头完整连续画面」，
     // 与正文里的 [Shot 2] At MM:SS.mmm 直接冲突，多镜时必须换成多镜形态。
+    // 环境参考约束：给模型逐字引用的一段话（写进 subject_definitions 或 summary）
     line3Required = slots[0].kind === '场景'
-      ? pickUniversalLine3(true, intraShots).replace(/@图片1/g, slots[0].tag)
-      : (isMultiShot
-          ? LINE3_NO_SCENE_MULTI
-          : '本片段以首张参考图 @图片1 作为画面锚点展开。');
+      ? `环境、光影与陈设定性参考 ${slots[0].tag}。若 ${slots[0].tag} 为宫格或多画面拼图，禁止成片复刻其分格或并列布局，仅提取统一的空间、光线与氛围语义；须一次生成内的连续画面。`
+      : '本片段以首张参考图 <Picture 1> 作为画面锚点展开。';
   }
 
   const charCount = charNamesOrdered.length;
@@ -506,29 +505,40 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
       ].join('\n');
   } catch (_) {}
 
+  // 旧的四行块契约（第1行风格/第2行声明/第3行 LINE3/第4行分镜行）已废弃 ——
+  // 现在只有 Ref2VA 官方六段结构，契约随之改写（否则「生成/润色」会把六段正文改回旧格式）。
   const multiBeatContract = [
-    'BEAT_BLOCK_CONTRACT（一条成片 API = 一条「分镜1：」行）:',
-    '- **恒为 1 条分镜行**：禁止出现「分镜2：」及之后的**行**（那是我们库里的分镜条目，不是 H3 的镜头）。',
-    `- INTRA_SHOT_CUTS: ${intraShots} —— 本镜**镜内镜头数**（H3 的镜头，不是我们库里的分镜条目）。` +
+    'REF2VA_CONTRACT（一条 universal_segment_text = 一次生成调用，必须写全官方六段）:',
+    '- 六段顺序固定、段名用英文原样：subject_definitions → summary → retention_analysis →' +
+      ' detailed_description → overall_soundscape → non_diegetic_music。',
+    '- **标签分层**：角色/场景/道具这类可复用可见内容一律建 <Subject N>，并把图片来源写进定义：' +
+      '「<Subject 2> 是 <Picture 2> 中的角色「唐僧」——外貌、发型与服装来自该图。」；' +
+      '<Picture N> **只在**该图本身充当某镜首帧/关键帧/尾帧/构图锚时才单独列条目。',
+    '- retention_analysis 每个标签一行，标记必须是**固定英文值**：可见内容 fully_preserved /' +
+      ' partially_preserved / attribute_transfer / weak_reference；音频 fully_copy / partially_copy /' +
+      ' reference / weak_reference。本节不写 (Sx)。',
+    '- detailed_description 先 1-2 句英文风格句，再逐镜头：[Shot 1] 不带时间戳；' +
+      '其后每镜写 [Shot N] At MM:SS.mmm, the camera cuts to …（时间严格递增且小于本镜时长）。' +
+      '单镜 5-10 秒目标 200-350 个英文词，构图/主体/环境/动作/运镜/音效/对白都要写全。',
+    '- 说话人写 <Subject N> (Sx) says, <d>[Chinese] 台词原文</d>；跨切镜台词两侧写 <scenetrans>，' +
+      '片尾截断写 <cutoff>。禁止概括台词。',
+    '- 参考音频写成 <Audio j> is the voice-timbre reference for <Subject N> (Sx).；' +
+      '只参考音色时不得复述参考音频里的原话。',
+    '- non_diegetic_music 本项目不使用背景音乐，写「无（不使用背景音乐）。」',
+    `- INTRA_SHOT_CUTS: ${intraShots} —— H3 镜内镜头数。` +
       (keepingDraftCuts
-        ? ' 当前草稿已有这些剪辑点，本轮**必须原样保持**：数量、编号、时间戳都不许改、不许删。'
+        ? ' 草稿已有这些剪辑点，必须原样保持（数量/编号/时间戳都不许改）。'
         : cuttingForFight
           ? ` **本镜判定为打斗/动作爆发镜（命中：${fight.hits.slice(0, 6).join('、')}）→ 必须切成 ${intraShots} 拍**，` +
-            '把定场压进 [Shot 1] 的前 1-2 秒，其余时长全部给打斗本身；' +
-            '否则会出现「前 8 秒都在介绍环境、最后 0.8 秒才交锋」的实测问题。'
-          : ' 本轮保持单镜：本镜不是打斗镜，不要引入剪辑点。'),
-    '- 镜内切镜**只能**用 H3 原生记号表达：`[Shot 1] … [Shot 2] At 00:03.200, the camera cuts to …`；' +
-      '[Shot 1] 不带时间戳，其后每拍带 `At MM:SS.mmm,`，时间严格递增且小于本镜时长。' +
-      '**打斗镜的时间戳要按拍均分本镜时长**（例如 9 秒 3 拍 ≈ 00:03.000 / 00:06.000），不要全挤在开头或结尾。',
-    '- 第1行：「画面风格和类型:」…必须完全遵循下方 STYLE_HINT/STYLE_ZH 给定的风格；若 STYLE_ZH 已给定（例如“中国传统水墨画风格，泼墨写意技法…”），**整句只能使用该给定风格，禁止再叠加“真人写实、电影风格、高清画质、写实摄影、真实人物”等与之冲突的修饰词**；风格描述内部必须自洽、无相互矛盾项。',
-    '- 第2行：必须逐字为「生成一个由以下 1 个分镜组成的视频。」',
-    '- 第3行：必须逐字等于 LINE3_REQUIRED（见下）。**注意**：本镜有镜内剪辑点时，LINE3_REQUIRED 已是多镜形态（含「允许镜内切镜」），不得改回「须单镜头完整连续画面」。',
-    `- 第4行（且只有这一行）：「分镜1： ${durationLabel}秒: 」+ 本镜的动态影像与运镜描写（同一镜头内可含两步运镜衔接，如 缓推→横移；参考图用 @图片N）。`,
-    `- 约束：T1 必须严格等于 TOTAL_CLIP_SECONDS（=${durationLabel}）；**禁止出现「分镜2：」及之后的任何行**。`,
-    '- **禁止**叙述性多镜头措辞：「切镜到」「镜头2」「第二个镜头」「随后切换到」「镜头切换」。剪辑只能通过 `[Shot N] At MM:SS.mmm,` 记号表达。',
-    '- 本镜不得重演上一分镜结尾已完成的情景（见 NEIGHBOR_SEQUENCE_RULE），应从上一镜结果后的新状态推进并派生本镜新动作；本镜结尾留给下一分镜做状态承接。',
-    '- **状态一致性（硬性，违反即失败）**：正文的**收尾状态**必须与本镜 ACTION / RESULT 一致。① 不得把 RESULT 里明确留在画面内的人或物写成「空无一人」「不见人影」「人影全无」这类**清场措辞**；② 描述「在更早的镜头里已经发生、现在只是持续」的状态，只用**静态措辞**（横卧／静置／散落／已倒／昏迷不醒），**禁止用会让人以为正在发生的动作措辞**（倒下／倒地／栽倒／扑倒）——视频模型会据此把已经演过的动作**再演一遍**。',
-    '- 禁止额外说明行、markdown、英文小标题。',
+            '把定场压进 [Shot 1] 的前 1-2 秒，其余时长全给交锋。'
+          : ' 本轮保持单镜（[Shot N] 只有 [Shot 1]）。'),
+    '- 镜内切镜**只能**用 [Shot N] At MM:SS.mmm, 记号；[Shot 1] 不带时间戳、后续必须带、最多 4 镜。' +
+      '禁止「切镜到」「镜头2」这类叙述性措辞，也禁止「分镜2：」那类行。',
+    '- 参考槽位只能用 IMAGE_SLOT_MAP 里的 <Picture N>（阿拉伯数字）；<Picture 1> 是场景，角色从 <Picture 2> 起。',
+    '- **状态一致性（硬性）**：收尾状态必须与本镜 ACTION / RESULT 一致；不得把 RESULT 里留在画面内的人写成' +
+      '「空无一人」；只在更早镜头发生、现在持续的状态用静态措辞（横卧/静置/已倒/昏迷不醒），禁止用动作措辞' +
+      '（倒下/倒地）让模型再演一次。',
+    '- 禁止 markdown、英文小标题之外的额外说明行；禁止 @图片N / @人物N / 灵境单行格式。',
   ].join('\n');
 
   const userPrompt = [
@@ -537,7 +547,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     multiBeatContract,
     shotPacingBlock,
     neighborDetailBlock || null,
-    'LINE3_REQUIRED（第3行必须与下面整句完全一致，含标点）:',
+    'ENV_REFERENCE_CONSTRAINT（把下面整句逐字写进 subject_definitions 或 summary）:',
     line3Required,
     `EPISODE_SCRIPT:\n${episodeScript || '(本集剧本为空；仅凭分镜与邻镜推断节奏，勿编造大段新剧情)'}`,
     chunk('EPISODE_TABLE_TITLE', episodeTableTitle),

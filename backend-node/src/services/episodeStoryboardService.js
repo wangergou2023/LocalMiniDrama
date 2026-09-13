@@ -8,7 +8,7 @@ const { safeParseAIJSON, extractJsonCandidate, repairTruncatedJsonArray, extract
 const loadConfig = require('../config').loadConfig;
 const angleService = require('./angleService');
 const { checkDialogueCoverage, extractScriptDialogue } = require('../utils/dialogueCoverage');
-const { buildFallbackUniversalMultiBeatText, repairUniversalSegmentText, summarizeUniversalSegmentFormat } = require('./universalOmniMultiBeatFormat');
+const { summarizeUniversalSegmentFormat } = require('./universalOmniMultiBeatFormat');
 const ref2va = require('./ref2vaFormat');
 const { buildStoryboardQualityReport } = require('../utils/storyboardQualityReport');
 const { checkBeatCoverage } = require('../utils/beatCoverageCheck');
@@ -461,16 +461,11 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
     // 第3行 LINE3 / 第4行「分镜1： T秒: …」）。这里原先把换行压成空格，把块结构拍平成一行，
     // 与规范冲突；只规范换行符、保留行结构。
     const raw = String(sb.universal_segment_text).trim().replace(/\r\n?/g, '\n');
-    // 两套格式并存，按内容分派：
-    //   · **Ref2VA 官方六段结构**（subject_definitions 开头）→ ref2vaFormat 的校验 + 机械补齐
-    //   · 旧的四行块格式（老数据仍在库）→ 原有校验 + 骨架修复，保证历史分镜仍能出片
-    const isRef2va = ref2va.parseRef2vaSections(raw).order.length > 0 || /^\s*subject_definitions\s*[:：]/im.test(raw);
-    const rep = isRef2va
-      ? ref2va.repairRef2va(raw, {
-          summaryFallback: [sb.location, sb.time].filter(Boolean).join('，'),
-          soundscapeFallback: sb.atmosphere,
-        })
-      : repairUniversalSegmentText(raw, { styleZh: opts.styleZh || '' });
+    // 只有一种格式：Ref2VA 官方六段结构（旧四行块格式已废弃，历史数据不再兼容）
+    const rep = ref2va.repairRef2va(raw, {
+      summaryFallback: [sb.location, sb.time].filter(Boolean).join('，'),
+      soundscapeFallback: sb.atmosphere,
+    });
     if (!rep.fatal) {
       universalSegmentText = rep.text;
       if (rep.changes.length) universalSegmentFormatProblems = rep.changes;
@@ -487,8 +482,7 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
     // 全部落到那个老兜底，用户拿到的「全能分镜」全是灵境单行格式。
     // 兜底必须与**正常产出同格式**（本项目吃过的教训：兜底格式与正产不一致，兜底本身就成了脏数据源）。
     // Ref2VA 模式下改用官方六段模板；旧块格式模式保持原样。
-    const useRef2vaFallback = opts.universalRef2va !== false;
-    if (useRef2vaFallback) {
+    {
       let fbSlots = [];
       try {
         const { buildSlotsForStoryboard } = require('../utils/segmentRefBinding');
@@ -500,27 +494,6 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
         fbSlots,
         { styleHint: opts.styleZh || style, audioSlots: Array.isArray(opts.audioSlots) ? opts.audioSlots : [] }
       );
-    } else {
-    universalSegmentText = buildFallbackUniversalMultiBeatText(
-      sb,
-      {
-        shotNumber,
-        durationSec,
-        shotType,
-        movement,
-        angle,
-        action,
-        dialogue,
-        narration,
-        result,
-        emotion,
-        lightingStyle,
-        depthOfField,
-      },
-      // 项目**中文**风格（与提示词里的 STYLE_ZH 同源）。不能把入参 style 直接拼进来 ——
-      // 前端传的是英文 PromptEn，且拼上「真人写实, 电影风格, 高清画质」会与项目风格冲突。
-      opts.styleZh || style
-    );
     }
     // 走到这里说明整条换成了块格式兜底模板。两种来路都要报出来：
     //   · 模型压根没返回 universal_segment_text（此前完全静默）—— 实测「真假美猴王」21 镜

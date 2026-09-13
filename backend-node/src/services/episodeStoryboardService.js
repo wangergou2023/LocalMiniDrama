@@ -1593,10 +1593,19 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   const sceneConstraint = promptI18n.formatUserPrompt(cfg, 'scene_constraint');
   const propListLabel = promptI18n.formatUserPrompt(cfg, 'prop_list_label');
   const propConstraint = promptI18n.formatUserPrompt(cfg, 'prop_constraint');
-  const suffix = promptI18n.getStoryboardUserPromptSuffix(cfg, effectiveShotDuration);
+  // 全能模式判断必须在拼后缀**之前**（后缀里的字段清单要据此加上 creation_mode /
+  // universal_segment_text —— 模型只认那份清单，见 getStoryboardUserPromptSuffix 注释）
+  const wantUniversalOmni = universalOmni === true || universalOmni === 1 || String(universalOmni || '').toLowerCase() === 'true';
+  const suffix = promptI18n.getStoryboardUserPromptSuffix(cfg, effectiveShotDuration, { universalOmni: wantUniversalOmni });
 
   let userPrompt =
     `${scriptLabel}\n${scriptContent}\n\n${taskLabel}\n${taskInstruction}${extraConstraint}\n\n${charListLabel}\n${characterList}\n\n${charConstraint}\n\n${sceneListLabel}\n${sceneList}\n\n${sceneConstraint}\n\n${propListLabel}\n${propList}\n\n${propConstraint}\n\n${suffix}`;
+
+  // 全能模式：把两个必填字段的提醒放在**用户提示词结尾**（模型最后读到的、也是最权威的位置）。
+  // 这一条是实测逼出来的 —— 只写在系统提示词末尾时，模型会整批漏掉 universal_segment_text。
+  if (wantUniversalOmni) {
+    userPrompt += promptI18n.getStoryboardUniversalOmniUserReminder(cfg);
+  }
 
   const wantNarration = includeNarration === true || includeNarration === 1 || String(includeNarration).toLowerCase() === 'true';
   if (wantNarration) {
@@ -1680,10 +1689,6 @@ ${items}
     log.warn('[分镜] 注入必保台词清单失败（不影响生成）', { episode_id: episodeId, error: e.message });
   }
 
-  const wantUniversalOmni =
-    universalOmni === true ||
-    universalOmni === 1 ||
-    String(universalOmni || '').toLowerCase() === 'true';
   if (wantUniversalOmni) {
     systemPrompt += promptI18n.getStoryboardUniversalOmniModeSuffix(cfg);
   }

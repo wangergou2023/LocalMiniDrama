@@ -62,3 +62,34 @@ describe('自动分集提示词', () => {
     assert.equal(/1200-1600/.test(body), false);
   });
 });
+
+describe('全能模式的必填字段：必须写在用户提示词里（模型只认那份清单）', () => {
+  const ZH2 = { language: 'zh', app: { language: 'zh' } };
+  const off = p.getStoryboardUserPromptSuffix(ZH2, 8);
+  const on = p.getStoryboardUserPromptSuffix(ZH2, 8, { universalOmni: true });
+
+  it('关闭全能模式时不要求这两个字段（经典模式不受影响）', () => {
+    assert.equal(/creation_mode/.test(off), false);
+    assert.equal(/universal_segment_text/.test(off), false);
+  });
+
+  it('开启全能模式时把它们写进【输出格式】字段清单', () => {
+    assert.match(on, /creation_mode/);
+    assert.match(on, /universal_segment_text/);
+  });
+
+  it('并在用户提示词结尾再用独立段落强调一次（实测只放系统提示词会被整批漏掉）', () => {
+    const r = p.getStoryboardUniversalOmniUserReminder(ZH2);
+    assert.match(r, /最高优先级/);
+    assert.match(r, /每个镜头对象都必须同时包含/);
+    assert.match(r, /缺少 universal_segment_text 的镜头只能退化成通用模板文/);
+    assert.match(p.getStoryboardUniversalOmniUserReminder({ app: { language: 'en' } }), /TWO MORE REQUIRED FIELDS/);
+  });
+
+  it('系统提示词里的全能说明也仍保留（双保险）', () => {
+    const sys = p.getStoryboardUniversalOmniModeSuffix(ZH2);
+    assert.match(sys, /creation_mode/);
+    assert.match(sys, /universal_segment_text/);
+    assert.match(sys, /每个镜头都必须有/);
+  });
+});

@@ -421,6 +421,39 @@ ${LINE3_MULTI}
 /**
  * 分镜生成「全能分镜模式」：JSON 每镜带 creation_mode + universal_segment_text（多子分镜段落格式）
  */
+/**
+ * 全能模式的**用户提示词**末尾提醒（紧跟【输出格式】之后，模型读到的最后一段）。
+ *
+ * 为什么与系统提示词里那份重复：实测（真实管线提示词、真调模型、14 镜）
+ * 模型**只认用户提示词里的【输出格式】字段清单**，系统提示词末尾追加的全能模式说明压不过它 ——
+ * 结果是 universal_segment_text 0/14，14 条全部退化成兜底模板文。
+ * 把它列进字段清单也不够可靠（长逗号清单里最后两项最容易被忽略），
+ * 所以再在最权威的位置（用户提示词结尾）用独立段落、最高优先级措辞说一遍。
+ */
+function getStoryboardUniversalOmniUserReminder(cfg) {
+  const { EPISODE_CHARS_MIN } = {};
+  if (isEnglish(cfg)) {
+    return `
+
+[HIGHEST PRIORITY — TWO MORE REQUIRED FIELDS PER SHOT]
+Every shot object MUST ALSO contain BOTH of these, in addition to all fields listed above:
+1. "creation_mode": the exact string "universal".
+2. "universal_segment_text": a **multi-line** string written exactly per the universal-segment block spec
+   (line 1 style sentence / line 2 生成一个由以下 1 个分镜组成的视频。/ line 3 the reference+environment
+   constraint copied verbatim / line 4 分镜1： T秒: …).
+A shot without "universal_segment_text" can only fall back to a generic template — that is a hard error.
+Do NOT omit it, and do NOT summarise it.`;
+  }
+  return `
+
+【最高优先级 —— 每个镜头还必须额外包含这两个字段】
+除了上面【输出格式】里列出的全部字段，**每个镜头对象都必须同时包含**：
+1. "creation_mode"：固定字符串 "universal"。
+2. "universal_segment_text"：**多行字符串**，严格按全能片段块格式书写
+   （第1行风格句 / 第2行「生成一个由以下 1 个分镜组成的视频。」/ 第3行照抄给定的环境与参考图约束 / 第4行「分镜1： T秒: …」）。
+缺少 universal_segment_text 的镜头只能退化成通用模板文，**这是严重错误**，不要省略、也不要只写摘要。`;
+}
+
 function getStoryboardUniversalOmniModeSuffix(cfg) {
   const spec = getUniversalOmniMultiBeatFormatSpec(cfg);
   if (isEnglish(cfg)) {
@@ -437,7 +470,7 @@ ${spec}`;
 【最高优先级——全能分镜模式】
 每个镜头在保留上述全部原有字段的同时，还必须额外包含：
 1. "creation_mode"：固定字符串 "universal"（不可省略）。
-2. "universal_segment_text"：按下列 **多子分镜段落** 规范书写（与后续「生成全能提示词」「润色」同一套版式，禁止单行灵境格式）。
+2. "universal_segment_text"：**每个镜头都必须有**，按下列 **多子分镜段落** 规范书写（与后续「生成全能提示词」「润色」同一套版式，禁止单行灵境格式）。少了它该镜只能退化为模板文，属于严重错误。
 ${spec}`;
 }
 
@@ -547,8 +580,20 @@ function formatUserPrompt(cfg, key, ...args) {
  * @param {object} cfg - 配置对象
  * @param {number|null} shotDuration - 单镜建议时长（秒），由后端从项目配置或总时长/数量推算后注入
  */
-function getStoryboardUserPromptSuffix(cfg, shotDuration) {
+function getStoryboardUserPromptSuffix(cfg, shotDuration, opts = {}) {
   const lang = isEnglish(cfg) ? 'en' : 'zh';
+  // 全能模式下的两个必填字段**必须出现在这份清单里**。
+  //
+  // 为什么：这段【输出格式】清单是模型实际照着填的那份，它**只认这份清单** ——
+  // 实测（14 镜、真实管线提示词、真调模型）清单里没有 creation_mode / universal_segment_text 时，
+  // 模型返回的 26 个字段一个不多一个不少，**universal_segment_text 0/14**，
+  // 于是 14 条全部落到兜底模板（质量报告报 fatal=14，正文是模板句而不是模型写的镜头描写）。
+  // 而全能模式的说明是追加在**系统**提示词末尾的，位置在用户提示词之前，压不过这份清单。
+  const uniExtra = opts.universalOmni
+    ? (lang === 'en'
+        ? ', creation_mode (exact string "universal"), universal_segment_text (multi-line block per the universal-segment spec below)'
+        : '，creation_mode（固定字符串 "universal"）、universal_segment_text（按系统提示词里的全能片段块格式规范书写的多行字符串）')
+    : '';
   const durationHint = shotDuration && Number.isFinite(Number(shotDuration)) && Number(shotDuration) > 0
     ? Number(shotDuration)
     : null;
@@ -566,7 +611,7 @@ function getStoryboardUserPromptSuffix(cfg, shotDuration) {
 
 **Audio rule**: bgm_prompt MUST be an empty string or "No BGM". Do not design background music per shot. Put only diegetic ambience, foley, and voice/timbre details in sound_effect, so audio remains consistent across clips.
 
-**Output**: JSON with "storyboards" array. Each item: shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, lighting_style, depth_of_field, action, dialogue, narration, result, atmosphere, emotion, emotion_intensity, duration, bgm_prompt, sound_effect, characters (array of IDs), props (array of prop IDs), is_primary, layout_description (blocking + character positions; highest-priority spatial contract). Return ONLY valid JSON, no markdown.`;
+**Output**: JSON with "storyboards" array. Each item: shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, lighting_style, depth_of_field, action, dialogue, narration, result, atmosphere, emotion, emotion_intensity, duration, bgm_prompt, sound_effect, characters (array of IDs), props (array of prop IDs), is_primary, layout_description (blocking + character positions; highest-priority spatial contract)${uniExtra}. Return ONLY valid JSON, no markdown.`;
   }
   const _sbUserLocked = `\n\n【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary, **layout_description（画面布局与人物站位描述，必填，最高优先级空间合同）**。**必须只返回纯JSON，不要markdown。**`;
   const _sbUserOverride = _overrideCache['storyboard_user_suffix'];
@@ -606,7 +651,7 @@ function getStoryboardUserPromptSuffix(cfg, shotDuration) {
 **duration时长**：${durationInstruction}。
 **声音一致性**：所有镜头默认无BGM；若有对白/旁白，sound_effect 必须补充音色与情绪强度，并与动作节奏、环境声保持一致。
 
-【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, lighting_style, depth_of_field, action, dialogue, narration, result, atmosphere, emotion, emotion_intensity, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary, layout_description（画面布局与人物站位，最高优先级空间合同）。**必须只返回纯JSON，不要markdown。**`;
+【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, lighting_style, depth_of_field, action, dialogue, narration, result, atmosphere, emotion, emotion_intensity, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary, layout_description（画面布局与人物站位，最高优先级空间合同）${uniExtra}。**必须只返回纯JSON，不要markdown。**`;
 }
 
 /**
@@ -1857,6 +1902,7 @@ module.exports = {
   getStoryboardSystemPrompt,
   getUniversalOmniMultiBeatFormatSpec,
   getStoryboardUniversalOmniModeSuffix,
+  getStoryboardUniversalOmniUserReminder,
   getStoryboardUserPromptSuffix,
   getStoryboardNarrationExtraInstructions,
   getStoryExpansionSystemPrompt,

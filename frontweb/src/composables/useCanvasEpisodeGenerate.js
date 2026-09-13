@@ -8,6 +8,7 @@ import { getDramaGenerationOptions } from '@/utils/canvasWorkflow'
 import { runImageStep, runVideoStep } from '@/composables/useCanvasWorkflowRunner'
 import { hasStoryboardImage, hasStoryboardVideo } from '@/utils/storyboardMedia'
 import { CANVAS_NODE_STATUS_LABELS } from '@/composables/useCanvasNodeStatus'
+import { estimateVideoDurationSecFromCharLen, STORYBOARD_PLAN_SECONDS } from '@/utils/scriptDurationEstimate'
 
 async function pollTask(taskId, onTick, maxAttempts = 450, interval = 2000) {
   if (!taskId) return { status: 'completed' }
@@ -56,16 +57,23 @@ export function useCanvasEpisodeGenerate(deps) {
     const gen = getDramaGenerationOptions(drama.value)
     const ep = getEpisode()
     const scriptLen = (ep?.script_content || '').trim().length
-    let videoDuration
-    if (meta.video_clip_duration) {
-      videoDuration = Number(meta.video_clip_duration)
-    } else if (scriptLen > 0) {
-      videoDuration = Math.max(10, Math.round(10 + (scriptLen / 600) * 60))
-    }
+
+    // 注意：meta.video_clip_duration 是**单镜上限**（本地 MiniMax H3 最长 362 帧 = 15.08s），
+    // 不是整集总时长 —— 原实现直接拿它当 video_duration，对 15 的项目会得到「整集 15 秒」，
+    // 分镜被压到 1-2 镜。总时长一律由剧本字数估算（见 utils/scriptDurationEstimate.js）。
+    const videoDuration = scriptLen > 0 ? estimateVideoDurationSecFromCharLen(scriptLen) : undefined
+    // 镜数必须一起给：只给总时长不给镜数时后端不注入数量约束，模型自选的镜数会偏少，
+    // 而分镜能承载的台词数 ≈ 1 句/镜，镜数一少就会静默丢台词。
+    const clipCap = Number(meta.video_clip_duration) || STORYBOARD_PLAN_SECONDS
+    const storyboardCount = videoDuration
+      ? Math.max(1, Math.round(videoDuration / Math.min(clipCap, STORYBOARD_PLAN_SECONDS)))
+      : undefined
+
     return {
       style: gen.style || undefined,
       aspect_ratio: gen.aspectRatio,
       video_duration: videoDuration,
+      storyboard_count: storyboardCount,
       include_narration: !!meta.storyboard_include_narration,
       universal_omni_storyboard: !!meta.storyboard_universal_omni,
     }

@@ -1298,9 +1298,16 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
       checked: stored.checked,
       noncompliant: stored.noncompliant,
       noncompliant_sample: stored.samples,
-      // 镜内剪辑点（H3 原生多镜头）：打斗镜该切拍却还是单镜，是最该被点出来的问题
+      // 镜内剪辑点（H3 原生多镜头）与打斗节奏。这几个 key 必须**逐个列出** ——
+      // summarizeUniversalSegmentFormat 的返回值不会自动透传，漏一个在界面上就是 0。
+      // 初版就漏了 fight_* 四个，于是页面把 12 个打斗镜显示成「无打斗镜」、报告里
+      // 「有多少打斗镜定场过长」也永远是 0（真问题会被静默吞掉）。
       multi_shot: stored.multi_shot,
       cut_total: stored.cut_total,
+      fight_total: stored.fight_total,
+      fight_cut: stored.fight_cut,
+      fight_split_sequence: stored.fight_split_sequence,
+      fight_single_beat: stored.fight_single_beat,
       fights_without_cuts: stored.fights_without_cuts,
       fights_without_cuts_sample: stored.fights_without_cuts_samples,
       cuts_without_fight: stored.cuts_without_fight,

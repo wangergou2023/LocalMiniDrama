@@ -62,10 +62,25 @@ function buildStoryboardQualityReport(opts = {}) {
   let hasFatal = false;
   let hasMissingBeats = false;
   let hasRepairs = false;
+  let hasSmallDialogueGap = false;
   let hasFightsWithoutCuts = false;
   let hasCutsWithoutFight = false;
 
-  if (missingDialogue.length > 0) {
+  // 缺台词的严重程度要分档：镜数不足导致**成片丢台词**（很多句）→ 重跑；
+  // 只差少数几句（模型把「辩解」写成概括、没写原话）→ 在那几条分镜上补写即可，
+  // 让用户为 2 句台词重跑 65 镜（对本地 H3 是八小时）是荒谬的建议。
+  const dialogueTotal = coverage ? Number(coverage.total) || 0 : 0;
+  const smallGap = missingDialogue.length > 0 && missingDialogue.length <= 3 && dialogueTotal > 0
+    && missingDialogue.length / dialogueTotal <= 0.15;
+  if (smallGap) {
+    verdict = 'warn';
+    hasMissingDialogue = true;
+    hasSmallDialogueGap = true;
+    reasons.push(
+      `有 ${missingDialogue.length} 句台词（共 ${dialogueTotal} 句）没有进任何分镜 —— 多半是模型把说话动作写成了概括（如只写「满脸委屈地辩解」而没写原话）。` +
+      `在这几条分镜上补写台词即可，**不必重跑**`
+    );
+  } else if (missingDialogue.length > 0) {
     verdict = 'fail';
     hasMissingDialogue = true;
     reasons.push(
@@ -110,13 +125,10 @@ function buildStoryboardQualityReport(opts = {}) {
       `可在这些镜上点「生成全能提示词」重写一次（会按拍切成 [Shot N] 多镜）`
     );
   }
-  if (cutsWithoutFight > 0) {
-    if (verdict === 'ok') verdict = 'warn';
-    hasCutsWithoutFight = true;
-    reasons.push(
-      `有 ${cutsWithoutFight} 个非打斗镜切了镜内拍（可能是模型自行加的）——若这些镜本来是一段连续表演，建议改回单镜，避免画面被无谓打散`
-    );
-  }
+  // 「非打斗镜却切了拍」**不进结论**，只作统计展示。
+  // 它是假警高发项：带对白的正反打（举耙对峙 → 切近景怒目 → 切回对方）本来就会被剪成 3 拍，
+  // 而它并不符合 detectFightShot 的「打斗」定义，于是被算成「非打斗却切拍」并建议改回单镜 ——
+  // 那是错的建议。假警比不检查更糟，所以只统计不告警。
   if (shotCount === 0) {
     verdict = 'fail';
     reasons.push('没有生成任何分镜');
@@ -126,7 +138,9 @@ function buildStoryboardQualityReport(opts = {}) {
   // 结论标题按**实际原因**拼，不能只看 verdict —— 「缺节拍待确认」和「只是骨架修过」都是 warn，
   // 但前者需要人去看内容、后者无需处理，混用同一个标题会误导。
   let headline;
-  if (hasMissingDialogue || hasFatal || shotCount === 0) {
+  if (hasSmallDialogueGap && !hasFatal && shotCount > 0) {
+    headline = '可出片（个别台词待补写）';
+  } else if (hasMissingDialogue || hasFatal || shotCount === 0) {
     headline = '建议重跑';
   } else if (hasMissingBeats && (hasRepairs || hasFightsWithoutCuts)) {
     headline = '可出片，但有节拍缺失待确认（含待修项）';

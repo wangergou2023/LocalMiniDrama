@@ -34,13 +34,48 @@ function extractScriptDialogue(scriptText) {
   const src = String(scriptText || '');
   if (!src.trim()) return [];
   const out = [];
-  // 冒号（中英文）+ 引号（中英文）；说话人取冒号前最多 8 个汉字
+  const seen = new Set();
+  const push = (speaker, line) => {
+    const clean = String(line || '')
+      .trim()
+      .replace(/^[“"「『]+/, '')
+      .replace(/[”"」』]+$/, '')
+      .trim();
+    if (!clean) return;
+    const key = normalizeForMatch(clean);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push({ index: out.length, speaker: String(speaker || '').trim(), line: clean });
+  };
+
+  // ① 引号形式：`…道：“台词”`
   const re = /([\u4e00-\u9fa5]{0,8})[:：]\s*[“"]([^”"]{1,200})[”"]/g;
   let m;
-  while ((m = re.exec(src)) !== null) {
-    const line = String(m[2] || '').trim();
-    if (!line) continue;
-    out.push({ index: out.length, speaker: String(m[1] || '').trim(), line });
+  while ((m = re.exec(src)) !== null) push(m[1], m[2]);
+
+  // ② **无引号的独立台词行**：`说话人：台词`
+  //
+  // 为什么必须加这一条 —— 新剧本（1200-1600 字那版提示词之后）把对白写成
+  //   唐僧：悟空，天色将晚，你去化些斋饭来。
+  // 独立成行、**不带引号**。而原来只认引号形式，于是在这种剧本上
+  // extractScriptDialogue 返回 []，台词覆盖自检**一声不响地失效**：
+  // drama4 的 29 句台词被报成 total 0、covered 0 —— 自检通过，但实际上什么都没检查。
+  // 这正是当初「21 句只保住 13 句、丢 10 句」那类静默丢台词的场景，自检必须看得见。
+  //
+  // 行首锚定（^）避免误抓正文里的冒号；说话人限 2-6 个汉字，且其后必须有实际内容。
+  const lineRe = /^[ \t]*([\u4e00-\u9fa5]{2,6})[：:][ \t]*(\S.{1,200})$/;
+  for (const rawLine of src.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('【')) continue;
+    const lm = lineRe.exec(line);
+    if (!lm) continue;
+    // 排除「说话人：」后面跟着的又是元信息的情况（如 `场景：荒山` 这类场记行）
+    const rest = lm[2];
+    if (/^[（(【\[]/.test(rest)) continue;
+    // **含引号的行交给 pass ①** —— 否则一行里多段对白会被拼成一条垃圾
+    // （实测抽出过「悟空！你为何无故伤人！”悟空指着白骨：“」这种拼接残句）
+    if (/[“”"「」『』]/.test(rest)) continue;
+    push(lm[1], rest);
   }
   return out;
 }

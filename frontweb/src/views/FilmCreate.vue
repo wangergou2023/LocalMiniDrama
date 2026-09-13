@@ -2914,11 +2914,14 @@
 
         <div v-if="qualityReport.cuts_without_fight && qualityReport.cuts_without_fight.length" style="margin-top: 10px">
           <div style="font-weight: 600; margin-bottom: 6px; color: #909399">
-            以下非打斗镜却切了镜内拍（可能是模型自行加的，若本是一段连续表演建议改回单镜）：
+            以下镜头不是打斗但切了镜内拍（仅作参考，不是问题）：
           </div>
           <div v-for="(c, i) in qualityReport.cuts_without_fight" :key="i" style="line-height: 1.7; font-size: 13px">
             · 镜{{ c.storyboard_number != null ? c.storyboard_number : '?' }} {{ c.title }}
             <span style="color: #909399">（{{ c.cuts }} 拍）</span>
+          </div>
+          <div style="margin-top: 6px; font-size: 12px; color: #909399">
+            带对白的正反打（举耙对峙 → 近景怒目 → 切回对方）本来就会被剪成几拍，这类不算问题，所以不影响结论。
           </div>
         </div>
 

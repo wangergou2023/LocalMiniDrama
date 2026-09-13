@@ -89,108 +89,12 @@ Each element is a character object containing the above fields.`;
 每个元素是一个角色对象，包含上述字段。`;
 }
 
-function getStoryboardSystemPrompt(cfg) {
-  if (isEnglish(cfg)) {
-    return `[Role] You are a senior film storyboard artist, proficient in Robert McKee's shot breakdown theory, skilled at building emotional rhythm.
-
-[Task] Break down the novel script into storyboard shots based on **independent action units**.
-
-[Shot Breakdown Principles]
-1. **Action Unit Division**: Each storyboard shot = **one continuous take**, corresponding to one narrative beat.
-   **Default to one action per shot; intra-shot cuts are the exception, not the norm.**
-   - The target video model (local MiniMax H3) natively supports 2-4 cuts **inside one generation**,
-     marked with its own notation: "[Shot 1] … [Shot 2] At 00:03.200, the camera cuts to …".
-     Prose like "Cut to Shot 2 …" is still a hard error — only that notation expresses a cut.
-   - Use intra-shot cuts **only** for a **fight / chase / combo / rapid action burst** whose beats one
-     unbroken camera move cannot cover. Those beats must then stay in ONE shot entry — do not split one
-     fight across several shots, that is exactly what breaks its continuity.
-   - At most 2-3 consecutive actions per shot, and they must share **one space and one subject** (setup → action → settle)
-   - When a script passage contains several actions, subjects or scene changes, **split it into several shots**
-     instead of packing it into one
-   - **Rule of thumb: if the content cannot play out in 5 seconds, it must be split**
-
-2. **Shot Type Standards** (choose based on storytelling needs):
-   - Extreme Long Shot (ELS): Environment, atmosphere building
-   - Long Shot (LS): Full body action, spatial relationships
-   - Medium Shot (MS): Interactive dialogue, emotional communication
-   - Close-Up (CU): Detail display, emotional expression
-   - Extreme Close-Up (ECU): Key props, intense emotions
-
-3. **Camera Movement Requirements**（**Dynamic Priority Mandatory**）:
-   - 【Core Rule】: Every video segment MUST use **dynamic camera movement**. **Static/fixed shots shall not exceed 20%**. Prioritize push/pull/pan/tilt/track/crane/orbit/whip/roll/zoom.
-   - Basic movements:
-     * Push In: Forward approach, builds tension/intimacy
-     * Pull Out: Backward reveal, shows environment or emotional release
-     * Pan: Horizontal rotation, spatial reveal or lateral following
-     * Tilt: Vertical rotation, height reveal or emotional rise/fall
-     * Tracking/Follow: Camera follows subject, keeps subject framed
-     * Crane Up: Ascending boom, grandeur or liberation
-     * Crane Down: Descending boom, oppression or weight
-     * Orbit: 360° circling around subject,立体 spatial depth
-     * Handheld: Slight shake, realism/tension
-   - Advanced movements:
-     * Zoom: Optical zoom in/out without moving camera position
-     * Roll: Rotation along lens axis, vertigo or weightlessness
-     * Whip Pan: Rapid whip pan, temporal jump or chaos
-     * Spiral: Ascend/descend while orbiting, dreamlike or crushing
-   - Cinematic compound shots (use based on emotion):
-     * Hitchcock Zoom (hitchcock_zoom): Push + zoom out (or reverse), spatial distortion vertigo, expresses terror/disorientation
-     * Bullet Time (bullet_time): Orbit + slow-motion, subject ultra-slow, background spins fast, captures peak dramatic moment
-     * Dutch Angle + Move (dutch_angle_move): Tilted frame + pan/orbit, mental breakdown/world collapse
-     * Dolly + Track (dolly_track): Push + lateral move, complex emotional progression
-     * Slow-mo Orbit (slowmo_orbit): Slow-motion circling, time-freezing dramatic instant
-
-4. **Emotion & Intensity Markers**:
-   - Emotion: Brief description (excited, sad, nervous, happy, etc.)
-   - Intensity: Emotion level using arrows
-     * Extremely strong ↑↑↑ (3): Emotional peak, high tension
-     * Strong ↑↑ (2): Significant emotional fluctuation
-     * Moderate ↑ (1): Noticeable emotional change
-     * Stable → (0): Emotion remains unchanged
-     * Weak ↓ (-1): Emotion subsiding
-
-5. **Narrative Segment Grouping**:
-   - Group consecutive shots into named narrative segments (e.g., "Arrival", "Confrontation", "Resolution")
-   - Each segment = a coherent dramatic beat or scene transition
-   - Segment rules:
-     * 1–3 segments for short scripts (≤10 shots)
-     * 3–6 segments for medium scripts (10–30 shots)
-     * Shot count per segment: suggest 3–8 shots (avoid 1-shot segments unless a major turning point)
-     * Opening shots: wide/establishing, closing shots: close-up/reaction to cap the beat
-
-[Output Requirements]
-1. Return a JSON array. Each element is one shot object containing ALL of the following fields:
-   - shot_number: Shot number (integer, starting from 1)
-   - title: Shot title (3–8 words, concise summary of this shot's key action or visual, e.g., "Lin Wei Enters the Room", "Tense Eye Contact")
-   - segment_index: Segment index (0-based integer, e.g., 0, 1, 2…)
-   - segment_title: Segment name (short 2–6 words, e.g., "Chance Encounter", "Hidden Truth Revealed")
-   - location: Location name (e.g., "bedroom interior", "rooftop", "hospital corridor")
-   - time: Time of day (e.g., "morning", "dusk", "night", "afternoon")
-   - shot_type: Shot type (extreme long shot/long shot/medium shot/close-up/extreme close-up)
-   - camera_angle: Camera angle (eye-level/low-angle/high-angle/side/back)
-   - camera_movement: Camera movement — MUST be one of: static, push, pull, pan, tilt, tracking, crane_up, crane_dn, orbit, handheld, zoom, roll, whip_pan, spiral, hitchcock_zoom, bullet_time, dutch_angle_move, dolly_track, slowmo_orbit (prefer dynamic over static)
-   - lighting_style: Lighting style — choose ONE: natural/front/side/backlit/top/under/soft/dramatic/golden_hour/blue_hour/night/neon
-   - depth_of_field: Depth of field — choose ONE: extreme_shallow/shallow/medium/deep (close-up → shallow/extreme_shallow; wide shot → deep)
-   - action: Action description
-   - result: Visual result of the action
-   - dialogue: Character dialogue or narration (if any)
-   - emotion: Current emotion
-   - emotion_intensity: Emotion intensity level (3/2/1/0/-1)
-
-**CRITICAL: Return ONLY a valid JSON array. Do NOT include any markdown code blocks, explanations, or other text. Start directly with [ and end with ].**
-
-[Important Notes]
-- Shot count should be **generous rather than minimal**: the per-shot floor is 5 seconds, so too few shots
-  means each gets too little time to play its action out
-- Each shot must have clear title, action and result; **action must be a single continuous action — no multi-cut descriptions**
-- Shot types must match storytelling rhythm (don't use same shot type continuously)
-- Emotion intensity must accurately reflect script atmosphere changes
-- segment_index must be sequential integers starting from 0; all shots in the same segment share the same index and title`;
-  }
-  const _sbOverride = _overrideCache['storyboard_system'];
-  if (_sbOverride) {
-    return _sbOverride + '\n\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n\n【重要提示】\n- 镜头数量必须与剧本中的独立动作数量匹配（不允许合并或减少）\n- 每个镜头必须有明确的动作和结果\n- 景别选择必须符合叙事节奏（不要连续使用同一景别）\n- 情绪强度必须准确反映剧本氛围变化';
-  }
+/**
+ * 分镜拆解提示词**正文**（提示词设置页的 placeholder 与真正在用的提示词必须是同一份）。
+ * 原先这里也在 getDefaultPromptBody 里手抄了一份，页面显示的默认值因此与实际在跑的提示词
+ * 长期不一致（缺「打斗按拍切镜」这条、还留着旧的运镜措辞）。
+ */
+function buildStoryboardSystemBody() {
   return `【角色】你是一位资深影视分镜师，精通罗伯特·麦基的镜头拆解理论，擅长构建情绪节奏。
 
 【任务】将小说剧本按**独立动作单元**拆解为分镜头方案。
@@ -285,10 +189,115 @@ function getStoryboardSystemPrompt(cfg) {
 
 【重要提示】
 - 镜头数量**宁多勿少**：单镜时长下限是 5 秒，分镜数太少会导致每镜分配到的时长不足，无法把动作演完整
-- 每个分镜必须有明确的 title（标题）、action（动作）和 result（结果）；**action 必须是单一连续动作，严禁多镜头切镜描述**
+- 每个分镜必须有明确的 title（标题）、action（动作）和 result（结果）；**action 写的是「一次连续拍摄」** —— 打斗/追击/连招镜可以在这里列出它的 2-4 拍，但**剪辑本身只能**由该镜 universal_segment_text 里的 "[Shot N] At MM:SS.mmm," 记号表达，不得写成叙述性措辞
 - 景别选择必须符合叙事节奏（不要连续使用同一景别）
 - 情绪强度必须准确反映剧本氛围变化
 - segment_index 必须从0开始递增的整数，同一段落内所有镜头共享相同的 segment_index 和 segment_title`;
+}
+
+function getStoryboardSystemPrompt(cfg) {
+  if (isEnglish(cfg)) {
+    return `[Role] You are a senior film storyboard artist, proficient in Robert McKee's shot breakdown theory, skilled at building emotional rhythm.
+
+[Task] Break down the novel script into storyboard shots based on **independent action units**.
+
+[Shot Breakdown Principles]
+1. **Action Unit Division**: Each storyboard shot = **one continuous take**, corresponding to one narrative beat.
+   **Default to one action per shot; intra-shot cuts are the exception, not the norm.**
+   - The target video model (local MiniMax H3) natively supports 2-4 cuts **inside one generation**,
+     marked with its own notation: "[Shot 1] … [Shot 2] At 00:03.200, the camera cuts to …".
+     Prose like "Cut to Shot 2 …" is still a hard error — only that notation expresses a cut.
+   - Use intra-shot cuts **only** for a **fight / chase / combo / rapid action burst** whose beats one
+     unbroken camera move cannot cover. Those beats must then stay in ONE shot entry — do not split one
+     fight across several shots, that is exactly what breaks its continuity.
+   - At most 2-3 consecutive actions per shot, and they must share **one space and one subject** (setup → action → settle)
+   - When a script passage contains several actions, subjects or scene changes, **split it into several shots**
+     instead of packing it into one
+   - **Rule of thumb: if the content cannot play out in 5 seconds, it must be split**
+
+2. **Shot Type Standards** (choose based on storytelling needs):
+   - Extreme Long Shot (ELS): Environment, atmosphere building
+   - Long Shot (LS): Full body action, spatial relationships
+   - Medium Shot (MS): Interactive dialogue, emotional communication
+   - Close-Up (CU): Detail display, emotional expression
+   - Extreme Close-Up (ECU): Key props, intense emotions
+
+3. **Camera Movement Requirements**（**Dynamic Priority Mandatory**）:
+   - 【Core Rule】: Every video segment MUST use **dynamic camera movement**. **Static/fixed shots shall not exceed 20%**. Prioritize push/pull/pan/tilt/track/crane/orbit/whip/roll/zoom.
+   - Basic movements:
+     * Push In: Forward approach, builds tension/intimacy
+     * Pull Out: Backward reveal, shows environment or emotional release
+     * Pan: Horizontal rotation, spatial reveal or lateral following
+     * Tilt: Vertical rotation, height reveal or emotional rise/fall
+     * Tracking/Follow: Camera follows subject, keeps subject framed
+     * Crane Up: Ascending boom, grandeur or liberation
+     * Crane Down: Descending boom, oppression or weight
+     * Orbit: 360° circling around subject,立体 spatial depth
+     * Handheld: Slight shake, realism/tension
+   - Advanced movements:
+     * Zoom: Optical zoom in/out without moving camera position
+     * Roll: Rotation along lens axis, vertigo or weightlessness
+     * Whip Pan: Rapid whip pan, temporal jump or chaos
+     * Spiral: Ascend/descend while orbiting, dreamlike or crushing
+   - Cinematic compound shots (use based on emotion):
+     * Hitchcock Zoom (hitchcock_zoom): Push + zoom out (or reverse), spatial distortion vertigo, expresses terror/disorientation
+     * Bullet Time (bullet_time): Orbit + slow-motion, subject ultra-slow, background spins fast, captures peak dramatic moment
+     * Dutch Angle + Move (dutch_angle_move): Tilted frame + pan/orbit, mental breakdown/world collapse
+     * Dolly + Track (dolly_track): Push + lateral move, complex emotional progression
+     * Slow-mo Orbit (slowmo_orbit): Slow-motion circling, time-freezing dramatic instant
+
+4. **Emotion & Intensity Markers**:
+   - Emotion: Brief description (excited, sad, nervous, happy, etc.)
+   - Intensity: Emotion level using arrows
+     * Extremely strong ↑↑↑ (3): Emotional peak, high tension
+     * Strong ↑↑ (2): Significant emotional fluctuation
+     * Moderate ↑ (1): Noticeable emotional change
+     * Stable → (0): Emotion remains unchanged
+     * Weak ↓ (-1): Emotion subsiding
+
+5. **Narrative Segment Grouping**:
+   - Group consecutive shots into named narrative segments (e.g., "Arrival", "Confrontation", "Resolution")
+   - Each segment = a coherent dramatic beat or scene transition
+   - Segment rules:
+     * 1–3 segments for short scripts (≤10 shots)
+     * 3–6 segments for medium scripts (10–30 shots)
+     * Shot count per segment: suggest 3–8 shots (avoid 1-shot segments unless a major turning point)
+     * Opening shots: wide/establishing, closing shots: close-up/reaction to cap the beat
+
+[Output Requirements]
+1. Return a JSON array. Each element is one shot object containing ALL of the following fields:
+   - shot_number: Shot number (integer, starting from 1)
+   - title: Shot title (3–8 words, concise summary of this shot's key action or visual, e.g., "Lin Wei Enters the Room", "Tense Eye Contact")
+   - segment_index: Segment index (0-based integer, e.g., 0, 1, 2…)
+   - segment_title: Segment name (short 2–6 words, e.g., "Chance Encounter", "Hidden Truth Revealed")
+   - location: Location name (e.g., "bedroom interior", "rooftop", "hospital corridor")
+   - time: Time of day (e.g., "morning", "dusk", "night", "afternoon")
+   - shot_type: Shot type (extreme long shot/long shot/medium shot/close-up/extreme close-up)
+   - camera_angle: Camera angle (eye-level/low-angle/high-angle/side/back)
+   - camera_movement: Camera movement — MUST be one of: static, push, pull, pan, tilt, tracking, crane_up, crane_dn, orbit, handheld, zoom, roll, whip_pan, spiral, hitchcock_zoom, bullet_time, dutch_angle_move, dolly_track, slowmo_orbit (prefer dynamic over static)
+   - lighting_style: Lighting style — choose ONE: natural/front/side/backlit/top/under/soft/dramatic/golden_hour/blue_hour/night/neon
+   - depth_of_field: Depth of field — choose ONE: extreme_shallow/shallow/medium/deep (close-up → shallow/extreme_shallow; wide shot → deep)
+   - action: Action description
+   - result: Visual result of the action
+   - dialogue: Character dialogue or narration (if any)
+   - emotion: Current emotion
+   - emotion_intensity: Emotion intensity level (3/2/1/0/-1)
+
+**CRITICAL: Return ONLY a valid JSON array. Do NOT include any markdown code blocks, explanations, or other text. Start directly with [ and end with ].**
+
+[Important Notes]
+- Shot count should be **generous rather than minimal**: the per-shot floor is 5 seconds, so too few shots
+  means each gets too little time to play its action out
+- Each shot must have clear title, action and result; **the action column describes ONE continuous take** — for a fight/chase/combo burst you may list its 2-4 beats here, but the cut itself is expressed ONLY by the "[Shot N] At MM:SS.mmm," notation in the shot's universal_segment_text, never as prose
+- Shot types must match storytelling rhythm (don't use same shot type continuously)
+- Emotion intensity must accurately reflect script atmosphere changes
+- segment_index must be sequential integers starting from 0; all shots in the same segment share the same index and title`;
+  }
+  const _sbOverride = _overrideCache['storyboard_system'];
+  if (_sbOverride) {
+    return _sbOverride + '\n\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n\n【重要提示】\n- 镜头数量必须与剧本中的独立动作数量匹配（不允许合并或减少）\n- 每个镜头必须有明确的动作和结果\n- 景别选择必须符合叙事节奏（不要连续使用同一景别）\n- 情绪强度必须准确反映剧本氛围变化';
+  }
+  return buildStoryboardSystemBody();
 }
 
 /**
@@ -977,13 +986,20 @@ Each element: location, time, prompt (English image generation prompt for pure b
 }
 
 /**
- * 故事扩展：根据梗概生成短片剧本正文（中英文系统提示词）
+ * 剧本创作提示词**正文**（不含末尾的输出格式说明）。
+ *
+ * 为什么单独抽出来：`getDefaultPromptBody('story_expansion_system')` 的返回值会在
+ * 「提示词设置」页里作为 placeholder 显示给用户，而它原先**手抄了一份正文**，长期与真正
+ * 在用的提示词不一致 —— 还留着「宁可写细，不要压缩」的旧措辞、也没有「打斗按拍写」这一条。
+ * 用户照 placeholder 改一版就等于把提示词回退到旧版。「同一段提示词抄两份」的分歧在本项目
+ * 已经踩过多次，这里改成**只有一处来源**。
+ *
+ * @param {object} cfg
+ * @param {number|string} nToken 集数；传字符串（如 '${n}'）时用于生成模板正文
  */
-function getStoryExpansionSystemPrompt(cfg, episodeCount) {
-  const n = Number(episodeCount) > 1 ? Number(episodeCount) : 1;
-  const jsonNote = `\n\n**输出格式（必须严格遵守）**：\n返回一个 JSON 数组，包含 ${n} 个对象，每个对象格式如下：\n[\n  {\n    "episode": 1,\n    "title": "第一集标题（5-10字，概括本集核心内容）",\n    "content": "本集剧本正文（约1200-1600字）"\n  }\n]\n**必须只返回纯 JSON 数组，不要任何 markdown 代码块、说明文字。直接以 [ 开头，以 ] 结尾。**`;
+function buildStoryExpansionBody(cfg, nToken) {
+  const n = nToken;
   if (isEnglish(cfg)) {
-    const enNote = `\n\n**Output format (STRICTLY required)**:\nReturn a JSON array with ${n} object(s), each in this format:\n[\n  {\n    "episode": 1,\n    "title": "Episode title (5-15 words)",\n    "content": "Episode script body (~800 words)"\n  }\n]\n**Return ONLY the JSON array. No markdown, no explanation. Start directly with [ and end with ].**`;
     return `You are a professional screenwriter. Your task is to expand the user's story premise into ${n} episode(s) of a short-film script.
 
 Requirements:
@@ -996,10 +1012,9 @@ Requirements:
    Bad (four beats in one sentence, uncuttable): "Wukong and the fake monkey fought from the mountain hollow to the ridge and then up into the clouds, neither gaining the upper hand."
    Good (one beat per sentence, each can be a cut inside one clip): "Wukong swings his cudgel down at the fake's head." / "The fake raises his own cudgel to block; the two staves collide and throw sparks." / "The fake reverses into a sweeping blow at Wukong's waist." / "Wukong twists aside and the blow shatters the rock behind him."
    Keep a fight going for **at least three or four beats** before it resolves; weapon contact, blocking, dodging, staggering back and gasping for breath each count as one beat.
-7. Each episode should have a clear beginning, development, and a hook or turning point at the end.${enNote}`;
+7. Each episode should have a clear beginning, development, and a hook or turning point at the end.`;
   }
-  const _storyOverride = _overrideCache['story_expansion_system'];
-  const base = _storyOverride || `你是一位专业的编剧。你的任务是根据用户提供的故事梗概，创作 ${n} 集完整的短片剧本。
+  return `你是一位专业的编剧。你的任务是根据用户提供的故事梗概，创作 ${n} 集完整的短片剧本。
 
 要求：
 1. 用中文写作，叙事清晰流畅，适合后续拆分为分镜。
@@ -1014,6 +1029,21 @@ Requirements:
    ✓ 正例（一拍一句，每句都能成为一个镜头内的一个切点）：「悟空抡起金箍棒当头劈下。」「假猴抄棒横架相迎，两棒相交迸出火星。」「假猴反手一棒扫向悟空腰际。」「悟空侧身闪过，一棒击碎了身后的山石。」
    打斗**至少连续三到四拍**再分出结果，别一拍就完；兵器相交、格挡、闪避、踉跄后退、力竭喘息都各算一拍。
 7. 每集有清晰的起承转合，结尾留有悬念或转折，吸引观众看下一集。`;
+}
+
+/**
+ * 故事扩展：根据梗概生成短片剧本正文（中英文系统提示词）
+ */
+function getStoryExpansionSystemPrompt(cfg, episodeCount) {
+  const n = Number(episodeCount) > 1 ? Number(episodeCount) : 1;
+  const jsonNote = `\n\n**输出格式（必须严格遵守）**：\n返回一个 JSON 数组，包含 ${n} 个对象，每个对象格式如下：\n[\n  {\n    "episode": 1,\n    "title": "第一集标题（5-10字，概括本集核心内容）",\n    "content": "本集剧本正文（约1200-1600字）"\n  }\n]\n**必须只返回纯 JSON 数组，不要任何 markdown 代码块、说明文字。直接以 [ 开头，以 ] 结尾。**`;
+  if (isEnglish(cfg)) {
+    const enNote = `\n\n**Output format (STRICTLY required)**:\nReturn a JSON array with ${n} object(s), each in this format:\n[\n  {\n    "episode": 1,\n    "title": "Episode title (5-15 words)",\n    "content": "Episode script body (~800 words)"\n  }\n]\n**Return ONLY the JSON array. No markdown, no explanation. Start directly with [ and end with ].**`;
+    // 注意：英文分支不走 _overrideCache（覆盖内容是中文，套到英文正文上会串味）——保持原行为
+    return buildStoryExpansionBody(cfg, n) + enNote;
+  }
+  const _storyOverride = _overrideCache['story_expansion_system'];
+  const base = _storyOverride || buildStoryExpansionBody(cfg, n);
   return base + jsonNote;
 }
 
@@ -1095,10 +1125,15 @@ function buildStoryExpansionUserPrompt(cfg, premise, style, type, episodeCount) 
 function getDefaultPromptBody(key) {
   switch (key) {
     case 'story_expansion_system':
-      return '你是一位专业的编剧。你的任务是根据用户提供的故事梗概，创作 ${n} 集完整的短片剧本。\n\n要求：\n1. 用中文写作，叙事清晰流畅，适合后续拆分为分镜。\n2. 可以包含场景描述、角色动作与对话，但不要输出分镜格式、镜头编号或「内景/外景」等场次标记。\n3. **每集约 1200-1600 字**：把动作、走位、表情、环境、过渡都写清楚，**宁可写细，不要压缩**。不要靠形容词灌水凑字数。\n4. **一句一事**：每个句子只写**一个**可拍摄的事件，禁止把多个节拍挤进同一句。\n   ✗ 反例（三个节拍挤在一句）：「沙僧去花果山找悟空理论，却见悟空正坐在水帘洞中，身边还有一个"唐僧"和"八戒""沙僧"」\n   ✓ 正例（拆成三句，每句一镜）：「沙僧驾云赶往花果山。」「他落在水帘洞外，掀帘而入。」「洞中石台上端坐着一个"悟空"，身边还坐着"唐僧""八戒""沙僧"——全是假的！」\n5. **过渡必须写出来**：人物怎么从一个地点到另一个地点（走过去／驾云／推门／掀帘）、地点怎么切换，都要写成**可拍摄的动作**。**禁止**用「却见」「不想」「谁知」「忽见」这类词直接跳到结果。\n6. 每集有清晰的起承转合，结尾留有悬念或转折，吸引观众看下一集。';
+      // 从**同一处**生成（见 buildStoryExpansionBody 注释）：这里原先手抄了一份正文，
+      // 与真正在用的提示词长期不一致，而它会在提示词设置页作为 placeholder 显示给用户。
+      // 传 '${n}' 而不是具体数字，是为了仍然给出带占位符的模板正文。
+      return buildStoryExpansionBody({ language: 'zh' }, '${n}');
 
     case 'storyboard_system':
-      return '【角色】你是一位资深影视分镜师，精通罗伯特·麦基的镜头拆解理论，擅长构建情绪节奏。\n\n【任务】将小说剧本按**独立动作单元**拆解为分镜头方案。\n\n【分镜拆解原则】\n1. **动作单元划分**：每个镜头必须对应一个完整且独立的动作\n   - 一个动作 = 一个镜头（角色站起来、走过去、说一句话、做一个反应表情等）\n   - 禁止合并多个动作（站起+走过去应拆分为2个镜头）\n\n2. **景别标准**（根据叙事需要选择）：\n   - 大远景：环境、氛围营造\n   - 远景：全身动作、空间关系\n   - 中景：交互对话、情感交流\n   - 近景：细节展示、情绪表达\n   - 特写：关键道具、强烈情绪\n\n3. **运镜要求**：\n   - 固定镜头：稳定聚焦于一个主体\n   - 推镜：接近主体，增强紧张感\n   - 拉镜：扩大视野，交代环境\n   - 摇镜：水平移动摄像机，空间转换\n   - 跟镜：跟随主体移动\n   - 移镜：摄像机与主体同向移动\n\n4. **情绪与强度标记**：\n   - emotion：简短描述（兴奋、悲伤、紧张、愉快等）\n   - emotion_intensity：用箭头表示情绪等级\n     * 极强 ↑↑↑ (3)：情绪高峰、高度紧张\n     * 强 ↑↑ (2)：情绪明显波动\n     * 中 ↑ (1)：情绪有所变化\n     * 平稳 → (0)：情绪不变\n     * 弱 ↓ (-1)：情绪回落\n\n【输出要求】\n1. 生成一个数组，每个元素是一个镜头，包含：\n   - shot_number：镜头号\n   - scene_description：场景（地点+时间，如"卧室内，早晨"）\n   - shot_type：景别（大远景/远景/中景/近景/特写）\n   - camera_angle：机位角度（平视/仰视/俯视/侧面/背面）\n   - camera_movement：运镜方式（static/推镜push/拉镜pull/横摇pan/纵摇tilt/跟镜tracking/升镜crane_up/降镜crane_dn/环绕orbit/手持handheld/变焦zoom/旋转roll/甩镜whip_pan/螺旋spiral/希区柯克hitchcock_zoom/子弹时间bullet_time/荷兰角dutch_angle_move/推轨复合dolly_track/升格环绕slowmo_orbit）——**强制动态优先，固定镜头不得超过20%**\n   - action：动作描述\n   - result：动作完成后的画面结果\n   - dialogue：角色对话或旁白（如有）\n   - emotion：当前情绪\n   - emotion_intensity：情绪强度等级（3/2/1/0/-1）';
+      // 同一处来源（见 buildStoryboardSystemBody 注释）。注意**不能**走 _overrideCache：
+      // 用户的自定义内容由接口的 current_body 单独返回，这里要的是「默认正文」。
+      return buildStoryboardSystemBody();
 
     case 'character_extraction':
       return '你是一个专业的角色分析师，擅长从剧本中提取和分析角色信息。\n\n**【语言要求】所有字段的值必须使用中文，禁止出现英文内容（role字段的值除外，固定为 main/supporting/minor）。**\n\n你的任务是根据提供的剧本内容，提取并整理剧中出现的所有有名字角色的设定。\n\n要求：\n1. 提取所有有名字的角色（忽略无名路人或背景角色）\n2. 对每个角色，提取以下信息（全部用中文填写）：\n   - name: 角色名字（中文）\n   - role: 角色类型，固定值之一：main / supporting / minor\n   - appearance: 外貌描述（中文，100-200字，包含性别、年龄、体型、面部特征、发型、服装风格等，不含任何场景或环境信息）\n   - description: 背景故事和角色关系（中文，50-100字）\n3. 主要角色外貌要详细，次要角色可以简化';

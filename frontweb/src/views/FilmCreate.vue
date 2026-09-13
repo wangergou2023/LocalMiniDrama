@@ -2879,6 +2879,18 @@
             </span>
             <span v-else style="color: #909399">无打斗镜</span>
           </el-descriptions-item>
+          <el-descriptions-item label="尾帧衔接判定">
+            <!-- 半自动尾帧衔接：承接的镜渲染时自动接上一镜末帧；判为剪辑点的不接。
+                 判定结果可在分镜上有需要时人工翻转（link_prev_tail） -->
+            <span v-if="qualityReport.stats.tail_link_continues" style="color: #67c23a">
+              承接 {{ qualityReport.stats.tail_link_continues }} 条
+            </span>
+            <span v-else style="color: #909399">承接 0 条</span>
+            <span style="color: #909399">
+              · 剪辑点 {{ qualityReport.stats.tail_link_cut || 0 }} 条
+              <template v-if="qualityReport.stats.tail_link_unjudged"> · 未判定 {{ qualityReport.stats.tail_link_unjudged }} 条</template>
+            </span>
+          </el-descriptions-item>
         </el-descriptions>
 
         <div v-if="qualityReport.missing_dialogue && qualityReport.missing_dialogue.length" style="margin-top: 14px">

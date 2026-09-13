@@ -378,6 +378,9 @@ function rowToStoryboard(r) {
       creation_mode: r.creation_mode === 'universal' ? 'universal' : 'classic',
       universal_segment_text: r.universal_segment_text ?? null,
       first_frame_image_id: r.first_frame_image_id ?? null,
+      // 半自动尾帧衔接判定（1 承接 / 0 剪辑点 / null 未判定）：随项目大纲回到前端，
+      // 界面据此可见、也可人工翻转（PUT /storyboards/:id）
+      link_prev_tail: r.link_prev_tail == null ? null : Number(r.link_prev_tail),
       last_frame_image_id: r.last_frame_image_id ?? null,
       last_frame_image_url: sanitizeImageUrl(r.last_frame_image_url),
       last_frame_local_path: r.last_frame_local_path ?? null,

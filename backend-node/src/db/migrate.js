@@ -175,6 +175,11 @@ function ensureAllColumns(database) {
     { name: 'universal_segment_text', type: 'TEXT' },              // 全能模式片段描述（@ 引用等）
     { name: 'universal_segment_text_en', type: 'TEXT' },           // 上条的英文版：H3 生视频用；对白仍留在 <d>[Chinese] 内
     { name: 'first_frame_image_id', type: 'INTEGER' },
+    // 半自动尾帧衔接的判定结果：1 = 判定为承接上一镜（渲染时自动把上一镜末帧当本镜首帧）、
+    // 0 = 判定为剪辑点（不锚）、NULL = 未判定（见 services/adjacentContinuityService）。
+    // 用可空 INTEGER 而不是布尔 + 额外状态列：NULL 天然表示「还没判过」，
+    // 而 0/1 都表示「已经判过（或人工翻转成这个值）」，重新判定时就不会覆盖人工结论。
+    { name: 'link_prev_tail',       type: 'INTEGER' },
     { name: 'last_frame_image_id',  type: 'INTEGER' },
     { name: 'last_frame_image_url', type: 'TEXT' },
     { name: 'last_frame_local_path', type: 'TEXT' },

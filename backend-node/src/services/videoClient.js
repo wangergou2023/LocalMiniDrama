@@ -3882,6 +3882,31 @@ async function callVideoApi(db, log, opts) {
         });
       }
     }
+    // 半自动尾帧衔接：本镜判定为「承接上一镜」（link_prev_tail=1）、项目开关开（默认开）、
+    // 且本镜还没绑定首帧时，自动抽上一镜视频的末帧当本镜首帧。
+    //
+    // 为什么放在这里（comfyui 分支内）而不是 videoService：协议判定（api_protocol）只在本函数里
+    // 发生，而这条自动锚定**只对本地 H3（A03 Ref2VA，走 MiniMaxH3AddGuide）有意义** ——
+    // 其它 provider 的图生视频语义不同（首帧往往就是主图），跟着一起改会污染它们的出片。
+    // 落在分支内就天然只在 protocol === 'comfyui' 时生效。
+    //
+    // 失败一律静默跳过（maybeAutoAnchorPrevTailFrame 内部 warn + 返回 null），
+    // 绝不因为「多加了一道自动锚定」让视频生成失败。
+    let comfyFirstFrameUrl = opts.first_frame_url;
+    if (!comfyFirstFrameUrl && opts.storyboard_id) {
+      try {
+        const { maybeAutoAnchorPrevTailFrame } = require('./adjacentContinuityService');
+        const autoFirst = maybeAutoAnchorPrevTailFrame(db, log, {
+          storyboardId: opts.storyboard_id,
+          submittedFirstFrameUrl: opts.first_frame_url,
+        });
+        if (autoFirst) comfyFirstFrameUrl = autoFirst;
+      } catch (e) {
+        log.warn('[尾帧衔接] 自动锚定入口异常，本镜按无首帧渲染（不影响出片）', {
+          video_gen_id, storyboard_id: opts.storyboard_id, error: e.message,
+        });
+      }
+    }
     return callComfyUIVideoApi(config, log, {
       prompt: comfyPrompt,
       model,
@@ -3889,7 +3914,7 @@ async function callVideoApi(db, log, opts) {
       // 首尾帧：H3 参考路径用它们做 MiniMaxH3AddGuide 关键帧锚定（首帧 @frame_idx=0、尾帧 @-1）。
       // 此前只传了 image_url，storyboards.first_frame_image_id / last_frame_image_id 在本地渲染里
       // 完全没被用上 —— 用户绑定了尾帧也不会生效。
-      first_frame_url: opts.first_frame_url,
+      first_frame_url: comfyFirstFrameUrl,
       last_frame_url: opts.last_frame_url,
       reference_image_urls: opts.reference_urls,
       reference_labels: opts.reference_labels,

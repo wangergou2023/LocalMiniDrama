@@ -5,7 +5,82 @@ const { getFfmpegPath, hasLocalFfmpeg } = require('../utils/ffmpegPath');
 
 /**
  * 尾帧衔接服务：提取当前分镜视频的最后一帧，设为下一个分镜的首帧
+ *
+ * 抽帧那段被抽成 `extractVideoTailFrame` 导出：半自动尾帧衔接
+ * （services/adjacentContinuityService，提交视频前自动把上一镜末帧当本镜首帧）
+ * 用的是**同一套** ffmpeg 参数。复制第二份的话，以后为了兜住某些尾包黑帧而调
+ * `-sseof` 的偏移量时，按钮路径和自动路径就会抽出不同的帧，出片接不上还很难查。
  */
+
+/** storage 根目录：配置里可能是相对路径（相对 cwd） */
+function resolveStorageBase(cfg) {
+  const rawStorage = cfg?.storage?.local_path || './data/storage';
+  return path.isAbsolute(rawStorage) ? rawStorage : path.join(process.cwd(), rawStorage);
+}
+
+/**
+ * 从本地视频抽最后一帧，落成 storage 下的 jpg。
+ * @returns {{ok:true, outputAbsPath:string, outputRelPath:string, width:number|null, height:number|null}
+ *          | {ok:false, error:string}}
+ *   失败只返回错误，不抛 —— 自动锚定那条路必须能静默跳过（见 adjacentContinuityService）。
+ */
+function extractVideoTailFrame(cfg, log, { videoPath, outputFileName }) {
+  if (!videoPath || !String(videoPath).trim()) return { ok: false, error: '缺少视频路径' };
+  if (!hasLocalFfmpeg()) return { ok: false, error: '服务器未安装 ffmpeg，无法提取视频帧' };
+
+  const ffmpeg = getFfmpegPath();
+  const storageBase = resolveStorageBase(cfg);
+  // local_path 通常是相对 storage 根目录的路径，如 media/videos/xxx.mp4
+  const videoAbsPath = path.isAbsolute(videoPath)
+    ? videoPath
+    : path.join(storageBase, String(videoPath).replace(/^\/+/, ''));
+
+  if (!fs.existsSync(videoAbsPath)) {
+    return { ok: false, error: '视频文件不存在: ' + videoPath };
+  }
+
+  const imagesDir = path.join(storageBase, 'media', 'images');
+  if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir, { recursive: true });
+  const outputAbsPath = path.join(imagesDir, outputFileName);
+  const outputRelPath = `media/images/${outputFileName}`;
+
+  // 使用 -sseof -1 定位到最后一秒，然后取第一帧
+  log.info('[尾帧衔接] 开始提取', { from: videoPath, to: outputRelPath });
+
+  const result = spawnSync(ffmpeg, [
+    '-sseof', '-1',
+    '-i', videoAbsPath,
+    '-update', '1',
+    '-q:v', '2',
+    '-frames:v', '1',
+    '-y',
+    outputAbsPath
+  ], { encoding: 'utf8', timeout: 60000 });
+
+  if (result.error || result.status !== 0) {
+    log.error('[尾帧衔接] ffmpeg 失败', { stderr: result.stderr?.slice(-500) });
+    return { ok: false, error: 'ffmpeg 提取帧失败: ' + (result.stderr || result.error?.message || '未知错误') };
+  }
+  if (!fs.existsSync(outputAbsPath)) return { ok: false, error: '提取帧后文件未生成' };
+
+  // 尺寸（可选，仅用于记录/入库）
+  let width = null, height = null;
+  try {
+    const { getFfprobePath } = require('../utils/ffmpegPath');
+    const ffprobe = getFfprobePath && getFfprobePath();
+    if (ffprobe) {
+      const probe = spawnSync(ffprobe, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', outputAbsPath], { encoding: 'utf8' });
+      if (probe.stdout) {
+        const [w, h] = probe.stdout.trim().split('x');
+        width = w ? parseInt(w, 10) : null;
+        height = h ? parseInt(h, 10) : null;
+      }
+    }
+  } catch (_) { /* 忽略尺寸探测错误 */ }
+
+  return { ok: true, outputAbsPath, outputRelPath, width, height };
+}
+
 function routes(db, cfg, log) {
   return {
     linkTailFrame: async (req, res) => {
@@ -45,76 +120,18 @@ function routes(db, cfg, log) {
           return res.status(400).json({ error: '没有下一个分镜可供衔接' });
         }
 
-        // 3. 检查 ffmpeg 是否可用
-        if (!hasLocalFfmpeg()) {
-          return res.status(500).json({ error: '服务器未安装 ffmpeg，无法提取视频帧' });
-        }
-
-        const ffmpeg = getFfmpegPath();
-
-        // 4. 构建视频文件绝对路径
-        // local_path 通常是相对路径，如 media/videos/xxx.mp4
-        const rawStorage = cfg?.storage?.local_path || './data/storage';
-        const storageBase = path.isAbsolute(rawStorage)
-          ? rawStorage
-          : path.join(process.cwd(), rawStorage);
-        const videoAbsPath = path.isAbsolute(video.local_path)
-          ? video.local_path
-          : path.join(storageBase, video.local_path.replace(/^\/+/, ''));
-
-        if (!fs.existsSync(videoAbsPath)) {
-          return res.status(400).json({ error: '视频文件不存在: ' + video.local_path });
-        }
-
-        // 5. 准备输出图片路径
+        // 3. 准备输出图片路径并抽帧（复用与自动锚定同源的 extractVideoTailFrame）
         const timestamp = Date.now();
         const outputFileName = `tailframe_${storyboardId}_to_${nextSb.id}_${timestamp}.jpg`;
-        const imagesDir = path.join(storageBase, 'media', 'images');
-        if (!fs.existsSync(imagesDir)) {
-          fs.mkdirSync(imagesDir, { recursive: true });
+        const extracted = extractVideoTailFrame(cfg, log, { videoPath: video.local_path, outputFileName });
+        if (!extracted.ok) {
+          // 与改动前一致的状态码：视频文件不存在 = 400（用户/数据问题），其余（无 ffmpeg、抽帧失败）= 500
+          const notFound = /视频文件不存在/.test(extracted.error || '');
+          return res.status(notFound ? 400 : 500).json({ error: extracted.error });
         }
-        const outputAbsPath = path.join(imagesDir, outputFileName);
-        const outputRelPath = `media/images/${outputFileName}`;
+        const { outputRelPath, width, height } = extracted;
 
-        // 6. 使用 ffmpeg 提取最后一帧
-        // 使用 -sseof -1 定位到最后一秒，然后取第一帧
-        log.info('[尾帧衔接] 开始提取', { from: video.local_path, to: outputRelPath });
-
-        const result = spawnSync(ffmpeg, [
-          '-sseof', '-1',
-          '-i', videoAbsPath,
-          '-update', '1',
-          '-q:v', '2',
-          '-frames:v', '1',
-          '-y',
-          outputAbsPath
-        ], { encoding: 'utf8', timeout: 60000 });
-
-        if (result.error || result.status !== 0) {
-          log.error('[尾帧衔接] ffmpeg 失败', { stderr: result.stderr?.slice(-500) });
-          return res.status(500).json({ error: 'ffmpeg 提取帧失败: ' + (result.stderr || result.error?.message || '未知错误') });
-        }
-
-        if (!fs.existsSync(outputAbsPath)) {
-          return res.status(500).json({ error: '提取帧后文件未生成' });
-        }
-
-        // 7. 获取图片尺寸（可选，用于记录）
-        let width = null, height = null;
-        try {
-          const { getFfprobePath } = require('../utils/ffmpegPath');
-          const ffprobe = getFfprobePath && getFfprobePath();
-          if (ffprobe) {
-            const probe = spawnSync(ffprobe, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', outputAbsPath], { encoding: 'utf8' });
-            if (probe.stdout) {
-              const [w, h] = probe.stdout.trim().split('x');
-              width = w ? parseInt(w, 10) : null;
-              height = h ? parseInt(h, 10) : null;
-            }
-          }
-        } catch (_) { /* 忽略尺寸探测错误 */ }
-
-        // 8. 在 image_generations 表创建记录
+        // 4. 在 image_generations 表创建记录
         const now = new Date().toISOString();
         const prompt = `尾帧衔接：从分镜 #${currentSb.storyboard_number ?? storyboardId} 视频提取的最后一帧`;
 
@@ -149,7 +166,7 @@ function routes(db, cfg, log) {
 
         const newImageId = info.lastInsertRowid;
 
-        // 9. 更新下一个分镜的 first_frame_image_id
+        // 5. 更新下一个分镜的 first_frame_image_id
         // 先获取当前首帧（用于历史记录，如果需要）
         const nextSbCurrent = db.prepare('SELECT first_frame_image_id, image_url, local_path FROM storyboards WHERE id = ?').get(nextSb.id);
 
@@ -183,4 +200,8 @@ function routes(db, cfg, log) {
   };
 }
 
+// 路由工厂直接当模块导出（routes/index 按函数 require），
+// 抽帧函数挂在同一函数对象上导出：不改既有 `require(...)(db, cfg, log)` 的调用方式。
 module.exports = routes;
+module.exports.extractVideoTailFrame = extractVideoTailFrame;
+module.exports.resolveStorageBase = resolveStorageBase;

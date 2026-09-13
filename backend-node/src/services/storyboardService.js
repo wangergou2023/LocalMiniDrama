@@ -87,7 +87,7 @@ function createStoryboard(db, log, req) {
 function updateStoryboard(db, log, id, req) {
   const row = db.prepare('SELECT id FROM storyboards WHERE id = ? AND deleted_at IS NULL').get(Number(id));
   if (!row) return null;
-  const allowed = ['title', 'description', 'location', 'time', 'duration', 'dialogue', 'narration', 'action', 'result', 'atmosphere', 'image_prompt', 'polished_prompt', 'video_prompt', 'scene_id', 'characters', 'composed_image', 'image_url', 'local_path', 'main_panel_idx', 'video_url', 'audio_local_path', 'narration_audio_local_path', 'status', 'shot_type', 'angle', 'angle_h', 'angle_v', 'angle_s', 'movement', 'segment_index', 'segment_title', 'creation_mode', 'universal_segment_text', 'layout_description', 'first_frame_image_id', 'last_frame_image_id', 'last_frame_image_url', 'last_frame_local_path'];
+  const allowed = ['title', 'description', 'location', 'time', 'duration', 'dialogue', 'narration', 'action', 'result', 'atmosphere', 'image_prompt', 'polished_prompt', 'video_prompt', 'scene_id', 'characters', 'composed_image', 'image_url', 'local_path', 'main_panel_idx', 'video_url', 'audio_local_path', 'narration_audio_local_path', 'status', 'shot_type', 'angle', 'angle_h', 'angle_v', 'angle_s', 'movement', 'segment_index', 'segment_title', 'creation_mode', 'universal_segment_text', 'layout_description', 'first_frame_image_id', 'last_frame_image_id', 'last_frame_image_url', 'last_frame_local_path', 'link_prev_tail'];
   const updates = [];
   const params = [];
   // 前端可能传 character_ids，与 characters 统一：存为 JSON 字符串
@@ -184,6 +184,10 @@ function getStoryboardById(db, id) {
     universal_segment_text: r.universal_segment_text ?? null,
     layout_description: r.layout_description ?? null,
     first_frame_image_id: r.first_frame_image_id ?? null,
+    // 半自动尾帧衔接判定：1 承接上一镜 / 0 剪辑点 / null 未判定。
+    // 放进可写白名单是为了让界面能**人工翻转**自动判定的结论（判错的承接镜会锁死起幅，
+    // 结论必须能改）；改动只影响渲染时是否自动锚定上一镜末帧，不动分镜编号/时长/顺序。
+    link_prev_tail: r.link_prev_tail == null ? null : Number(r.link_prev_tail),
     last_frame_image_id: r.last_frame_image_id ?? null,
     last_frame_image_url: r.last_frame_image_url ?? null,
     last_frame_local_path: r.last_frame_local_path ?? null,

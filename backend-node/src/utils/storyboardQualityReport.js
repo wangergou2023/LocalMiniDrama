@@ -37,6 +37,11 @@ function buildStoryboardQualityReport(opts = {}) {
   const fightsWithoutCuts = formatReport ? Number(formatReport.fights_without_cuts) || 0 : 0;
   const cutsWithoutFight = formatReport ? Number(formatReport.cuts_without_fight) || 0 : 0;
   const multiShot = formatReport ? Number(formatReport.multi_shot) || 0 : 0;
+  // 半自动尾帧衔接（storyboards.link_prev_tail）：1 = 承接上一镜（渲染时自动接上一镜末帧）、
+  // 0 = 剪辑点、NULL = 未判定。判定由 services/adjacentContinuityService 在生成分镜后自动跑。
+  const tailLinkContinues = storyboards.filter((s) => Number(s.link_prev_tail) === 1).length;
+  const tailLinkCut = storyboards.filter((s) => s.link_prev_tail != null && Number(s.link_prev_tail) === 0).length;
+  const tailLinkUnjudged = storyboards.length - tailLinkContinues - tailLinkCut;
 
   // 报告是在流程的哪一步算的。**这点很重要**：生成任务结束时算的那份，校验的是
   // 「前端润色之前」的文本；而前端随后会逐条重写 universal_segment_text（实测 21 条约 80 秒），
@@ -144,7 +149,20 @@ function buildStoryboardQualityReport(opts = {}) {
     verdict = 'fail';
     reasons.push('没有生成任何分镜');
   }
+  // 「全部通过」这句按**原有条件**补：只在没有任何其它结论（含镜数为 0）时出现。
+  // 必须放在尾帧衔接那条**之前** —— 尾帧衔接是说明性信息，不能因为它占了 reasons
+  // 就把「均通过」吞掉（一集全绿却看不到任何结论句，用户会以为报告坏了）。
   if (reasons.length === 0) reasons.push('剧本台词、剧情节拍与提示词格式自检均通过');
+  // 尾帧衔接判定结果：**只是说明性结论**，不进 verdict —— 判成剪辑点不代表有问题
+  //（该切的地方就该切），只是让用户知道哪些镜渲染时会自动接上一镜末帧。
+  // 有判定结果才写这一条：一集全是「未判定」时（比如还没跑判定）不该占一行说明。
+  if (tailLinkContinues > 0 || tailLinkCut > 0) {
+    reasons.push(
+      `尾帧衔接判定：${tailLinkContinues} 条判为「承接上一镜」，渲染时会自动把上一镜视频的末帧作为本镜首帧（同一镜头被 15s 时长切开的接得上）；` +
+      `判为「剪辑点」的 ${tailLinkCut} 条不会接尾帧，按换机位/换景别正常切` +
+      (tailLinkUnjudged > 0 ? `；另有 ${tailLinkUnjudged} 条未判定（不锚定）` : '')
+    );
+  }
 
   // 结论标题按**实际原因**拼，不能只看 verdict —— 「缺节拍待确认」和「只是骨架修过」都是 warn，
   // 但前者需要人去看内容、后者无需处理，混用同一个标题会误导。
@@ -208,6 +226,10 @@ function buildStoryboardQualityReport(opts = {}) {
       fight_cut: formatReport ? Number(formatReport.fight_cut) || 0 : 0,
       fight_split_sequence: formatReport ? Number(formatReport.fight_split_sequence) || 0 : 0,
       fight_single_beat: formatReport ? Number(formatReport.fight_single_beat) || 0 : 0,
+      // 尾帧衔接判定：承接/剪辑点/未判定各几条（link_prev_tail = 1 / 0 / NULL）
+      tail_link_continues: tailLinkContinues,
+      tail_link_cut: tailLinkCut,
+      tail_link_unjudged: tailLinkUnjudged,
     },
     missing_dialogue: missingDialogue.map((m) => ({ speaker: m.speaker || '', line: m.line || '' })),
     missing_beats: missingBeats.map((b) => ({ beat: b.beat || '', reason: b.reason || '' })),

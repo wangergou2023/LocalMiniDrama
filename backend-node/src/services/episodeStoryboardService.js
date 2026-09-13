@@ -199,6 +199,9 @@ function getStoryboardsForEpisode(db, episodeId) {
       segment_title: r.segment_title ?? null,
       creation_mode: r.creation_mode === 'universal' ? 'universal' : 'classic',
       universal_segment_text: r.universal_segment_text ?? null,
+      // 半自动尾帧衔接判定结果（1 承接 / 0 剪辑点 / null 未判定）：质量报告要统计它，
+      // 也随分镜列表回到前端（可据此展示/人工翻转）
+      link_prev_tail: r.link_prev_tail == null ? null : Number(r.link_prev_tail),
       characters: (() => {
         if (!r.characters) return [];
         if (typeof r.characters !== 'string') return Array.isArray(r.characters) ? r.characters : [];
@@ -1524,6 +1527,28 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
     }
   } catch (e) {
     log.warn('[分镜] 参考图绑定自检失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
+  }
+
+  // 3.7) 相邻镜连续性判定（半自动尾帧衔接）：判「本镜是不是上一镜同一镜头的延续」，
+  // 结果写 storyboards.link_prev_tail，渲染时据此自动把上一镜末帧接成本镜首帧。
+  //
+  // 放在自检里的原因：它必须在**分镜落库之后**跑（要对成对的库存行判定），
+  // 而这里是所有生成路径（正常/部分恢复/异常恢复）唯一的共同收口；
+  // 漏在别的分支就等于那条路径上没有尾帧衔接。
+  // 已判定的对内部会跳过，所以「润色后复核」「手动重算」重复调到也不会重判、更不会冲掉人工翻转
+  // （全部都判过时这一次调用不花模型 token）。
+  try {
+    const { classifyEpisodeContinuity } = require('./adjacentContinuityService');
+    const continuity = await classifyEpisodeContinuity(db, log, episodeIdNum);
+    // 判定结果要立刻反映到这份报告上：storyboards 是函数开头读的快照，不合并的话
+    // 界面上的 tail_link_* 统计永远落后一次（和新生成的分镜对不上）。
+    if (continuity && continuity.verdicts && continuity.verdicts.size) {
+      for (const r of storyboards) {
+        if (continuity.verdicts.has(r.id)) r.link_prev_tail = continuity.verdicts.get(r.id);
+      }
+    }
+  } catch (e) {
+    log.warn('[尾帧衔接] 相邻连续性判定失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
   }
 
   // 4) 汇总报告

@@ -1803,6 +1803,30 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
   return { dialogueCoverage, beatCoverage, formatReport, qualityReport };
 }
 
+/**
+ * 分镜数量未指定时，按**剧本朗读时长 ÷ 规划单镜秒数**推导一个目标数。
+ *
+ * 为什么需要它（实测 drama7 ep21）：`generateStoryboard` 的 storyboard_count 是可选参数，
+ * 不传就没有任何"总数约束" → 模型按剧本里的叙事点自由切，857 字切出 26 个 7-8 秒的碎片，
+ * 而"每镜至少几秒/最多几秒"这类时长政策**管不了总数**。
+ * 换算链与项目既有常量一致：中文语速 4.2 字/秒，规划单镜 12 秒。
+ */
+function deriveStoryboardCount(scriptContent, explicitCount, plannedSeconds) {
+  const explicit = Number(explicitCount);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const chars = String(scriptContent || '').replace(/\s+/g, '').length;
+  if (!chars) return null;
+  const { PLANNED_SHOT_SECONDS } = require('./promptI18n');
+  // 规划单镜秒数优先用项目配置的「每段最大秒数」（用户要的就是"按设置的最大秒数来考虑时长"）
+  const fromProject = Number(plannedSeconds);
+  const planned = Number.isFinite(fromProject) && fromProject > 0
+    ? fromProject
+    : (Number(PLANNED_SHOT_SECONDS) > 0 ? Number(PLANNED_SHOT_SECONDS) : 12);
+  const seconds = chars / 4.2;
+  const shots = Math.round(seconds / planned);
+  return Math.min(40, Math.max(6, shots));
+}
+
 function generateStoryboard(db, log, episodeId, model, style, storyboardCount, videoDuration, aspectRatio, includeNarration, universalOmni) {
   const cfg = loadConfig();
   const episode = db.prepare(
@@ -1835,8 +1859,8 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   // 无项目配置时再使用总时长÷镜数；再否则 null。
   let effectiveShotDuration = null;
   const impliedFromTotal =
-    videoDuration && storyboardCount
-      ? Math.round(Number(videoDuration) / Number(storyboardCount))
+    videoDuration && effectiveStoryboardCount
+      ? Math.round(Number(videoDuration) / Number(effectiveStoryboardCount))
       : null;
   if (videoClipDuration && Number(videoClipDuration) > 0) {
     effectiveShotDuration = Number(videoClipDuration);
@@ -1853,6 +1877,17 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
       : '';
   if (!scriptContent) {
     throw new Error('剧本内容为空，请先生成剧集内容');
+  }
+
+  // 分镜总数：显式传了就用传的，没传就按剧本时长推导（否则模型会切出 20+ 个 7-8 秒碎片）
+  const effectiveStoryboardCount = deriveStoryboardCount(scriptContent, storyboardCount, videoClipDuration);
+  if (!Number(storyboardCount) && effectiveStoryboardCount) {
+    log.info('[分镜] 未指定分镜数量 → 按剧本时长自动推导', {
+      episode_id: episodeId,
+      script_chars: scriptContent.replace(/\s+/g, '').length,
+      script_seconds: Math.round(scriptContent.replace(/\s+/g, '').length / 4.2),
+      target_shots: effectiveStoryboardCount,
+    });
   }
 
   const characters = db.prepare(
@@ -1886,8 +1921,8 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   // 处理分镜数量和时长约束
   let extraConstraint = '';
   // 宽松判断：只要有值（包括字符串形式的数字），就尝试转换并添加约束
-  if (storyboardCount) {
-    const countVal = Number(storyboardCount);
+  if (effectiveStoryboardCount) {
+    const countVal = Number(effectiveStoryboardCount);
     if (Number.isFinite(countVal) && countVal > 0) {
       const countLabel = promptI18n.formatUserPrompt(cfg, 'storyboard_count_constraint', countVal);
       if (countLabel) extraConstraint += `\n${countLabel}`;
@@ -1901,30 +1936,30 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
     }
   }
   // 当同时指定总时长和数量时，补充单镜 duration 说明（与项目「每段秒数」一致时勿用总÷镜压短）
-  if (storyboardCount && videoDuration && effectiveShotDuration) {
+  if (effectiveStoryboardCount && videoDuration && effectiveShotDuration) {
     const isEn = promptI18n.isEnglish(cfg);
     const clipFromProject = videoClipDuration && Number(videoClipDuration) > 0;
     const implied =
-      impliedFromTotal && impliedFromTotal > 0 ? impliedFromTotal : Math.round(Number(videoDuration) / Number(storyboardCount));
+      impliedFromTotal && impliedFromTotal > 0 ? impliedFromTotal : Math.round(Number(videoDuration) / Number(effectiveStoryboardCount));
     if (clipFromProject) {
       const clip = Number(videoClipDuration);
       // 「每段秒数」是单镜上限；规划镜数按 min(上限, 8s) 平均折算，避免每个镜头都被顶到上限
       const plan = Math.min(clip, STORYBOARD_PLAN_SECONDS);
-      const shotCountHint = storyboardCount ? `（本次约 ${Number(storyboardCount)} 个）` : '';
+      const shotCountHint = effectiveStoryboardCount ? `（本次约 ${Number(effectiveStoryboardCount)} 个）` : '';
       if (isEn) {
         extraConstraint += `\nEach shot's "duration" MUST land within **5.2-${clip}s**:\n- **${clip}s is the per-shot CEILING**, not the target for every shot (the target model caps one continuous take at 362 frames = 15.08s)\n- The shot count is planned as total ÷ ${plan}${shotCountHint}, so durations should hover around **${plan}s** — do NOT max out every shot at ${clip}s\n- Shots with room for a full action arc or dialogue may take 10-${clip}s; lighter shots (one gesture, one short line) may take 5.2-7s\n- Do NOT pile several independent actions into one shot just to fill time, and do NOT write content that cannot finish inside ${clip}s — that is the signal to split it into another shot\n- **Floor is 5.2s** (the model's shortest single clip is 124 frames = 5.17s); never go below it\nThe total of all shot durations should come to about ${Number(videoDuration)}s.`;
       } else {
         extraConstraint += `\n每个镜头的 **duration** 必须落在 **5.2-${clip} 秒** 区间内：\n- **${clip} 秒是单镜上限，不是每个镜头的目标值**（目标模型一次连续运镜最长 362 帧 = 15.08 秒）\n- 分镜数按「总时长 ÷ ${plan}」规划${shotCountHint}，所以单镜时长应围绕 **${plan} 秒** 上下浮动，**不要每个镜头都写满 ${clip} 秒**\n- 内容撑得起完整动作弧线或对白的镜头可给 10-${clip} 秒；内容轻的镜头（一个动作、一句短对白）给 5.2-7 秒\n- 不要为填满时长而在一镜里堆砌多个互不相关的动作；也不要写 ${clip} 秒演不完的内容 —— 那是该再拆一个分镜的信号\n- **下限 5.2 秒**（目标模型单镜最短 124 帧 = 5.17 秒），任何镜头都不要更短\n全片所有镜头时长之和约为 ${Number(videoDuration)} 秒。`;
       }
     } else if (isEn) {
-      extraConstraint += `\nEach shot target duration: approximately ${effectiveShotDuration}s (= total ${Number(videoDuration)}s ÷ ${Number(storyboardCount)} shots). Set each shot's duration field to this value, adjusting ±1s for dialogue/action length.`;
+      extraConstraint += `\nEach shot target duration: approximately ${effectiveShotDuration}s (= total ${Number(videoDuration)}s ÷ ${Number(effectiveStoryboardCount)} shots). Set each shot's duration field to this value, adjusting ±1s for dialogue/action length.`;
     } else {
-      extraConstraint += `\n每镜头目标时长：约 ${effectiveShotDuration} 秒（= 总时长 ${Number(videoDuration)}s ÷ ${Number(storyboardCount)} 个镜头）。每个镜头的 duration 字段请设为此值，可根据对话/动作长短适当调整 ±1 秒。`;
+      extraConstraint += `\n每镜头目标时长：约 ${effectiveShotDuration} 秒（= 总时长 ${Number(videoDuration)}s ÷ ${Number(effectiveStoryboardCount)} 个镜头）。每个镜头的 duration 字段请设为此值，可根据对话/动作长短适当调整 ±1 秒。`;
     }
   }
 
   log.info('Storyboard generation params', {
-    storyboard_count: storyboardCount,
+    storyboard_count: effectiveStoryboardCount,
     video_duration: videoDuration,
     video_clip_duration: videoClipDuration,
     effective_shot_duration: effectiveShotDuration,
@@ -1959,8 +1994,8 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
 
   // 当用户指定了分镜数量时，在系统提示词后追加最高优先级覆盖指令，
   // 使"目标数量"优先于默认的"一动作一镜头、禁止合并"原则
-  if (storyboardCount && Number(storyboardCount) > 0) {
-    const targetCount = Number(storyboardCount);
+  if (effectiveStoryboardCount && Number(effectiveStoryboardCount) > 0) {
+    const targetCount = Number(effectiveStoryboardCount);
     const isEn = systemPrompt.includes('[Role]');
     if (isEn) {
       systemPrompt += `\n\n[HIGHEST PRIORITY — USER SPECIFIED COUNT]
@@ -2044,7 +2079,7 @@ ${items}
     script_length: scriptContent.length,
     character_count: characters.length,
     scene_count: scenes.length,
-    storyboard_count: storyboardCount,
+    storyboard_count: effectiveStoryboardCount,
     video_duration: videoDuration,
     universal_omni_storyboard: wantUniversalOmni,
   });
@@ -2069,7 +2104,7 @@ ${items}
       wantNarration,
       wantUniversalOmni,
       clipSec,
-      storyboardCount,
+      effectiveStoryboardCount,
       videoDuration
     );
   });
@@ -2384,6 +2419,8 @@ module.exports = {
   buildContinuationPrompt,
   /** 首帧图提示词的机械拼装（供测试：静帧提示词里不得出现运镜/运动） */
   generateImagePrompt,
+  /** 分镜数量推导（未指定时按剧本时长 ÷ 规划单镜秒数）——供测试 */
+  deriveStoryboardCount,
   /** 角色短锚点（首帧提示词主体块）——供测试锁住「多人同框只给 2 个锚点」这条实测结论 */
   shortAnchorForCharacter,
   loadCharacterAnchors,

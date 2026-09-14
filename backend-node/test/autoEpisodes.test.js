@@ -98,3 +98,26 @@ describe('全能模式的必填字段：必须写在用户提示词里（模型�
     assert.match(sys, /每个镜头都必须有/);
   });
 });
+
+/**
+ * 分镜总数：没指定时按「剧本时长 ÷ 项目每段最大秒数」推导。
+ * 实测 drama7 ep21：不传数量 → 没有任何总数约束 → 857 字切出 26 个 7-8 秒碎片。
+ */
+describe('分镜数量自动推导', () => {
+  const svc = require('../src/services/episodeStoryboardService');
+  it('857 字（≈204 秒）÷ 每段 15 秒 ≈ 14 镜', () => {
+    assert.equal(svc.deriveStoryboardCount('字'.repeat(857), null, 15), 14);
+  });
+  it('1037 字（≈247 秒）÷ 每段 15 秒 ≈ 16 镜', () => {
+    assert.equal(svc.deriveStoryboardCount('字'.repeat(1037), null, 15), 16);
+  });
+  it('显式指定数量时以指定值为准', () => {
+    assert.equal(svc.deriveStoryboardCount('字'.repeat(857), 20, 15), 20);
+  });
+  it('没有项目配置时退回规划单镜 12 秒；空剧本返回 null；极端值被夹到 6–40', () => {
+    assert.equal(svc.deriveStoryboardCount('字'.repeat(857), null, null), 17);
+    assert.equal(svc.deriveStoryboardCount('', null, 15), null);
+    assert.equal(svc.deriveStoryboardCount('字'.repeat(50), null, 15), 6);
+    assert.equal(svc.deriveStoryboardCount('字'.repeat(50000), null, 15), 40);
+  });
+});

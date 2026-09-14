@@ -152,3 +152,34 @@ test('对白时长换算与项目既有语速常量一致（4.2 字/秒）', () 
   const need = Math.ceil(12 / 4.2) + 1;
   assert.ok(need >= 3 && need <= 15, String(need));
 });
+
+/**
+ * 开思考后，分镜输出上限必须跟着放大。
+ * 思考 token 计入 max_tokens：还按 16384 会让 JSON 正文更早被截断、续写更多（实测端点接受 32768+）。
+ */
+test('分镜 max_tokens：思考关闭 16384，思考开启 32768', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/services/episodeStoryboardService.js'), 'utf8');
+  assert.match(src, /function storyboardMaxTokens\(db\)/);
+  assert.match(src, /opts\.thinking === 'enabled'\) return 32768/);
+  assert.match(src, /const maxTokens = storyboardMaxTokens\(db\)/);
+  assert.match(src, /max_tokens: maxTokens/);
+  // 常量仍是 16384（思考关闭时的值）
+  const p = require('../src/services/episodeStoryboardService');
+  assert.equal(p.DEFAULT_STORYBOARD_MAX_TOKENS, 16384);
+});
+
+test('deepseek 配置解析：enabled/disabled 都从 settings 正确读出', () => {
+  const { resolveDeepSeekOptions } = require('../src/services/deepseekConfig');
+  const base = { provider: 'deepseek', base_url: 'https://api.deepseek.com' };
+  assert.equal(resolveDeepSeekOptions({ ...base, settings: '{"deepseek_thinking":"enabled","deepseek_reasoning_effort":"high"}' }, 'deepseek-v4-flash').thinking, 'enabled');
+  assert.equal(resolveDeepSeekOptions({ ...base, settings: '{"deepseek_thinking":"disabled"}' }, 'deepseek-v4-flash').thinking, 'disabled');
+  // 开思考时 reasoning_effort 生效、temperature 被删（DeepSeek 要求）
+  const { applyDeepSeekChatOptions } = require('../src/services/deepseekConfig');
+  const body = applyDeepSeekChatOptions({ ...base, settings: '{"deepseek_thinking":"enabled","deepseek_reasoning_effort":"high"}' },
+    { model: 'deepseek-v4-flash', temperature: 0.7, messages: [] });
+  assert.equal(body.thinking.type, 'enabled');
+  assert.equal(body.reasoning_effort, 'high');
+  assert.equal('temperature' in body, false);
+});

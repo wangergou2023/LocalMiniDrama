@@ -83,17 +83,35 @@ function isMaxTokensParamError(errMsg) {
   );
 }
 
+/**
+ * 分镜生成用的输出上限。
+ *
+ * 开思考时**思考 token 计入 max_tokens**，如果还按 16384，正文 JSON 的可用额度会被思考吃掉一大截
+ * （实测这条链路：思考约 120 token/短问答，长 JSON 任务上占比更高），结果就是更早被截断、更多次续写。
+ * 所以在思考模式下把上限提到 32768；端点实测接受（131072 也接受）。
+ */
+function storyboardMaxTokens(db) {
+  try {
+    const { resolveDeepSeekOptions } = require('./deepseekConfig');
+    const cfg = aiClient.getDefaultConfig(db, 'text');
+    const opts = resolveDeepSeekOptions(cfg || {}, (cfg && cfg.default_model) || '');
+    if (opts && opts.thinking === 'enabled') return 32768;
+  } catch (_) {}
+  return DEFAULT_STORYBOARD_MAX_TOKENS;
+}
+
 async function generateTextForStoryboard(db, log, userPrompt, systemPrompt, options = {}) {
   const { model, streamCallback, temperature = 0.7 } = options;
+  const maxTokens = storyboardMaxTokens(db);
 
-  // 第一次尝试：带 max_tokens:16384
-  log.info('Storyboard generateText attempt 1', { model: model || '(default)', max_tokens: DEFAULT_STORYBOARD_MAX_TOKENS });
+  // 第一次尝试：带 max_tokens（开思考时 32768，否则 16384）
+  log.info('Storyboard generateText attempt 1', { model: model || '(default)', max_tokens: maxTokens });
   try {
     const text = await aiClient.generateText(db, log, 'text', userPrompt, systemPrompt, {
       scene_key: 'storyboard_extraction',
       model: model || undefined,
       temperature,
-      max_tokens: DEFAULT_STORYBOARD_MAX_TOKENS,
+      max_tokens: maxTokens,
       streamCallback,
     });
     return text;

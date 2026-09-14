@@ -109,7 +109,8 @@ function buildStoryboardSystemBody() {
      此时这些拍**必须留在同一条分镜里**，禁止把同一场打斗拆成多条分镜 —— 那正是打斗不连续的根源。
    - 一个分镜内最多 2-3 个连续动作，且必须**同一空间、同一主体**（起势→过程→收尾）
    - 当一段剧本含多个动作、多个主体或场景切换时，**必须拆成多个分镜**，而不是塞进一个分镜
-   - **判断标准：一镜的内容如果 5 秒演不完，就必须拆镜**
+   - **判断标准（重要）**：分镜 = **一次连续拍摄**。内容演不完**不要拆镜**，而是**把这一镜的 duration 给足**（上限 = 项目配置的「每段最大秒数」）；
+     只有**场景、主体或时间发生切换**，或者出现了必须靠剪辑才能表达的叙事跳跃时，才拆出新分镜
 
 2. **景别标准**（根据叙事需要选择）：
    - 大远景：环境、氛围营造
@@ -188,7 +189,8 @@ function buildStoryboardSystemBody() {
 **重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**
 
 【重要提示】
-- 镜头数量**宁多勿少**：单镜时长下限是 5 秒，分镜数太少会导致每镜分配到的时长不足，无法把动作演完整
+- 镜头数量由内容决定，**不要为了凑数把一次连续拍摄切成多镜**：单镜 duration **下限 3 秒、上限＝项目配置的「每段最大秒数」**（见下方时长说明）；
+  一段连续的动作、一段完整的对白，**原则上就是一个分镜**（时长给足即可），切碎了反而会导致动作不连续、每镜时长不够
 - 每个分镜必须有明确的 title（标题）、action（动作）和 result（结果）；**action 写的是「一次连续拍摄」** —— 打斗/追击/连招镜可以在这里列出它的 2-4 拍，但**剪辑本身只能**由该镜 universal_segment_text 里的 "[Shot N] At MM:SS.mmm," 记号表达，不得写成叙述性措辞
 - 景别选择必须符合叙事节奏（不要连续使用同一景别）
 - 情绪强度必须准确反映剧本氛围变化
@@ -416,7 +418,7 @@ ${monochromeStyle ? `- **单色项目硬规则（本片画风是单色）**：§
   编号从 1 开始连续；**最多 4 镜**。
   **禁止**用「切镜到」「镜头2」这类叙述性措辞表达剪辑 —— 只有上面的记号才算剪辑点；
   也**禁止**「分镜2：」那类**行**（一条 universal_segment_text = 一次生成调用）。
-- 单镜 5-10 秒目标 200-350 个英文词：构图、主体、环境、动作、运镜、音效、对白都要写全；
+- 单镜时长随内容**动态决定**（3 秒～项目上限）：短镜（3-5 秒）写精炼，长镜（10 秒以上）要把构图、主体、环境、动作、运镜、音效、对白写全写细；**不设字数硬指标**，但镜头有多长就要有多少内容支撑；
   对白多的镜头以**把话说完**为先，不必机械凑字数。
 
 **overall_soundscape:**（整段环境声与物理音效；与镜头同步的音效留在 detailed_description）
@@ -614,7 +616,7 @@ function getStoryboardUserPromptSuffix(cfg, shotDuration, opts = {}) {
     : null;
   if (lang === 'en') {
     const durationInstruction = durationHint
-      ? `approximately ${durationHint}s per shot (project setting), adjust ±1s based on dialogue length and action complexity`
+      ? `shot length is decided DYNAMICALLY by content: minimum 3s, maximum ${durationHint}s (project setting). Never split one continuous take into several shots just to shorten it — give that shot more seconds instead`
       : 'estimate per shot from dialogue length, action complexity, and emotion';
     return `
 
@@ -634,8 +636,8 @@ function getStoryboardUserPromptSuffix(cfg, shotDuration, opts = {}) {
     return '\n\n' + _sbUserOverride + _sbUserLocked;
   }
   const durationInstruction = durationHint
-    ? `每镜头约${durationHint}秒（项目配置），综合对话、动作、情绪可适当调整±1秒`
-    : '综合对话、动作、情绪估算每镜时长（秒）';
+    ? `单镜时长**按内容动态决定**：下限 3 秒，**上限 ${durationHint} 秒**（项目配置的「每段最大秒数」）。一个连续动作/一段完整对白不要拆成多镜 —— 需要更长时间就把它写长，而不是另开一镜。`
+    : '综合对话、动作、情绪动态估算每镜时长（秒）：连续动作不拆镜，把时长给足';
   return `
 
 【分镜要素】每个分镜 = **一次连续拍摄**（默认单镜；打斗/追击/连招镜可按拍镜内切镜，用 "[Shot 1] … [Shot 2] At MM:SS.mmm, the camera cuts to …" 记号；叙述性「切镜到/镜头2」仍然禁止），描述要详尽具体：
@@ -1061,14 +1063,20 @@ Each element: location, time, prompt (English image generation prompt for pure b
  * 单集容量：由「每集目标镜数」推出每集字数。
  *
  * 为什么用镜数而不是直接写字数：用户真正在意的是**一集有多少个分镜**（65 镜一集太长了）。
- * 换算链是固定的 —— 镜数 × 规划单镜秒数(8s) × 中文语速(4.2 字/秒) = 字数。
- * 22 镜 ≈ 740 字 ≈ 3 分钟成片 ≈ 本地 H3 渲染 2.4 小时。
+ * 换算链是固定的 —— 镜数 × 规划单镜秒数 × 中文语速(4.2 字/秒) = 字数。
+ * 740 字 ≈ 3 分钟成片；按规划 12 秒/镜 ≈ 15 镜（原先按 8 秒/镜算成 22 镜，那会把连续镜头切碎）。
+ * 注意：镜数变少**基本不省 GPU 时间**（H3 成本 ≈ 1.05×秒数 − 1.8/次，按秒算），
+ * 省的是管理成本：每镜一张首帧图、一条 ust、一次衔接判定。
  *
  * 「自动分集」时，这个容量就是**每集的上限**：内容超过一集的量就拆到下一集，
  * 集数由模型按内容需要自己定。否则只是让模型自由发挥，它又会写出一集 2000 字（65 镜）。
  */
-const EPISODE_TARGET_SHOTS = 22;
-const EPISODE_TARGET_CHARS = Math.round(EPISODE_TARGET_SHOTS * 8 * 4.2);            // ≈ 739
+/** 规划单镜秒数：分镜按内容动态给时长（上限＝项目「每段最大秒数」，H3 单次上限 15 秒），
+ *  估算每集容量时用这个均值。原先是 8 秒，导致「一次连续拍摄」被切成很多 7-8 秒的碎片。 */
+const PLANNED_SHOT_SECONDS = 12;
+/** 每集字数容量（≈ 3 分钟成片）。镜数不再是硬目标，而是由容量 ÷ 规划单镜秒数推出。 */
+const EPISODE_TARGET_CHARS = Math.round(22 * 8 * 4.2);                              // ≈ 739（沿用原容量，成片体量不变）
+const EPISODE_TARGET_SHOTS = Math.max(1, Math.round(EPISODE_TARGET_CHARS / 4.2 / PLANNED_SHOT_SECONDS)); // ≈ 15
 const EPISODE_CHARS_MIN = Math.round(EPISODE_TARGET_CHARS * 0.85 / 10) * 10;        // ≈ 630
 const EPISODE_CHARS_MAX = Math.round(EPISODE_TARGET_CHARS * 1.15 / 10) * 10;        // ≈ 850
 /** 自动分集时模型的集数区间（受单次输出上限约束：8000 token ≈ 5500 字 ≈ 7 集） */
@@ -1911,6 +1919,8 @@ module.exports = {
   getStoryExpansionSystemPrompt,
   /** 单集容量（由每集目标镜数推出）——前端展示「每集约 N 镜 / 约 X 字」时复用 */
   EPISODE_TARGET_SHOTS,
+  /** 规划单镜秒数（估算每集容量用） */
+  PLANNED_SHOT_SECONDS,
   EPISODE_TARGET_CHARS,
   EPISODE_CHARS_MIN,
   EPISODE_CHARS_MAX,

@@ -96,3 +96,29 @@ test('角色参考表文本AI提示词：不再指定标题文字与分区标签
     assert.equal(new RegExp(caps.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(zh), false, '输出格式里还残留英文标签 ' + caps);
   }
 });
+
+/**
+ * 分镜时长政策：一个分镜 = 一次连续拍摄；时长按内容动态给（上限＝项目「每段最大秒数」）。
+ * 用户实测反馈：很多分镜本来就是**一个镜头、没有切镜**，却被按 5–10 秒硬切成了 26 个碎片。
+ */
+test('分镜规范：不再「宁多勿少/5 秒演不完就拆镜」，改为按内容动态给时长', () => {
+  const p = require('../src/services/promptI18n');
+  const suffix = p.getStoryboardUserPromptSuffix({ app: { language: 'zh' }, style: {} }, 15, { universalOmni: true });
+  assert.match(suffix, /按内容动态决定/);
+  assert.match(suffix, /上限 15 秒/);
+  assert.equal(/宁多勿少/.test(suffix), false);
+  assert.equal(/约15秒（项目配置），综合对话、动作、情绪可适当调整±1秒/.test(suffix), false, '旧的「约N秒±1」写法会鼓励切碎');
+  const spec = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
+  assert.equal(/5-10 秒目标/.test(spec), false);
+  assert.match(spec, /动态决定/);
+});
+
+test('每集容量估算与新政策一致：740 字 ≈ 15 镜（不再是 22 镜 × 8 秒）', () => {
+  const p = require('../src/services/promptI18n');
+  assert.equal(p.EPISODE_TARGET_CHARS, 739);
+  assert.equal(p.PLANNED_SHOT_SECONDS, 12);
+  assert.equal(p.EPISODE_TARGET_SHOTS, 15);
+  // 换算链自洽：镜数 × 规划秒数 × 4.2 字/秒 ≈ 每集字数
+  const implied = p.EPISODE_TARGET_SHOTS * p.PLANNED_SHOT_SECONDS * 4.2;
+  assert.ok(Math.abs(implied - p.EPISODE_TARGET_CHARS) < 60, `换算不自洽: ${implied} vs ${p.EPISODE_TARGET_CHARS}`);
+});

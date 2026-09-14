@@ -13,8 +13,13 @@ const ZH = { language: 'zh', app: { language: 'zh' } };
 const EN = { language: 'en', app: { language: 'en' } };
 
 describe('单集容量：由每集目标镜数推出', () => {
-  it('换算链固定：镜数 × 8 秒 × 4.2 字/秒', () => {
-    assert.equal(p.EPISODE_TARGET_CHARS, Math.round(p.EPISODE_TARGET_SHOTS * 8 * 4.2));
+  it('换算链固定：镜数 × 规划单镜秒数 × 4.2 字/秒', () => {
+    // 规划单镜秒数由 8 提到 12：分镜 = 一次连续拍摄，时长按内容动态给，
+    // 否则「一镜演不完就拆镜」会把一个连续镜头切成一堆 7-8 秒碎片。
+    assert.equal(p.PLANNED_SHOT_SECONDS, 12);
+    const implied = p.EPISODE_TARGET_SHOTS * p.PLANNED_SHOT_SECONDS * 4.2;
+    assert.ok(Math.abs(implied - p.EPISODE_TARGET_CHARS) < 60, `${implied} vs ${p.EPISODE_TARGET_CHARS}`);
+    assert.equal(p.EPISODE_TARGET_SHOTS, 15);
   });
   it('区间围绕目标值（±15%）', () => {
     assert.ok(p.EPISODE_CHARS_MIN < p.EPISODE_TARGET_CHARS);

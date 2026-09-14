@@ -65,6 +65,45 @@ function runFfmpeg(args, log, tag) {
   return true;
 }
 
+/**
+ * 最终成片编码器。
+ * 默认 AV1（libsvtav1）10-bit：本机 Firefox 147 可硬解、色带（ink-wash 渐变）明显少于 8-bit H.264，
+ * 且与单镜 clip（ComfyUI SaveVideo av1 + CreateVideo bit_depth=10）编码一致，避免二次转码风格突变。
+ * 可通过 episodes.merge_options.output_codec / output_crf 覆盖（'av1' | 'h264'）。
+ */
+const FINAL_ENCODERS = {
+  h264: (crf) => ['-c:v', 'libx264', '-preset', 'fast', '-crf', String(crf), '-pix_fmt', 'yuv420p'],
+  av1: (crf) => ['-c:v', 'libsvtav1', '-preset', '6', '-crf', String(crf), '-pix_fmt', 'yuv420p10le'],
+};
+const FINAL_ENCODER_DEFAULT_CRF = { h264: 23, av1: 26 };
+
+function finalEncoderArgs(mergeOpts = {}) {
+  const wanted = String(mergeOpts.output_codec || 'av1').toLowerCase();
+  const key = FINAL_ENCODERS[wanted] ? wanted : 'av1';
+  const crf = Number.isFinite(Number(mergeOpts.output_crf))
+    ? Number(mergeOpts.output_crf)
+    : FINAL_ENCODER_DEFAULT_CRF[key];
+  return { key, crf, args: FINAL_ENCODERS[key](crf) };
+}
+
+/**
+ * 用目标编码器写最终文件；AV1 编码失败（缺 libsvtav1 等）时自动回退 libx264，
+ * 保证无人值守的批量合成不会因为编码器问题整集失败。
+ * @returns {boolean} 是否写出成功
+ */
+function encodeFinal(headArgs, tailArgs, outAbs, log, tag, mergeOpts) {
+  const enc = finalEncoderArgs(mergeOpts);
+  const common = [...tailArgs, '-movflags', '+faststart', outAbs];
+  if (runFfmpeg([...headArgs, ...enc.args, ...common], log, tag)) {
+    log.info('merged post: 最终编码', { tag, codec: enc.key, crf: enc.crf });
+    return true;
+  }
+  if (enc.key === 'h264') return false;
+  log.warn('merged post: AV1 编码失败，回退 libx264', { tag });
+  const fb = finalEncoderArgs({ output_codec: 'h264' });
+  return runFfmpeg([...headArgs, ...fb.args, ...common], log, `${tag}_fallback_h264`);
+}
+
 function writeSilenceMp3(slotSec, outPath, log) {
   return runFfmpeg(
     ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono', '-t', String(slotSec), '-c:a', 'libmp3lame', '-q:a', '6', outPath],
@@ -440,12 +479,10 @@ async function runMergedEpisodePostProcess(db, log, opts) {
       } else {
         args.push('-map', '0:v', '-map', '1:a');
       }
-      args.push(
-        '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-        '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', '-shortest', outAbs
-      );
-      if (!runFfmpeg(args, log, 'mux_av')) {
-        return { ok: false, error: '烧录字幕/水印或混音失败（请确认 ffmpeg 含 libx264）' };
+      const head = args;
+      const tail = ['-c:a', 'aac', '-b:a', '192k', '-shortest'];
+      if (!encodeFinal(head, tail, outAbs, log, 'mux_av', mergeOpts)) {
+        return { ok: false, error: '烧录字幕/水印或混音失败（AV1/H.264 编码器均不可用）' };
       }
     } else {
       if (!filterComplex) {
@@ -457,9 +494,10 @@ async function runMergedEpisodePostProcess(db, log, opts) {
       } else {
         args.push('-an');
       }
-      args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-movflags', '+faststart', outAbs);
-      if (!runFfmpeg(args, log, 'watermark_only')) {
-        return { ok: false, error: '水印烧录失败' };
+      const head = args;
+      const tail = [];
+      if (!encodeFinal(head, tail, outAbs, log, 'watermark_only', mergeOpts)) {
+        return { ok: false, error: '水印烧录失败（AV1/H.264 编码器均不可用）' };
       }
     }
 
@@ -508,4 +546,5 @@ module.exports = {
   runMergedEpisodePostProcess,
   ffprobeDurationSec,
   buildNativeBedFilter,
+  finalEncoderArgs,
 };

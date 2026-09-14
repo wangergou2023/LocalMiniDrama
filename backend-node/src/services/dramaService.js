@@ -832,6 +832,8 @@ function finalizeEpisode(db, log, episodeId, baseUrl, body = {}) {
       watermark_text: (body && body.watermark_text != null)
         ? String(body.watermark_text).trim().slice(0, 200)
         : '',
+      // 最终成片编码：默认 AV1 10-bit（本机 Firefox 可硬解、色带最少），可传 'h264' 覆盖。
+      output_codec: (body && body.output_codec) ? String(body.output_codec) : 'av1',
     },
   };
   const created = videoMergeService.create(db, log, mergeReq);

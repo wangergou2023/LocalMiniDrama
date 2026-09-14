@@ -29,11 +29,10 @@ function routes(db, log) {
         let prompt = body.prompt || '';
         const style = (body.style || '').toString().trim();
         if (style) {
-          const baseLower = String(prompt || '').toLowerCase();
-          const styleLower = style.toLowerCase();
-          if (!baseLower.includes(styleLower)) {
-            prompt = prompt ? `${prompt}. Style: ${style}` : `Style: ${style}`;
-          }
+          // 风格块要写进 §5 detailed_description 的段首（风格句位置），**不能**贴在提示词末尾 ——
+          // 贴末尾时模型会忽略它，画面改由 §5 里 LLM 写的「暖绿森林」这类色彩基调主导（见 vg76/77）。
+          const { injectStyleIntoVideoPrompt } = require('../utils/videoPromptStyle');
+          prompt = injectStyleIntoVideoPrompt(prompt, style);
         }
         const model = body.model ?? null;
         const duration = body.duration ?? null;

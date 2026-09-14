@@ -219,6 +219,28 @@ describe('首帧提示词：结构与实测定稿一致', () => {
     assert.equal(a2, '黄袍骑白马');
   });
 
+  it('短锚点派生：丢掉英文内部描述与「现形后」的条件性描述（实测踩过）', () => {
+    // 盘丝洞 七仙姑：unique_marks 是 'colorful spider patterns on body when transformed'
+    // —— 既是中文项目里混进来的英文内部描述，又是「现形后」才有的样子，当常驻外观会穿帮
+    const anchor = svc.shortAnchorForCharacter({
+      appearance: '七位年轻女子，个个容貌妖艳，身姿婀娜，彩衣飘飘，手提竹篮。身形一转，彩衣褪去便露出斑斓蛛纹。',
+      identity_anchors: JSON.stringify({
+        face_shape: 'unspecified',
+        unique_marks: 'colorful spider patterns on body when transformed',
+      }),
+    });
+    assert.equal(anchor, '手提竹篮');
+    assert.equal(/colorful|spider|unspecified/.test(anchor), false, anchor);
+  });
+
+  it('短锚点派生：占位值（none/unspecified）不会被当成特征', () => {
+    const a = svc.shortAnchorForCharacter({
+      appearance: '身形高大，身穿皂布直裰，手持降妖宝杖。',
+      identity_anchors: JSON.stringify({ face_shape: 'unspecified', unique_marks: 'none' }),
+    });
+    assert.equal(a, '身穿皂布直裰，手持降妖宝杖');
+  });
+
   it('短锚点派生：没有穿戴线索时退回骨相/首分句，不返回空串', () => {
     const a = svc.shortAnchorForCharacter({
       appearance: '身形瘦小精悍，四肢矫健灵活。',

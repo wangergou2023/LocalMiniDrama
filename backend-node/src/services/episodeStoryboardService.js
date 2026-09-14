@@ -326,6 +326,7 @@ function angleLabelForFrame(sb) {
 const TIME_LIGHT_ZH = [
   [/清晨|早晨|黎明|拂晓/, '低角度柔光，薄雾未散'],
   [/正午|中午/, '顶光，阴影短而硬'],
+  [/白天|日间|白日/, '日光均匀，明暗自然'],
   [/午后|下午/, '斜射光，明暗过渡柔和'],
   [/黄昏|傍晚|日落|夕阳|暮/, '低角度侧光，长影'],
   [/深夜|子夜|半夜/, '弱光，仅人物与近景可见'],
@@ -344,6 +345,8 @@ const LIGHT_TOKEN_MAP = {
   dramatic: '',
   cinematic: '',
   moody: '',
+  natural: '',
+  realistic: '',
   soft: '柔光',
   soft_light: '柔光',
   harsh: '硬光',
@@ -360,11 +363,15 @@ const LIGHT_TOKEN_MAP = {
 };
 
 function lightingTextFor(sb) {
+  const rawStyleSrc = String((sb && sb.lighting_style) || '').replace(/\s+/g, ' ').trim();
+  // lighting_style 本身就是一句中文光线描述（「午后斜光穿过窗棂，光柱中浮尘可见」「斑驳日光」）时直接用，
+  // 不再按时间补一句 —— 否则会出现「室内斜光 + 日光均匀」这种自相矛盾的双重光线。
+  if (/[\u4e00-\u9fa5]{4,}/.test(rawStyleSrc)) return rawStyleSrc;
   const bits = [];
   const time = String((sb && sb.time) || '');
   const hit = TIME_LIGHT_ZH.find(([re]) => re.test(time));
   if (hit) bits.push(hit[1]);
-  const rawStyle = String((sb && sb.lighting_style) || '').trim();
+  const rawStyle = rawStyleSrc;
   const normalized = rawStyle.toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
   const key = normalized.replace(/\s+/g, '_');
   const mapped = Object.prototype.hasOwnProperty.call(LIGHT_TOKEN_MAP, key) ? LIGHT_TOKEN_MAP[key] : normalized;
@@ -375,12 +382,36 @@ function lightingTextFor(sb) {
 /**
  * 角色「短锚点」所用词表：只认能从外观里直接看出来的穿戴/持物特征。
  */
-const ANCHOR_OUTFIT_RE = /(身着|身穿|身披|穿着|头戴|腰束|腰系|手持|手执|肩扛|肩挑|颈挂|足踏|脚蹬|骑|外披|外罩|内衬|斜披|披着|佩戴)/;
+const ANCHOR_OUTFIT_RE = /(身着|身穿|身披|穿着|头戴|腰束|腰系|手持|手执|手提|手捧|肩扛|肩挑|肩挎|颈挂|足踏|脚蹬|骑|外披|外罩|内衬|斜披|披着|佩戴)/;
 const ANCHOR_MAX_LEN = 16;
 
 function truncateAnchor(text) {
-  const t = String(text || '').trim().replace(/[。；;]$/, '');
+  const t = String(text || '').replace(/\s+/g, ' ').trim().replace(/[。；;]$/, '');
   return t.length > ANCHOR_MAX_LEN ? t.slice(0, ANCHOR_MAX_LEN) : t;
+}
+
+/**
+ * 锚点候选过滤（实测踩过的三类脏数据）：
+ *   1) 占位值：none / 无 / unspecified —— 不是特征；
+ *   2) 条件性描述：`colorful spider patterns on body **when transformed**` —— 那是「现形后」的样子，
+ *      当成常驻外观会让换装/伪装镜头全部穿帮；
+ *   3) 混语言的英文内部描述：中文项目的角色图里常混进这类英文短句（`colorful spider`），
+ *      既不是画面语言也常常剧透，直接丢掉。
+ */
+function isUsableAnchor(text, row) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!t) return false;
+  if (/^(none|无|未详|不详|unknown|unspecified|n\/?a|空)$/i.test(t)) return false;
+  if (/(when\s|after\s|once\s|transformed|revealed|现形|化形|变身|现出本相)/i.test(t)) return false;
+  const asciiOnly = !/[\u4e00-\u9fa5]/.test(t);
+  if (asciiOnly) {
+    const words = t.split(/\s+/).filter(Boolean);
+    // 英文项目里正常外观短句一般是 1–3 个词；更长的多半是内部描述
+    if (words.length >= 4) return false;
+    const appearance = String((row && row.appearance) || '');
+    if (/[\u4e00-\u9fa5]/.test(appearance)) return false;   // 中文项目混进的英文描述
+  }
+  return true;
 }
 
 /**
@@ -403,7 +434,7 @@ function shortAnchorForCharacter(row, limit = 3) {
   }
   const bits = [];
   const marks = anchors && anchors.unique_marks ? String(anchors.unique_marks).split(/[，,]/)[0].trim() : '';
-  if (marks && !/^(none|无|未详|不详|unspecified|n\/?a)$/i.test(marks)) bits.push(truncateAnchor(marks));
+  if (marks && isUsableAnchor(marks, row)) bits.push(truncateAnchor(marks));
   const clauses = String(row.appearance || '')
     .split(/[，,。；;]/)
     .map((s) => s.trim())
@@ -412,6 +443,7 @@ function shortAnchorForCharacter(row, limit = 3) {
     if (bits.length >= limit) break;
     if (!ANCHOR_OUTFIT_RE.test(c)) continue;
     if (/^(其|神态|神情|眉宇|目光)/.test(c)) continue;
+    if (!isUsableAnchor(c, row)) continue;
     const t = truncateAnchor(c);
     if (t && !bits.includes(t)) bits.push(t);
   }
@@ -419,7 +451,7 @@ function shortAnchorForCharacter(row, limit = 3) {
     const face = anchors && anchors.face_shape
       ? String(anchors.face_shape).split(/[，,]/)[0].trim()
       : (clauses[0] || '');
-    if (face) bits.push(truncateAnchor(face));
+    if (face && isUsableAnchor(face, row)) bits.push(truncateAnchor(face));
   }
   return bits.slice(0, limit).join('，');
 }

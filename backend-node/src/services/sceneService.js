@@ -471,6 +471,38 @@ async function generateSceneSingleImage(db, log, cfg, sceneId, modelName, style)
 }
 
 /**
+ * 把「单幅场景图」登记为场景的**视频参考图**。
+ *
+ * 背景（实测事故）：场景图默认是 3×2/2×2 四宫格拼图，H3 的 `ref_image_size: match` 会把整张拼图
+ * 缩到生成面积，**每格只剩约 570×320**，且各格之间没有统一空间 —— 模型只能取到「山道/古树」这类
+ * 泛化语义，成片背景就变成通用森林（vg76/vg77）。
+ * 单幅图才是 H3 想要的 <Picture 1>（场景环境参考）。
+ *
+ * 做法：local_path 指向单幅图（前端 assetImageUrl 优先用 local_path，视频参考随之切换），
+ * 原拼图挪到 extra_images[0]，不丢数据。
+ */
+function applySingleViewSceneImage(db, log, sceneId, relPath) {
+  const id = Number(sceneId);
+  const rel = String(relPath || '').trim().replace(/^\//, '');
+  if (!Number.isFinite(id) || !rel) return { ok: false, error: 'bad args' };
+  const row = db.prepare('SELECT id, local_path, extra_images FROM scenes WHERE id = ? AND deleted_at IS NULL').get(id);
+  if (!row) return { ok: false, error: 'scene not found' };
+  let extras = [];
+  try {
+    const parsed = row.extra_images ? JSON.parse(row.extra_images) : [];
+    if (Array.isArray(parsed)) extras = parsed.filter(Boolean);
+  } catch (_) { extras = []; }
+  const old = row.local_path && String(row.local_path).trim();
+  if (old && old !== rel && !extras.includes(old)) extras.unshift(old);
+  db.prepare('UPDATE scenes SET local_path = ?, extra_images = ?, updated_at = ? WHERE id = ?')
+    .run(rel, extras.length ? JSON.stringify(extras) : null, new Date().toISOString(), id);
+  if (log && typeof log.info === 'function') {
+    log.info('[场景单图] 已登记为视频参考图', { scene_id: id, local_path: rel, extra_images: extras.length });
+  }
+  return { ok: true, local_path: rel, extra_images: extras };
+}
+
+/**
  * 从场景现有图片中反向提取场景描述，更新 prompt 字段。
  */
 async function extractSceneFromImage(db, log, cfg, sceneId) {
@@ -519,5 +551,7 @@ module.exports = {
   generateSceneSingleImage,
   generateScenePromptOnly,
   generateSceneSinglePromptOnly,
+  buildSceneSingleImagePrompt,
+  applySingleViewSceneImage,
   extractSceneFromImage,
 };

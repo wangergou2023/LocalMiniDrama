@@ -122,3 +122,33 @@ test('每集容量估算与新政策一致：740 字 ≈ 15 镜（不再是 22 �
   const implied = p.EPISODE_TARGET_SHOTS * p.PLANNED_SHOT_SECONDS * 4.2;
   assert.ok(Math.abs(implied - p.EPISODE_TARGET_CHARS) < 60, `换算不自洽: ${implied} vs ${p.EPISODE_TARGET_CHARS}`);
 });
+
+/**
+ * 碎镜的真瓶颈：光给"上限"不够。
+ * 实测（drama7 ep21 重生成，01:38）：新政策只写"下限 3 秒、上限 15 秒"，
+ * 模型照样按"拍"切成 25 条 5-6 秒的碎镜 —— 比改之前还碎。
+ * 所以必须同时写死：常规 8-15 秒、对白时长换算、同一空间一镜到底。
+ */
+test('分镜规范：常规 8-15 秒 + 对白时长换算 + 同一空间一镜到底', () => {
+  const p = require('../src/services/promptI18n');
+  const suffix = p.getStoryboardUserPromptSuffix({ app: { language: 'zh' }, style: {} }, 15, { universalOmni: true });
+  assert.match(suffix, /常规 8-15 秒/);
+  assert.match(suffix, /台词字数 ÷ 4.2 \+ 1 秒/);
+  assert.match(suffix, /一镜到底/);
+  assert.match(suffix, /上限 15 秒/);
+  const spec = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
+  assert.match(spec, /常规 8-15 秒/);
+  // 「不按拍拆镜 / 只有空间主体时间切换才拆镜」写在分镜系统提示里（不是通用六段规范里）
+  const sys = p.getStoryboardSystemPrompt({ app: { language: 'zh' }, style: {} });
+  assert.match(sys, /不要按拍拆镜/);
+  assert.equal(/必须拆成多个分镜/.test(sys), false, '旧的「多动作必须拆镜」规则应已删除');
+});
+
+test('对白时长换算与项目既有语速常量一致（4.2 字/秒）', () => {
+  const p = require('../src/services/promptI18n');
+  const suffix = p.getStoryboardUserPromptSuffix({ app: { language: 'zh' }, style: {} }, 15, { universalOmni: true });
+  assert.match(suffix, /4\.2 字\/秒/);
+  // 12 字台词 ≈ 2.86s + 1 ≈ 3.9s → 四舍五入 8-15 秒常规区间内
+  const need = Math.ceil(12 / 4.2) + 1;
+  assert.ok(need >= 3 && need <= 15, String(need));
+});

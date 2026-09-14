@@ -71,3 +71,23 @@ test('不再出现「末尾追加风格块」的旧实现', () => {
   assert.equal(/prompt = prompt \? `\$\{prompt\}\. Style:/.test(src), false, 'videos.js 仍有末尾拼接风格块的旧代码');
   assert.match(src, /injectStyleIntoVideoPrompt/);
 });
+
+test('LLM 自己写的风格句被替换掉（否则散文会压过风格块，画面变彩色）', () => {
+  const withColor = SIX.replace(
+    'A mystical forest in ink tones.',
+    'The film is a fantasy rendered in ink-wash tones, with warm green forest hues.'
+  );
+  const out = injectStyleIntoVideoPrompt(withColor, STYLE);
+  assert.equal(/warm green forest hues/.test(out), false, out);
+  assert.equal(/A mystical forest in ink tones\./.test(out), false, out);
+  const iSection = out.indexOf('detailed_description:');
+  const iStyle = out.indexOf('Style: ' + STYLE);
+  assert.ok(iStyle > iSection && iStyle < out.indexOf('[Shot 1]', iSection), out);
+});
+
+test('§5 里没有 [Shot N] 时退回「段首插入」，不删内容', () => {
+  const noShot = SIX.replace('A mystical forest in ink tones. [Shot 1] A wide crane shot begins low.', 'A single still lake at dawn.');
+  const out = injectStyleIntoVideoPrompt(noShot, STYLE);
+  assert.match(out, /A single still lake at dawn\./);
+  assert.match(out, /Style: traditional Chinese ink wash painting/);
+});

@@ -38,7 +38,12 @@ function injectStyleIntoVideoPrompt(prompt, style) {
   }
   const idx = m.index + m[0].length;
   const head = p.slice(0, idx).replace(/\s+$/, '');
-  const rest = p.slice(idx).replace(/^[ \t]*\n+/, '');
+  let rest = p.slice(idx).replace(/^[ \t]*\n+/, '');
+  // §5.1 按官方结构就该是「1-2 句风格句」：把 LLM 自己写的那句**替换掉**。
+  // 实测：只并列写入时，LLM 那句「warm green forest hues」会把画面带成彩色森林（vg78 仍是绿林），
+  // 风格块必须独占这个位置。替换范围 = §5 开头到第一个 [Shot N] 之前。
+  const iShot = rest.indexOf('[Shot ');
+  if (iShot > 0) rest = rest.slice(iShot);
   return `${head}\nStyle: ${s}\n${rest}`;
 }
 

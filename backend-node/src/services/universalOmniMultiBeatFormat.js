@@ -566,6 +566,39 @@ function repairUniversalSegmentText(text, opts = {}) {
  * @param {Array<object>} storyboards
  * @param {{styleZh?: string}} [opts]
  */
+/**
+ * 运镜词表：分镜的 `movement` 字段（如「环绕orbit」）必须体现在 ust 正文里。
+ *
+ * 实测（drama7 ep21，13 镜）：只有 4 镜提到运镜，而且是从 action 文本里碰巧漏进来的；
+ * movement 有值的 9 镜（推镜/跟镜/升镜/甩镜/拉镜）**一条都没写** ——
+ * 等于完全没给视频模型运镜信息，成片自然全是固定机位。
+ */
+const MOVEMENT_KEYWORDS = [
+  [/push|推进|推镜|前推/i, ['推', '推进', 'push', 'dolly in']],
+  [/pull|拉远|拉镜|后拉/i, ['拉', '拉远', 'pull', 'dolly out']],
+  [/orbit|环绕|盘旋/i, ['环绕', '盘旋', 'orbit', 'circle', 'arc']],
+  [/track|跟拍|跟镜/i, ['跟', '跟拍', '跟镜', 'track', 'follow']],
+  [/crane|升镜|升起/i, ['升', '升起', 'crane', 'rise', 'lift']],
+  [/whip|甩镜|甩/i, ['甩', 'whip']],
+  [/pan|摇镜|横摇|平移/i, ['摇', '平移', 'pan', 'swivel']],
+  [/tilt|俯仰|上下/i, ['俯', '仰', 'tilt']],
+  [/zoom|变焦/i, ['变焦', 'zoom']],
+  [/handheld|手持/i, ['手持', 'handheld']],
+  [/static|固定|定机位/i, ['固定', '静止', 'static']],
+];
+
+/** movement 字段的语义是否出现在正文里（中英任一命中即可） */
+function movementMentioned(text, movement) {
+  const body = String(text || '');
+  const mv = String(movement || '').trim();
+  if (!body || !mv) return true;                       // 没写运镜字段就不检查
+  for (const [trigger, words] of MOVEMENT_KEYWORDS) {
+    if (!trigger.test(mv)) continue;
+    return words.some((w) => body.toLowerCase().includes(String(w).toLowerCase()));
+  }
+  return true;                                          // 词表认不出的运镜词不误报
+}
+
 function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
   const rows = (Array.isArray(storyboards) ? storyboards : []).filter(
     (r) => r && r.creation_mode === 'universal'
@@ -573,6 +606,8 @@ function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
   const samples = [];
   let multiShot = 0;
   let cutTotal = 0;
+  /** 运镜缺失：movement 字段有值但正文完全没写运镜 */
+  const movementMissing = [];
   // 打斗节奏自检（见 checkFightPacing）：只报**真的坏了**的 —— 定场挤压。
   // 初版规则「打斗镜没切拍就报警」在 drama4 上产生 8 条假警、0 条真问题，已废弃。
   let pacing = { fights: 0, cut: 0, split_sequence: 0, single_beat: 0, tail_crushed: [], cuts_without_fight: [] };
@@ -585,6 +620,9 @@ function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
     const cuts = parseCutMarkers(analysisTextOf(raw)).length;
     if (cuts >= 2) multiShot += 1;
     cutTotal += cuts;
+    if (!movementMentioned(raw, r.movement)) {
+      movementMissing.push({ id: r.id ?? null, n: r.storyboard_number ?? null, movement: String(r.movement || '') });
+    }
   }
   try {
     pacing = checkFightPacing(rows);
@@ -595,6 +633,9 @@ function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
     samples: samples.slice(0, 5),
     multi_shot: multiShot,
     cut_total: cutTotal,
+    // 运镜缺失（真问题）：movement 字段被整段忽略 —— 成片会变成基本不动的固定机位
+    movement_missing: movementMissing.length,
+    movement_missing_sample: movementMissing.slice(0, 5),
     // 打斗统计：fights 全部打斗镜 / cut 已切拍 / split_sequence 已被分镜层面拆成连续镜 /
     // single_beat 短交锋单镜正确 / tail_crushed **定场挤压（真问题）**
     fight_total: pacing.fights,

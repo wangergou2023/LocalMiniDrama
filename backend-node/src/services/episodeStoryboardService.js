@@ -1699,6 +1699,9 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
       // 「有多少打斗镜定场过长」也永远是 0（真问题会被静默吞掉）。
       multi_shot: stored.multi_shot,
       cut_total: stored.cut_total,
+      // 运镜缺失：movement 字段没被写进 ust → 成片会是固定机位（见 universalOmniMultiBeatFormat.MOVEMENT_KEYWORDS）
+      movement_missing: stored.movement_missing || 0,
+      movement_missing_sample: stored.movement_missing_sample || [],
       fight_total: stored.fight_total,
       fight_cut: stored.fight_cut,
       fight_split_sequence: stored.fight_split_sequence,
@@ -1717,6 +1720,13 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
         noncompliant: stored.noncompliant,
         checked: stored.checked,
         sample: stored.samples,
+      });
+    }
+    if (stored.movement_missing > 0) {
+      log.warn('[分镜] 有分镜的 movement 字段没写进全能提示词 —— 视频模型拿不到运镜信息，成片会是固定机位', {
+        episode_id: episodeIdNum,
+        count: stored.movement_missing,
+        sample: stored.movement_missing_sample,
       });
     }
     if (stored.fights_without_cuts > 0) {

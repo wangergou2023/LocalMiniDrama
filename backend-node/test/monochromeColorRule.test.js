@@ -232,3 +232,20 @@ test('summarizeUniversalSegmentFormat 报出运镜缺失的镜', () => {
   assert.equal(r.movement_missing, 1, JSON.stringify(r.movement_missing_sample));
   assert.equal(r.movement_missing_sample[0].id, 2);
 });
+
+test('长镜（≥8秒）没写镜内时间推进（第几秒）也会被报出来', () => {
+  const m = require('../src/services/universalOmniMultiBeatFormat');
+  const mk = (id, duration, body) => ({
+    id, creation_mode: 'universal', movement: '', duration, storyboard_number: id,
+    universal_segment_text: `subject_definitions:\n<Subject 1> x\nsummary:\ny\nretention_analysis:\nz\ndetailed_description:\n${body}\noverall_soundscape:\ns\nnon_diegetic_music:\nnone\n`,
+  });
+  const rows = [
+    mk(1, 12, 'The camera holds, then in the first two seconds it starts a slow orbit. [Shot 1] x'),   // 有时间推进
+    mk(2, 12, 'A static locked-off frame of the hall. [Shot 1] x'),                                     // 长镜但没时间推进
+    mk(3, 5, 'A quick insert of the spindle. [Shot 1] x'),                                              // 短镜不检查
+    mk(4, 13, '[Shot 1] x [Shot 2] At 00:03.200, the camera cuts to y'),                                // 有镜内剪辑点 = 有时间结构
+  ];
+  const r = m.summarizeUniversalSegmentFormat(rows);
+  assert.equal(r.timeline_missing, 1, JSON.stringify(r.timeline_missing_sample));
+  assert.equal(r.timeline_missing_sample[0].id, 2);
+});

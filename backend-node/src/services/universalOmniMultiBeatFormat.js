@@ -573,30 +573,64 @@ function repairUniversalSegmentText(text, opts = {}) {
  * movement 有值的 9 镜（推镜/跟镜/升镜/甩镜/拉镜）**一条都没写** ——
  * 等于完全没给视频模型运镜信息，成片自然全是固定机位。
  */
-const MOVEMENT_KEYWORDS = [
-  [/push|推进|推镜|前推/i, ['推', '推进', 'push', 'dolly in']],
-  [/pull|拉远|拉镜|后拉/i, ['拉', '拉远', 'pull', 'dolly out']],
-  [/orbit|环绕|盘旋/i, ['环绕', '盘旋', 'orbit', 'circle', 'arc']],
-  [/track|跟拍|跟镜/i, ['跟', '跟拍', '跟镜', 'track', 'follow']],
-  [/crane|升镜|升起/i, ['升', '升起', 'crane', 'rise', 'lift']],
-  [/whip|甩镜|甩/i, ['甩', 'whip']],
-  [/pan|摇镜|横摇|平移/i, ['摇', '平移', 'pan', 'swivel']],
-  [/tilt|俯仰|上下/i, ['俯', '仰', 'tilt']],
-  [/zoom|变焦/i, ['变焦', 'zoom']],
-  [/handheld|手持/i, ['手持', 'handheld']],
-  [/static|固定|定机位/i, ['固定', '静止', 'static']],
+/**
+ * 运镜词表：分镜的 `movement` 字段（如「环绕orbit」）必须体现在 **§5 正文** 里。
+ *
+ * 实测（drama7 ep21，13 镜）：只有 4 镜提到运镜，而且是从 action 文本里碰巧漏进来的；
+ * movement 有值的 9 镜（推镜/跟镜/升镜/甩镜/拉镜）**一条都没写** ——
+ * 等于完全没给视频模型运镜信息，成片自然全是固定机位。
+ *
+ * 判定要求"镜头上下文"：中文单字（推/拉/跟/升/甩）在正文里到处都是
+ *（推开、拉住、跟着、升起），只靠单字命中会把"没写运镜"误判成"写了"
+ * —— 第一版就是这样，13 镜里明明 9 镜缺失却报 0。
+ */
+const MOVEMENT_PATTERNS = [
+  [/push|推进|推镜|前推/i, /(镜头|画面|机位|摄影机)[^。；\n]{0,12}(前?推|推进)|\b(push in|dolly in|pushes in)\b/i],
+  [/pull|拉远|拉镜|后拉/i, /(镜头|画面|机位|摄影机)[^。；\n]{0,12}(后?拉|拉远)|\b(pull back|dolly out|pulls back)\b/i],
+  [/orbit|环绕|盘旋/i, /(镜头|画面|机位|摄影机)[^。；\n]{0,14}(环绕|盘旋|绕[^。；\n]{0,6}一圈)|\b(orbit|orbits|circles|arcs?)\b/i],
+  [/track|跟拍|跟镜/i, /(镜头|画面|机位|摄影机)[^。；\n]{0,12}(跟拍|跟镜|跟随)|\b(tracking shot|track(?:s|ing)? (?:the|him|her|them)|follows?)\b/i],
+  [/crane|升镜|升起/i, /(镜头|画面|机位|摄影机)[^。；\n]{0,12}(升起|上升|升降)|\b(crane|rises?|lifts?)\b/i],
+  [/whip|甩镜|甩/i, /(镜头|画面|机位)[^。；\n]{0,10}甩|\bwhip pan\b/i],
+  [/pan|摇镜|横摇|平移/i, /(镜头|画面|机位|摄影机)[^。；\n]{0,12}(横摇|摇镜|平移|摇过)|\b(pan(?:s|ning)?|swivels?)\b/i],
+  [/tilt|俯仰|上下/i, /(镜头|画面|机位)[^。；\n]{0,12}(上摇|下摇|俯仰)|\b(tilts? up|tilts? down)\b/i],
+  [/zoom|变焦/i, /(镜头|画面)[^。；\n]{0,10}变焦|\bzoom(s|ing)?\b/i],
+  [/handheld|手持/i, /手持|\bhand-?held\b/i],
+  [/static|固定|定机位/i, /(固定机位|机位固定|定机位|静止镜头)|\b(static shot|locked-?off|fixed frame)\b/i],
 ];
 
-/** movement 字段的语义是否出现在正文里（中英任一命中即可） */
+/**
+ * movement 字段的语义是否出现在 **§5 正文** 里。
+ * 只看 §5：那才是视频模型读的正文；写在 summary/retention 里对成片没有约束力。
+ */
 function movementMentioned(text, movement) {
-  const body = String(text || '');
   const mv = String(movement || '').trim();
-  if (!body || !mv) return true;                       // 没写运镜字段就不检查
-  for (const [trigger, words] of MOVEMENT_KEYWORDS) {
+  if (!mv) return true;                                   // 没写运镜字段就不检查
+  const body = analysisTextOf(String(text || ''));        // Ref2VA → 只取 detailed_description
+  if (!body || !body.trim()) return false;
+  for (const [trigger, re] of MOVEMENT_PATTERNS) {
     if (!trigger.test(mv)) continue;
-    return words.some((w) => body.toLowerCase().includes(String(w).toLowerCase()));
+    return re.test(body);
   }
-  return true;                                          // 词表认不出的运镜词不误报
+  return true;                                            // 词表认不出的运镜词不误报
+}
+
+/**
+ * 镜内时间推进（"第几秒"）是否写出来了。
+ *
+ * 实测 drama7 ep21：13 镜全为单镜单拍、0 个时间戳，正文里没有任何
+ * 「起幅→过程→落幅」的时间推进 —— 视频模型拿不到"什么时候该动镜头"的信息。
+ * 只对**长镜（≥8 秒）**要求：短镜一句话就演完了，不写时间推进是正常的。
+ */
+const TIMELINE_RE = /(前[一二三四五六七八九十\d]+秒|第[一二三四五六七八九十\d]+秒|\d\d:\d\d|起幅|落幅|\bin the first\b|\bfrom the (?:[\w]+|\d+(?:\.\d+)?) second\b|\bby the end\b|\bhalfway\b|\bseconds? (?:in|later)\b|\bat 0?\d)/i;
+
+function hasTimelineCue(text) {
+  const body = analysisTextOf(String(text || ''));
+  if (!body) return false;
+  const cuts = parseCutMarkers(body).length;
+  // 注意：parseCutMarkers 把 [Shot 1] 也算一个，所以"有镜内剪辑点"必须是 >= 2（[Shot 2] 起才是真切点）；
+  // 初版写成 >= 1，导致每一镜都判定为"有时间结构"，13 镜缺时间推进却报 0。
+  if (cuts >= 2) return true;
+  return TIMELINE_RE.test(body);
 }
 
 function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
@@ -608,6 +642,8 @@ function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
   let cutTotal = 0;
   /** 运镜缺失：movement 字段有值但正文完全没写运镜 */
   const movementMissing = [];
+  /** 长镜缺时间推进："第几秒 / 起幅→落幅"完全没写 */
+  const timelineMissing = [];
   // 打斗节奏自检（见 checkFightPacing）：只报**真的坏了**的 —— 定场挤压。
   // 初版规则「打斗镜没切拍就报警」在 drama4 上产生 8 条假警、0 条真问题，已废弃。
   let pacing = { fights: 0, cut: 0, split_sequence: 0, single_beat: 0, tail_crushed: [], cuts_without_fight: [] };
@@ -623,6 +659,9 @@ function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
     if (!movementMentioned(raw, r.movement)) {
       movementMissing.push({ id: r.id ?? null, n: r.storyboard_number ?? null, movement: String(r.movement || '') });
     }
+    if ((Number(r.duration) || 0) >= 8 && !hasTimelineCue(raw)) {
+      timelineMissing.push({ id: r.id ?? null, n: r.storyboard_number ?? null, duration: Number(r.duration) || 0 });
+    }
   }
   try {
     pacing = checkFightPacing(rows);
@@ -636,6 +675,9 @@ function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
     // 运镜缺失（真问题）：movement 字段被整段忽略 —— 成片会变成基本不动的固定机位
     movement_missing: movementMissing.length,
     movement_missing_sample: movementMissing.slice(0, 5),
+    // 长镜缺时间推进（"第几秒"）：模型不知道什么时候该动镜头，容易变成全程固定机位
+    timeline_missing: timelineMissing.length,
+    timeline_missing_sample: timelineMissing.slice(0, 5),
     // 打斗统计：fights 全部打斗镜 / cut 已切拍 / split_sequence 已被分镜层面拆成连续镜 /
     // single_beat 短交锋单镜正确 / tail_crushed **定场挤压（真问题）**
     fight_total: pacing.fights,

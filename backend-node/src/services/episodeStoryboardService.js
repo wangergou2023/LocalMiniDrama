@@ -1702,6 +1702,8 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
       // 运镜缺失：movement 字段没被写进 ust → 成片会是固定机位（见 universalOmniMultiBeatFormat.MOVEMENT_KEYWORDS）
       movement_missing: stored.movement_missing || 0,
       movement_missing_sample: stored.movement_missing_sample || [],
+      timeline_missing: stored.timeline_missing || 0,
+      timeline_missing_sample: stored.timeline_missing_sample || [],
       fight_total: stored.fight_total,
       fight_cut: stored.fight_cut,
       fight_split_sequence: stored.fight_split_sequence,
@@ -1720,6 +1722,13 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
         noncompliant: stored.noncompliant,
         checked: stored.checked,
         sample: stored.samples,
+      });
+    }
+    if (stored.timeline_missing > 0) {
+      log.warn('[分镜] 有长镜（≥8秒）没写镜内时间推进（第几秒 / 起幅→落幅）—— 模型拿不到"什么时候该动镜头"的信息', {
+        episode_id: episodeIdNum,
+        count: stored.timeline_missing,
+        sample: stored.timeline_missing_sample,
       });
     }
     if (stored.movement_missing > 0) {

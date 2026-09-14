@@ -31,7 +31,7 @@
 export const SCRIPT_CHARS_PER_SECOND = 4.2
 
 /** 规划镜数用的平均单镜秒数（与后端 episodeStoryboardService.STORYBOARD_PLAN_SECONDS 保持一致） */
-export const STORYBOARD_PLAN_SECONDS = 8
+export const STORYBOARD_PLAN_SECONDS = 12
 
 /** 单镜时长下限（秒）—— 本地 MiniMax H3 官方验证的下限 124 帧 ÷ 24fps = 5.17s */
 export const STORYBOARD_MIN_SECONDS = 5.2

@@ -106,7 +106,7 @@ describe('全能模式的必填字段：必须写在用户提示词里（模型�
 describe('分镜数量自动推导', () => {
   const svc = require('../src/services/episodeStoryboardService');
   it('857 字（≈204 秒）÷ 每段 15 秒 ≈ 14 镜', () => {
-    assert.equal(svc.deriveStoryboardCount('字'.repeat(857), null, 15), 14);
+    assert.equal(svc.deriveStoryboardCount('字'.repeat(857), null, 15), 14);  // 物理下限
   });
   it('1037 字（≈247 秒）÷ 每段 15 秒 ≈ 16 镜', () => {
     assert.equal(svc.deriveStoryboardCount('字'.repeat(1037), null, 15), 16);

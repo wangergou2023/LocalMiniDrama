@@ -30,10 +30,15 @@ const DEFAULT_STORYBOARD_MAX_TOKENS = 16384;
  * （本地 MiniMax H3 单镜最长 362 帧 = 15.08s），不是每镜的目标值。
  * 若按「总时长 ÷ 每段秒数」规划镜数，配合「单镜 ≤ 每段」会形成代数死锁：
  *   镜数 = 总时长÷每段、单镜 ≤ 每段、Σ单镜 ≈ 总时长  ⟹  单镜 = 每段
- * 结果就是每个镜头都被顶到上限（全都 15s）。这里改用 8 秒平均折算镜数，
- * 单镜时长交给 AI 在 [5.2, 每段秒数] 内按内容浮动。
+ * 结果就是每个镜头都被顶到上限（全都 15s）。
+ *
+ * 这里用**计划平均单镜秒数**折算镜数：8 → **12**。
+ * 为什么是 12（而不是 8）：8 秒会把一次连续拍摄切成一堆 7-8 秒碎片
+ * （实测 drama7 ep21：857 字切成 26 镜、平均 7.8 秒），12 秒既能让 AI 在
+ * [5, 每段秒数] 内按内容浮动，又能把镜数压下来（同一剧本约 17 镜）。
+ * 必须与前端 scriptDurationEstimate.STORYBOARD_PLAN_SECONDS 保持一致。
  */
-const STORYBOARD_PLAN_SECONDS = 8;
+const STORYBOARD_PLAN_SECONDS = 12;
 
 /** 统一镜号（AI 可能返回字符串 "1"，须与 Set 去重键一致） */
 function normalizeStoryboardShotNumber(rawOrSb) {
@@ -1818,10 +1823,12 @@ function deriveStoryboardCount(scriptContent, explicitCount, plannedSeconds) {
   if (!chars) return null;
   const { PLANNED_SHOT_SECONDS } = require('./promptI18n');
   // 规划单镜秒数优先用项目配置的「每段最大秒数」（用户要的就是"按设置的最大秒数来考虑时长"）
-  const fromProject = Number(plannedSeconds);
-  const planned = Number.isFinite(fromProject) && fromProject > 0
-    ? fromProject
-    : (Number(PLANNED_SHOT_SECONDS) > 0 ? Number(PLANNED_SHOT_SECONDS) : 12);
+  const clipSec = Number(plannedSeconds);
+  const planAvg = Number(PLANNED_SHOT_SECONDS) > 0 ? Number(PLANNED_SHOT_SECONDS) : 12;
+  // 除数优先用项目「每段最大秒数」：H3 单次最长 15.08 秒，所以 镜数 ≥ 剧本秒数 ÷ 每段秒数 是**物理下限**。
+  // 用户要的是"分镜别切碎、按设置的最大秒数给时长"，所以默认直接按这个下限规划；
+  // 约束带 ±20% 的浮动空间，模型仍可按内容给 10~15 秒不等。
+  const planned = Number.isFinite(clipSec) && clipSec > 0 ? clipSec : planAvg;
   const seconds = chars / 4.2;
   const shots = Math.round(seconds / planned);
   return Math.min(40, Math.max(6, shots));

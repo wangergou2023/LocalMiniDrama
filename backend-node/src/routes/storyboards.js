@@ -11,6 +11,24 @@ const { buildUniversalSegmentUserPromptBundle } = require('../services/universal
 const { normalizeUniversalSegmentShotDurations } = require('../services/universalSegmentDurationNormalize');
 const ref2vaFormat = require('../services/ref2vaFormat');
 
+/** 单镜提示词路由也要带上项目画风 cfg —— §5「禁止颜色词」硬规则是按画风条件生成的 */
+function styleCfgForStoryboard(db, sbId) {
+  const { loadConfig } = require('../config');
+  const { mergeCfgStyleWithDrama } = require('../utils/dramaStyleMerge');
+  try {
+    const row = db.prepare(
+      `SELECT d.style AS style, d.metadata AS metadata FROM storyboards sb
+         JOIN episodes e ON e.id = sb.episode_id
+         JOIN dramas d ON d.id = e.drama_id
+        WHERE sb.id = ?`
+    ).get(Number(sbId));
+    return mergeCfgStyleWithDrama(loadConfig(), row || {});
+  } catch (_) {
+    return loadConfig();
+  }
+}
+
+
 /**
  * 取项目**中文**画风（与提示词里的 STYLE_ZH 同源），供全能片段骨架修复用。
  * 取不到返回空串，修复函数会跳过第 1 行的风格归一化。
@@ -666,7 +684,7 @@ function routes(db, log) {
           log,
           'text',
           userPrompt,
-          promptI18n.getUniversalOmniSegmentPrompt(),
+          promptI18n.getUniversalOmniSegmentPrompt(styleCfgForStoryboard(db, sbId)),
           { scene_key: 'image_polish', max_tokens: 2400, temperature: 0.28 }
         );
         if (!out || String(out).trim().length < 20) {
@@ -716,7 +734,7 @@ function routes(db, log) {
           log,
           'text',
           userPrompt,
-          promptI18n.getUniversalOmniSegmentPrompt(),
+          promptI18n.getUniversalOmniSegmentPrompt(styleCfgForStoryboard(db, sbId)),
           {
             scene_key: 'image_polish',
             max_tokens: 2400,
@@ -834,7 +852,7 @@ function routes(db, log) {
           log,
           'text',
           polishUserPrompt,
-          promptI18n.getUniversalOmniPolishPrompt(),
+          promptI18n.getUniversalOmniPolishPrompt(styleCfgForStoryboard(db, sbId)),
           {
             scene_key: 'image_polish',
             max_tokens: 4096,

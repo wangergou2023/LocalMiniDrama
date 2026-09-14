@@ -305,6 +305,11 @@ function getStoryboardSystemPrompt(cfg) {
  */
 function getUniversalOmniMultiBeatFormatSpec(cfg) {
   const { DEFAULT_LINE3 } = require('./universalOmniMultiBeatFormat');
+  // 项目画风是否是**单色**（水墨/黑白/灰度）—— 决定 §5 正文能不能写颜色词。
+  const _styleText = String(
+    (cfg && cfg.style && (cfg.style.default_style_en || cfg.style.default_style || cfg.style.default_style_zh)) || ''
+  );
+  const monochromeStyle = /monochrome|ink[\s-]?wash|sumi-?e|grayscale|black and white|水墨|单色|黑白/i.test(_styleText);
   if (isEnglish(cfg)) {
     return `
 [universal_segment_text — Ref2VA full-reference rewrite, OFFICIAL SIX-SECTION FORMAT]
@@ -330,6 +335,10 @@ retention_analysis: one line per defined label, with these FIXED English markers
   audio markers:           fully_copy / partially_copy / reference / weak_reference
   Never write (S1)-style speaker IDs in this section.
 detailed_description: start with one or two English sentences establishing the style, then narrate shot by shot:
+${monochromeStyle ? `  HARD RULE (this project is monochrome): never write colour adjectives or palette words anywhere in
+  summary / retention_analysis / detailed_description — no warm, cool, golden, amber, green, red, blue, vivid,
+  rich colours. Describe costume, props and environment with INK VALUES and light only: deep ink wash, pale ink,
+  dark silhouette, high contrast, mid-tone wash, dry brush, paper texture. Colour comes from the style block alone.` : `  Palette: follow the style block; never introduce a conflicting colour mood.`}
     [Shot 1] …                      (the opening shot carries NO timestamp)
     [Shot 2] At 00:03.200, the camera cuts to …   (every later shot carries its cut timestamp)
   Camera movement is written as natural English inside the sentence (type, amplitude, speed).
@@ -389,6 +398,11 @@ ${DEFAULT_LINE3}`;
     —— 单色水墨项目不得写「warm green forest hues」「rich colors」这类彩色基调；
     光线照写（方向/明暗/光斑），**色彩基调只由风格块决定**。
     （实测：风格句里写了「warm green forest hues」，成片就是彩色森林，水墨参考图的空间与墨色全丢。）
+${monochromeStyle ? `- **单色项目硬规则（本片画风是单色）**：§2/§3/§5 正文**禁止任何颜色形容词与色调词** ——
+    不写 warm / cool / golden / amber / green / red / blue / vivid / rich colors，也不写「暖调 / 冷调 / 绿色 / 金色 / 彩色」。
+    服装、道具、环境一律改用**墨色浓淡与明暗**描述：deep ink wash / pale ink / dark silhouette / high contrast / mid-tone wash；
+    材质用 paper texture / dry brush / wet ink 这类词。颜色只由 §5.1 的风格块决定。
+    （实测：正文里残留 Warm / green / red，成片就一直是彩色森林，风格块压不住整段散文。）` : `- **色彩基调以风格块为准**：正文不要写与项目画风冲突的色调词。`}
     [Shot 1] …                                   ← 首镜**不带**时间戳
     [Shot 2] At 00:03.200, the camera cuts to …   ← 后续每镜**必须带**剪辑时间戳
 - 运镜写成自然的英文句子（类型、幅度、速度）。
@@ -1632,8 +1646,9 @@ CONTEXT_PREV / CONTEXT_NEXT: 上下文（仅用于情绪参考）
 /**
  * 全能模式（可灵 Omni-Video、火山即梦 Seedance 2.0 多图参考等）：模板 + 仅用 @图片1/@图片2…（与参考图顺序一致，不用 @姓名）
  */
-function getUniversalOmniSegmentPrompt() {
-  const specZh = getUniversalOmniMultiBeatFormatSpec({ language: 'zh' });
+function getUniversalOmniSegmentPrompt(cfg = {}) {
+  // 必须把项目 cfg 传进来：§5「禁止颜色词」这条硬规则是按画风条件生成的（单色项目才生效）
+  const specZh = getUniversalOmniMultiBeatFormatSpec(cfg);
   return `You write the **universal_segment_text** for ONE clip of a multi-reference (Ref2VA) video prompt in Chinese prose, following the OFFICIAL SIX-SECTION full-reference format.
 
 The USER message contains: storyboard fields, IMAGE_SLOT_MAP, AUDIO_SLOT_MAP, TOTAL_CLIP_SECONDS, STYLE_ZH, DIALOGUE_VERBATIM (when there is dialogue), optional SCENE_REFERENCE_LAYOUT and neighbour context.
@@ -1691,8 +1706,8 @@ total seconds and the same reference labels.`;
 /**
  * 全能片段「润色」模式：在 getUniversalOmniSegmentPrompt 的硬性格式与参考图规则之上，强化短剧叙事与上下文一致。
  */
-function getUniversalOmniPolishPrompt() {
-  return `${getUniversalOmniSegmentPrompt()}
+function getUniversalOmniPolishPrompt(cfg = {}) {
+  return `${getUniversalOmniSegmentPrompt(cfg)}
 
 ADDITIONAL_POLISH_MODE (short drama enhancement — the six-section format above is still mandatory):
 - You receive FULL_EPISODE_SCRIPT plus NEIGHBOR blocks and structured fields. Use them for **continuity** and

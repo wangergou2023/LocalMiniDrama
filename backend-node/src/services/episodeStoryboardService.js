@@ -226,7 +226,7 @@ function getStoryboardsForEpisode(db, episodeId) {
 // 注意**不含** 俯拍/仰拍：首帧提示词里的「远景·俯拍·正面」是**机位角度标签**（由 angleLabelForFrame
 // 生成），那是静帧本来就该有的信息；把它们当运镜会让自检对每一镜都误报。
 // 真正表达运镜时会写「镜头俯拍」，由「镜头」命中。
-const CAMERA_MOTION_RE = /(镜头|横摇|推镜|拉镜|跟拍|跟镜|环绕|甩镜|摇镜|升降|升镜|降镜|变焦|旋转|缓推|缓拉|缓摇|推近|拉远|升起|拉开|横移|下压)/;
+const CAMERA_MOTION_RE = /(镜头|横摇|推镜|拉镜|跟拍|跟镜|环绕|甩镜|摇镜|升降|升镜|降镜|变焦|旋转|缓推|缓拉|缓摇|推近|拉远|升起|拉开|横移|下压|扫过|掠过|划过|平移|横扫)/;
 /**
  * 运动/过程词：首帧要的是**动作发生前的初始状态**，不是过程。
  *
@@ -316,28 +316,221 @@ function angleLabelForFrame(sb) {
   return '';
 }
 
-function generateImagePrompt(sb, style) {
+/**
+ * 光线句（首帧提示词实测：删掉光线句画面会变平、变冷、人物更远 —— 见 /tmp/ztest/sheet_C.jpg 的 A7）。
+ *
+ * 分镜表的 `lighting_style` 常常只是 `golden_hour` / `dramatic` 这类**单个英文 token**，
+ * 直接拼进去既不成句（下划线还会被当字面量），`dramatic` 这种情绪词也不是光线。
+ * 所以：时间词先给一句中文光线描述，再把可用的英文 token 作为关键词缀在后面。
+ */
+const TIME_LIGHT_ZH = [
+  [/清晨|早晨|黎明|拂晓/, '低角度柔光，薄雾未散'],
+  [/正午|中午/, '顶光，阴影短而硬'],
+  [/午后|下午/, '斜射光，明暗过渡柔和'],
+  [/黄昏|傍晚|日落|夕阳|暮/, '低角度侧光，长影'],
+  [/深夜|子夜|半夜/, '弱光，仅人物与近景可见'],
+  [/夜|月/, '弱光，光源集中在人物身上'],
+  [/阴|云|雾/, '散射光，低反差'],
+  [/雨/, '散射光，地面反光'],
+];
+/** 英文光线 token → 中/英光线词；值为空串表示「不是光线，丢掉」 */
+const LIGHT_TOKEN_MAP = {
+  // 注意：不写色温/色相（golden hour / 暖调…）—— 实测这类词会把水墨项目的画面整体染黄，
+  // 把风格块好不容易锚住的单色墨色带偏（见 /tmp/ztest/sheet_final_A.jpg 的 A8）。
+  // 光线只描述**方向 + 明暗 + 阴影**，颜色交给风格块。
+  golden_hour: 'low-angle sidelight',
+  golden: 'low-angle sidelight',
+  blue_hour: 'dusk ambient light',
+  dramatic: '',
+  cinematic: '',
+  moody: '',
+  soft: '柔光',
+  soft_light: '柔光',
+  harsh: '硬光',
+  backlight: 'backlight',
+  back_light: 'backlight',
+  rim: 'rim light',
+  rim_light: 'rim light',
+  silhouette: 'silhouette',
+  low_key: 'low key lighting',
+  high_key: 'high key lighting',
+  moonlight: 'moonlight',
+  candlelight: 'candlelight',
+  firelight: 'firelight',
+};
+
+function lightingTextFor(sb) {
+  const bits = [];
+  const time = String((sb && sb.time) || '');
+  const hit = TIME_LIGHT_ZH.find(([re]) => re.test(time));
+  if (hit) bits.push(hit[1]);
+  const rawStyle = String((sb && sb.lighting_style) || '').trim();
+  const normalized = rawStyle.toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  const key = normalized.replace(/\s+/g, '_');
+  const mapped = Object.prototype.hasOwnProperty.call(LIGHT_TOKEN_MAP, key) ? LIGHT_TOKEN_MAP[key] : normalized;
+  if (mapped && !bits.some((b) => b.includes(mapped) || mapped.includes(b))) bits.push(mapped);
+  return bits.join('，');
+}
+
+/**
+ * 角色「短锚点」所用词表：只认能从外观里直接看出来的穿戴/持物特征。
+ */
+const ANCHOR_OUTFIT_RE = /(身着|身穿|身披|穿着|头戴|腰束|腰系|手持|手执|肩扛|肩挑|颈挂|足踏|脚蹬|骑|外披|外罩|内衬|斜披|披着|佩戴)/;
+const ANCHOR_MAX_LEN = 16;
+
+function truncateAnchor(text) {
+  const t = String(text || '').trim().replace(/[。；;]$/, '');
+  return t.length > ANCHOR_MAX_LEN ? t.slice(0, ANCHOR_MAX_LEN) : t;
+}
+
+/**
+ * 角色短锚点（2～3 个可辨识特征）。
+ *
+ * 实测（Z-Image Turbo 1280×720 / 8 步，对照图 /tmp/ztest/sheet_A.jpg、sheet_B.jpg）：
+ * 把整段 appearance 塞进**多人同框**的首帧提示词，模型会串位/融合
+ * （骑马的位置上出现猴脸，悟空与八戒糊成一个人）；只给 2～3 个短锚点时四个角色仍可分辨，
+ * 且不再制造「一处一个角色、一人一串属性」的绑定压力。单人镜头给到 3 个锚点。
+ */
+function shortAnchorForCharacter(row, limit = 3) {
+  if (!row) return '';
+  const explicit = row.prompt_anchor ? String(row.prompt_anchor).trim() : '';
+  if (explicit) return explicit;
+  let anchors = null;
+  try {
+    anchors = row.identity_anchors ? JSON.parse(row.identity_anchors) : null;
+  } catch (_) {
+    anchors = null;
+  }
+  const bits = [];
+  const marks = anchors && anchors.unique_marks ? String(anchors.unique_marks).split(/[，,]/)[0].trim() : '';
+  if (marks && !/^(none|无|未详|不详|unspecified|n\/?a)$/i.test(marks)) bits.push(truncateAnchor(marks));
+  const clauses = String(row.appearance || '')
+    .split(/[，,。；;]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const c of clauses) {
+    if (bits.length >= limit) break;
+    if (!ANCHOR_OUTFIT_RE.test(c)) continue;
+    if (/^(其|神态|神情|眉宇|目光)/.test(c)) continue;
+    const t = truncateAnchor(c);
+    if (t && !bits.includes(t)) bits.push(t);
+  }
+  if (!bits.length) {
+    const face = anchors && anchors.face_shape
+      ? String(anchors.face_shape).split(/[，,]/)[0].trim()
+      : (clauses[0] || '');
+    if (face) bits.push(truncateAnchor(face));
+  }
+  return bits.slice(0, limit).join('，');
+}
+
+/**
+ * 项目角色表 → 「短锚点」查表（按 id 与按名字双索引），供首帧提示词使用。
+ */
+function loadCharacterAnchors(db, episodeIdNum) {
+  const map = new Map();
+  if (!db || episodeIdNum == null) return map;
+  let rows = [];
+  try {
+    rows = db.prepare(
+      `SELECT id, name, appearance, identity_anchors, prompt_anchor FROM characters
+        WHERE drama_id = (SELECT drama_id FROM episodes WHERE id = ?) AND deleted_at IS NULL`
+    ).all(episodeIdNum);
+  } catch (_) {
+    // prompt_anchor 列还没迁移时退回旧查询，不影响出片
+    try {
+      rows = db.prepare(
+        `SELECT id, name, appearance, identity_anchors FROM characters
+          WHERE drama_id = (SELECT drama_id FROM episodes WHERE id = ?) AND deleted_at IS NULL`
+      ).all(episodeIdNum);
+    } catch (_e) {
+      return map;
+    }
+  }
+  for (const r of rows) {
+    const name = String(r.name || '').trim();
+    if (!name) continue;
+    const entry = { name, anchor: shortAnchorForCharacter(r, 3) };
+    map.set(Number(r.id), entry);
+    if (!map.has(name)) map.set(name, entry);
+  }
+  return map;
+}
+
+/**
+ * 主体锚点串：`唐僧（头戴毗卢帽，身披锦襕袈裟）；悟空（头戴紧箍儿，身着黄金锁子甲）`。
+ * 同框 ≥3 人时每人压到 2 个锚点；查不到锚点的角色退回只写名字。
+ */
+function subjectAnchorText(sb, characterAnchors) {
+  if (!characterAnchors || !characterAnchors.size) return '';
+  let raw = sb && sb.characters;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch (_) {
+      raw = raw ? [raw] : [];
+    }
+  }
+  const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+  const keys = [];
+  for (const c of list) {
+    if (c == null || c === '') continue;
+    const s = String(c).trim();
+    keys.push(/^\d+$/.test(s) ? Number(s) : s);
+  }
+  if (!keys.length) return '';
+  const limit = keys.length >= 3 ? 2 : 3;
+  const items = [];
+  for (const key of keys) {
+    const entry = characterAnchors.get(key);
+    if (!entry) continue;
+    const anchor = entry.anchor ? entry.anchor.split('，').slice(0, limit).join('，') : '';
+    items.push(anchor ? `${entry.name}（${anchor}）` : entry.name);
+  }
+  return items.join('；');
+}
+
+/**
+ * 首帧（生图）提示词。
+ *
+ * 结构（Z-Image Turbo 实测定稿，A/B 见 /tmp/ztest/sheet_A.jpg、sheet_B.jpg、sheet_C.jpg）：
+ *   主体锚点 → 静止姿态 → 环境+时间 → 光线 → 景别·机位 → 情绪 → 英文风格块
+ * 结论依据：
+ *   1. 主体写最前：环境打头会把人物推得很小、四个角色分不清（现状 A1/B1）；
+ *   2. 英文风格块是风格锚：换成两个中文字「水墨画」后画面直接掉成写实灰调（A5 饱和 0.26 vs A2 0.11）；
+ *   3. 光线句必须写：删掉后画面变平、变冷、人物更远（A7）；
+ *   4. 不再追加「首帧静止画面」：实测无正收益，且元语言有被中文渲染强的模型当正文画进图的风险（A6）。
+ */
+function generateImagePrompt(sb, style, opts = {}) {
   const parts = [];
-  // 场景位置与时间
+  // 0) 风格（英文 prompt token，保持英文以兼容图片 AI）。必须写在**最前**：
+  //    实测主体块变长后会稀释风格块权重，画面从水墨单色掉成彩墨暖调
+  //    （风格块在末尾 饱和 0.23 → 提到最前 0.15，见 /tmp/ztest/sheet_A10.jpg 的 A9/A10 对照）。
+  const styleText = style && String(style).trim();
+  if (styleText) parts.push(styleText);
+  // 1) 主体锚点
+  const subject = subjectAnchorText(sb, opts.characterAnchors);
+  if (subject) parts.push(subject);
+  // 2) 画面动作（只取动作发生前的**静止**初始状态）
+  if (sb.action) {
+    const initialPose = extractInitialPose(sb.action);
+    if (initialPose) parts.push(initialPose);
+  }
+  // 3) 场景位置与时间
   if (sb.location) {
     let locationDesc = sb.location;
     if (sb.time) locationDesc += '，' + sb.time;
     parts.push(locationDesc);
   }
-  // 镜头视角：优先结构化三元组（中文标签），降级到旧文本
+  // 4) 光线（时间词 + lighting_style token 合成一句）
+  const lighting = lightingTextFor(sb);
+  if (lighting) parts.push(lighting);
+  // 5) 镜头视角：优先结构化三元组（中文标签），降级到旧文本
   const angleLabel = angleLabelForFrame(sb);
   if (angleLabel) parts.push(angleLabel);
-  // 画面动作（只取动作发生前的**静止**初始状态）
-  if (sb.action) {
-    const initialPose = extractInitialPose(sb.action);
-    if (initialPose) parts.push(initialPose);
-  }
-  // 情绪
-  if (sb.emotion) parts.push(sb.emotion);
-  // 风格（英文 prompt token，保持英文以兼容图片 AI）
-  const styleText = style && String(style).trim();
-  if (styleText) parts.push(styleText);
-  parts.push('首帧静止画面');
+  // 6) 情绪（没有情绪时退回氛围）
+  const mood = String(sb.emotion || sb.atmosphere || '').trim();
+  if (mood) parts.push(mood);
   return parts.join('，');
 }
 
@@ -451,7 +644,7 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
     : { h: null, v: null, s: null };
   const description = `【镜头类型】${shotType}\n【运镜】${movement}\n【动作】${action}\n【对话】${dialogue}\n【解说】${narration}\n【结果】${result}\n【情绪】${emotion}`;
   const sbWithAngles = { ...sb, angle_h: angleH, angle_v: angleV, angle_s: angleS };
-  const imagePrompt = generateImagePrompt(sbWithAngles, style);
+  const imagePrompt = generateImagePrompt(sbWithAngles, style, { characterAnchors: opts.characterAnchors });
   const videoPrompt = generateVideoPrompt(sbWithAngles, style, videoRatio);
   const sceneId = sb.scene_id != null ? Number(sb.scene_id) : null;
   const charactersJson = Array.isArray(sb.characters) ? JSON.stringify(sb.characters) : (sb.characters ? JSON.stringify([].concat(sb.characters)) : '[]');
@@ -633,7 +826,10 @@ function repairRefBindingForRecord(db, sb, d, log, episodeIdNum) {
 }
 
 function insertOneStoryboard(db, episodeIdNum, sb, style, videoRatio, now, deriveOpts = {}) {
-  const d = deriveStoryboardFieldsFromAi(sb, style, videoRatio, deriveOpts);
+  const effOpts = deriveOpts.characterAnchors
+    ? deriveOpts
+    : { ...deriveOpts, characterAnchors: loadCharacterAnchors(db, episodeIdNum) };
+  const d = deriveStoryboardFieldsFromAi(sb, style, videoRatio, effOpts);
   // 流式增量保存这条路也必须修正参考图绑定，否则只在最终合并路径修 → 漏掉一整批
   repairRefBindingForRecord(db, sb, d, log, episodeIdNum);
   const shotNumber = d.shotNumber;
@@ -781,7 +977,12 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
     const merged = mergeCfgStyleWithDrama(cfg || {}, dramaRow || {});
     styleZh = String(merged?.style?.default_style_zh || '').trim();
   } catch (_) { /* 取不到就退回英文 style，不影响出片 */ }
-  const deriveOptsEff = styleZh ? { ...deriveOpts, styleZh } : deriveOpts;
+  // 角色短锚点整批只查一次（首帧提示词的主体块用）
+  const deriveOptsEff = {
+    ...deriveOpts,
+    ...(styleZh ? { styleZh } : {}),
+    ...(deriveOpts.characterAnchors ? {} : { characterAnchors: loadCharacterAnchors(db, episodeIdNum) }),
+  };
   /** 全能提示词格式不合规的分镜（模型返回的正文不是块格式，已用兜底替换），供末尾告警 */
   const fmtProblems = [];
 
@@ -2151,6 +2352,10 @@ module.exports = {
   buildContinuationPrompt,
   /** 首帧图提示词的机械拼装（供测试：静帧提示词里不得出现运镜/运动） */
   generateImagePrompt,
+  /** 角色短锚点（首帧提示词主体块）——供测试锁住「多人同框只给 2 个锚点」这条实测结论 */
+  shortAnchorForCharacter,
+  loadCharacterAnchors,
+  subjectAnchorText,
   extractInitialPose,
   /** 运镜词 / 运动词表（自检与测试直接复用，别再抄一份） */
   CAMERA_MOTION_RE,

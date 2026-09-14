@@ -19,11 +19,15 @@ const angleService = require('../src/services/angleService');
 const STYLE = 'traditional Chinese ink wash painting, sumi-e style';
 
 /** 按 buildStoryboardRecord 的方式把 shot_type/angle 补成结构化三元组后拼首帧提示词 */
-function buildPrompt({ shot_type = '中景', angle = '平视', action = '', location = '荒山野岭的山路', time = '傍晚', emotion = '苍凉' }) {
+function buildPrompt({
+  shot_type = '中景', angle = '平视', action = '', location = '荒山野岭的山路', time = '傍晚',
+  emotion = '苍凉', lighting_style = '', characters, characterAnchors,
+} = {}) {
   const { h, v, s } = angleService.parseFromLegacyText(angle, shot_type);
   const p = svc.generateImagePrompt(
-    { location, time, shot_type, angle, angle_h: h, angle_v: v, angle_s: s, action, emotion },
-    STYLE
+    { location, time, shot_type, angle, angle_h: h, angle_v: v, angle_s: s, action, emotion, lighting_style, characters },
+    STYLE,
+    { characterAnchors }
   );
   return p.replace('，' + STYLE, '');
 }
@@ -46,7 +50,7 @@ describe('首帧提示词：必须是静止画面', () => {
       const p = buildPrompt({ shot_type, angle, action });
       assert.equal(CAMERA_MOTION_IN_PROMPT.test(p), false, '首帧提示词里出现了运镜：' + p);
       assert.equal(MOTION_IN_PROMPT.test(p), false, '首帧提示词里出现了运动：' + p);
-      assert.match(p, /首帧静止画面$/);
+      assert.equal(/首帧静止画面/.test(p), false, '不该再出现「首帧静止画面」这种元语言：' + p);
     });
   }
 
@@ -92,7 +96,7 @@ describe('首帧提示词：必须是静止画面', () => {
 
   it('不在半句处留下悬空的介词短语', () => {
     const p = buildPrompt({ shot_type: '中景', angle: '平视', action: '黑风散尽，一个与悟空一般模样的猴子从风中走出，头戴金箍。' });
-    assert.equal(/[从向往朝在沿被把将对跟][^，]*$/.test(p.replace(/，首帧静止画面$/, '')), false, p);
+    assert.equal(/[从向往朝在沿被把将对跟][^，]*$/.test(p), false, p);
   });
 
   it('保留姿态本身（该保留的动作起点不被误删）', () => {
@@ -103,7 +107,7 @@ describe('首帧提示词：必须是静止画面', () => {
   it('action 为空时不写出空的动作段', () => {
     const p = buildPrompt({ shot_type: '中景', angle: '平视', action: '' });
     assert.equal(/，，/.test(p), false, p);
-    assert.match(p, /首帧静止画面$/);
+    assert.equal(/首帧静止画面/.test(p), false, p);
   });
 
   it('extractInitialPose 对纯运镜描述返回空（不把镜头语言当画面）', () => {
@@ -128,5 +132,98 @@ describe('首帧提示词：必须是静止画面', () => {
     const t = inputs.map((x) => svc.MOTION_WORD_RE.test(x));
     const t2 = inputs.map((x) => svc.MOTION_WORD_RE.test(x));
     assert.deepEqual(t, t2);
+  });
+});
+
+/**
+ * 提示词结构：Z-Image Turbo 实测定稿（对照图 /tmp/ztest/sheet_A.jpg、sheet_B.jpg、sheet_C.jpg）。
+ * 结论：主体锚点写最前、多人同框每人只给 2 个锚点、光线句必须有、不再追加元语言尾巴。
+ */
+describe('首帧提示词：结构与实测定稿一致', () => {
+  const anchors = new Map([
+    [31, { name: '唐僧', anchor: '头戴毗卢帽，身披锦襕袈裟，手持九环锡杖' }],
+    [32, { name: '悟空', anchor: '头戴紧箍儿，身着黄金锁子甲，腰束虎皮裙' }],
+    [33, { name: '八戒', anchor: '头戴僧帽，身着灰蓝布僧衣，手持九齿钉耙' }],
+    [34, { name: '沙僧', anchor: '颈挂硕大念珠，身着土黄布僧袍，肩挑行李担子' }],
+  ]);
+
+  it('英文风格块在**最前**，主体锚点紧随其后，环境/时间再往后', () => {
+    const p = buildPrompt({
+      shot_type: '大远景', angle: '平视', action: '', characters: [31, 32], characterAnchors: anchors,
+    });
+    // 风格前置于风格块权重（实测风格块放末尾会被长主体块稀释：饱和 0.23 → 0.15）
+    assert.match(p, /^traditional Chinese ink wash painting, sumi-e style/);
+    const iStyle = p.indexOf('traditional Chinese');
+    const iSubject = p.indexOf('唐僧（');
+    const iLocation = p.indexOf('荒山野岭的山路');
+    assert.ok(iStyle === 0 && iSubject > iStyle && iLocation > iSubject, p);
+  });
+
+  it('同框 ≥3 人时每人压到 2 个锚点（属性越多越容易串位）', () => {
+    const p = buildPrompt({ characters: [31, 32, 33], characterAnchors: anchors });
+    assert.match(p, /唐僧（头戴毗卢帽，身披锦襕袈裟）/);
+    assert.match(p, /悟空（头戴紧箍儿，身着黄金锁子甲）/);
+    assert.equal(/手持九环锡杖/.test(p), false, '第三人及以上时锚点必须截到 2 个：' + p);
+  });
+
+  it('单人镜头给到 3 个锚点', () => {
+    const p = buildPrompt({ characters: [32], characterAnchors: anchors });
+    assert.match(p, /悟空（头戴紧箍儿，身着黄金锁子甲，腰束虎皮裙）/);
+  });
+
+  it('查不到锚点的角色只写名字，不写空括号', () => {
+    const p = buildPrompt({ characters: [99, 31], characterAnchors: new Map([[31, anchors.get(31)]]) });
+    assert.equal(/99/.test(p), false, p);
+    assert.match(p, /唐僧（/);
+  });
+
+  it('没有角色信息时不写主体块，且不留下悬空分隔符', () => {
+    const p = buildPrompt({ action: '' });
+    assert.match(p, /荒山野岭的山路，傍晚/);
+    assert.equal(/（|）|；/.test(p), false, p);
+  });
+
+  it('lighting_style 拼进提示词（实测缺少光线句画面会变平变冷）', () => {
+    const p = buildPrompt({ lighting_style: '黄昏侧逆光，暖调低照度，烟尘可见光束' });
+    assert.match(p, /黄昏侧逆光，暖调低照度，烟尘可见光束/);
+  });
+
+  it('lighting_style 为空时不产生空段', () => {
+    const p = buildPrompt({});
+    assert.equal(/，，/.test(p), false, p);
+  });
+
+  it('英文风格块是风格锚，不能被中文短词替代（实测定稿）', () => {
+    const p = svc.generateImagePrompt({ location: '山道', time: '黄昏', emotion: '肃杀' }, STYLE);
+    assert.match(p, /^traditional Chinese ink wash painting, sumi-e style/);
+    // 光线句只写方向与明暗，不写色温 —— 色温词会把水墨项目整幅染黄（A8 vs A9 对照）
+    assert.equal(/暖调|冷调|golden hour|blue hour/.test(p), false, p);
+    assert.match(p, /低角度侧光，长影/);
+  });
+
+  it('短锚点派生：优先 identity_anchors.unique_marks，再取 appearance 里的穿戴/持物分句', () => {
+    const anchor = svc.shortAnchorForCharacter({
+      appearance: '猴王形貌，身形瘦小精悍，毛脸雷公嘴，火眼金睛。头戴紧箍儿，身着黄金锁子甲，腰束虎皮裙，脚蹬云履，手持如意金箍棒。神态桀骜。',
+      identity_anchors: JSON.stringify({ face_shape: '毛脸，尖嘴缩腮', unique_marks: '头戴紧箍儿，鬓发蓬松' }),
+    });
+    assert.equal(anchor, '头戴紧箍儿，身着黄金锁子甲，腰束虎皮裙');
+  });
+
+  it('短锚点派生：unique_marks 为 none 时忽略，且显式 prompt_anchor 优先', () => {
+    const a1 = svc.shortAnchorForCharacter({
+      appearance: '中年僧人，身着杏黄僧袍，外披锦襕袈裟，手持九环锡杖。',
+      identity_anchors: JSON.stringify({ face_shape: '清瘦', unique_marks: 'none' }),
+    });
+    assert.equal(a1, '身着杏黄僧袍，外披锦襕袈裟，手持九环锡杖');
+    const a2 = svc.shortAnchorForCharacter({ prompt_anchor: '黄袍骑白马', appearance: '随便写' });
+    assert.equal(a2, '黄袍骑白马');
+  });
+
+  it('短锚点派生：没有穿戴线索时退回骨相/首分句，不返回空串', () => {
+    const a = svc.shortAnchorForCharacter({
+      appearance: '身形瘦小精悍，四肢矫健灵活。',
+      identity_anchors: JSON.stringify({ face_shape: '凹脸尖腮，雷公嘴' }),
+    });
+    assert.equal(a, '凹脸尖腮');
   });
 });

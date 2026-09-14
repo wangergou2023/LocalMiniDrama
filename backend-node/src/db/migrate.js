@@ -204,6 +204,7 @@ function ensureAllColumns(database) {
     { name: 'sort_order',        type: 'INTEGER DEFAULT 0' },
     { name: 'error_msg',         type: 'TEXT' },
     { name: 'identity_anchors',  type: 'TEXT' },   // JSON: 6层视觉锚点（骨相/五官/辨识标记/色值/皮肤/发型）
+    { name: 'prompt_anchor',     type: 'TEXT' },   // 首帧提示词用的角色短锚点（2～3 个可辨识特征；留空则从 appearance/identity_anchors 自动派生）
     { name: 'style_tokens',      type: 'TEXT' },   // 风格词 token 列表
     { name: 'color_palette',     type: 'TEXT' },   // JSON: Hex 色值数组
     { name: 'four_view_image_url', type: 'TEXT' }, // 四视图参考图 URL

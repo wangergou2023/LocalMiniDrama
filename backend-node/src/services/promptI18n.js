@@ -1464,13 +1464,13 @@ function getRolePolishPrompt(cfg) {
 - **时代匹配**：服装与发型必须符合作品类型所属时代背景${style ? '\n- **画风风格（须贯穿各栏描述，与下长生图侧画风块一致）**：' + style : ''}
 
 ### 版式（强制，减少留白）
-- **顶部标题栏**：浅灰细边框技术标题条，标题使用用户提供的角色名称（或作品内统一称呼），与正文描述一致
-- **左约三分之一竖栏**：仅放置 **FACE HERO CLOSE-UP**（主面部特写竖条，大块面部占位，减少无用留白）
-- **右约三分之二区域**：放置 **FRONT VIEW**、**BACK VIEW**、**SIDE PROFILE CLOSE-UP**、**COSTUME / SUIT DETAIL VIEW**、**MATERIAL & TEXTURE NOTES**；各分区配有清晰英文/中英对照标签
+- **无标题栏、无任何文字**：版面不设标题条，也不出现任何文字/字母/数字/标签/水印（详见「版面禁止文字」）
+- **左约三分之一竖栏**：只放**主面部特写**（大块面部占位，减少无用留白）
+- **右约三分之二区域**：依次放**正面全身、背面全身、侧面脸部特写、服装细节特写、材质细节特写**；各分区**只用细线分隔，不写任何文字标签**
 - **禁止侧身全身**：不设置 90° 侧面全身面板
-- **FRONT VIEW 与 BACK VIEW**：同一角色、同一套服装版本、同一身高比例、同一灯光与同一标尺尺度；正面与背面均为稳定直立全身（头顶到脚底），不做动作姿势，无扭身；双臂自然下垂于体侧，手部自然
-- **SIDE PROFILE CLOSE-UP**：90° 侧面脸部特写（非全身），展示侧脸轮廓、鼻梁侧面、耳部、发型侧面与下颌线；**必须与左侧 FACE HERO CLOSE-UP 同一张脸**（不可变成另一年龄或另一妆面），与正脸形成互补而非重复
-- **COSTUME / SUIT DETAIL VIEW 与 MATERIAL & TEXTURE NOTES**：仅在右侧区域内展示衣领、袖口、腰带、鞋靴、配饰、边缘轮廓及布料/金属/皮革/绷带等材质；**MATERIAL & TEXTURE NOTES** 只能用**短标签**（如 cloth、metal、leather、wet fabric、edge wear），**不得**写成横跨全画幅的底部长文说明栏
+- **正面全身与背面全身**：同一角色、同一套服装版本、同一身高比例、同一灯光与同一标尺尺度；正面与背面均为稳定直立全身（头顶到脚底），不做动作姿势，无扭身；双臂自然下垂于体侧，手部自然
+- **侧面脸部特写**：90° 侧脸特写（非全身），展示侧脸轮廓、鼻梁侧面、耳部、发型侧面与下颌线；**必须与左侧主脸特写同一张脸**（不可变成另一年龄或另一妆面），与正脸形成互补而非重复
+- **服装细节特写与材质细节特写**：仅在右侧区域内展示衣领、袖口、腰带、鞋靴、配饰、边缘轮廓及布料/金属/皮革/绷带等材质；材质一律用**特写画面**表达（布纹、金属反光、皮革褶皱、磨损边缘），**不得**出现任何文字标签或说明栏
 - **可选**：**SIGNATURE PROP / EQUIPMENT DETAIL** 小窗（按需）
 - **取消**：色板条、调色块模块
 - **分隔**：各面板之间细浅灰分割线，边界规整、留白克制；整体 4K 级细节密度、结构稳定的电影工业参考表质感
@@ -1482,7 +1482,7 @@ function getRolePolishPrompt(cfg) {
 
 ### 避免与生图侧重复
 - **不要**重复赘述纯白底、禁止拼贴分镜等生图 API 系统提示里已有的硬性条款
-- **须**在润色输出中明确：标题条应显示的标题文字、各分区的英文标签名（如 FACE HERO CLOSE-UP、FRONT VIEW、SIDE PROFILE CLOSE-UP、MATERIAL & TEXTURE NOTES），并与上方【输出格式】各节一一对应（参考表画面上的技术标签不是「水印」）
+- **版面禁止任何文字（硬规则）**：**不要**在润色输出里指定标题文字、也**不要**写各分区的英文标签名 —— 参考表画面**不得**出现任何文字、字母、数字、标签、水印、logo、签名或伪文字（实测模型会把这类标签画成乱码字）；分区只用细线与留白区分
 - 正文仍以具象外貌/服装/材质为主，避免空洞「8K」「超高清」堆砌
 
 ## 时代服装匹配表
@@ -1511,28 +1511,25 @@ function getRolePolishPrompt(cfg) {
 发型: 颜色，长度，质感，发型结构
 服装: 款式名称，主色，材质，领型，袖型
 
-【标题栏】
-标题条内要显示的确切标题文字（通常即角色名）
-
-【FACE HERO CLOSE-UP｜左竖栏】
+【主脸特写｜左竖栏】
 主脸特写（竖向大画幅）：发际线到下颌，肤质、眉眼妆面、唇形与整体脸型比例
 
-【FRONT VIEW｜右区-正面全身】
+【正面全身｜右区】
 正面全身：从头到脚完整入画，站姿稳定，服装前襟与裤/裙正面结构
 
-【BACK VIEW｜右区-背面全身】
+【背面全身｜右区】
 背面全身：从头到脚后跟完整入画，与正面同比例同服装；后脑发型、后领、背身裁片与下摆
 
-【SIDE PROFILE CLOSE-UP｜右区】
+【侧面脸部特写｜右区】
 90° 侧面脸部特写：侧脸轮廓、鼻梁侧面、耳部、发型侧面、下颌线与唇线侧面（与左栏正脸同一人，互补不重复）
 
-【COSTUME / SUIT DETAIL VIEW｜右区】
+【服装细节特写｜右区】
 衣领、袖口、腰带、鞋靴、配饰、裁片边缘等（不写整景）
 
-【MATERIAL & TEXTURE NOTES｜右区小标签】
-若干短英文或中英标签列举材质关键词（非长段落）
+【材质细节特写｜右区】
+布纹、金属反光、皮革褶皱、磨损边缘等材质的近距离特写画面（**不写文字标签**）
 
-【SIGNATURE PROP / EQUIPMENT DETAIL｜可选】
+【标志性道具特写｜可选】
 仅当有原文依据时写道具局部特写说明`;
 }
 
@@ -1543,19 +1540,17 @@ function getRoleGenerateImagePrompt() {
   return `Industrial character reference sheet — image only, no text reply.
 
 ONE image, single canvas (NOT a 2×2 or 4×4 grid, NOT four equal quadrants). Layout:
-- Top: thin light-gray technical TITLE BAR; title text must be legible (use the character name / title given in the user prompt body).
+- NO title bar and NO lettering of any kind: no titles, labels, captions, numbers, material tags, signatures, logos or watermarks.
 - Main area FIXED SPLIT: LEFT ~1/3 COLUMN = FACE HERO CLOSE-UP (tall vertical hero face; maximize face scale, reduce empty margin).
-- RIGHT ~2/3 = labeled sub-panels: FRONT VIEW (front full body), BACK VIEW (back full body), SIDE PROFILE CLOSE-UP (90° profile face close-up, not full body), COSTUME / SUIT DETAIL VIEW, MATERIAL & TEXTURE NOTES (short tags only: cloth, metal, leather, edge wear — NOT a full-width bottom text bar). Optional SIGNATURE PROP / EQUIPMENT DETAIL if the user prompt mentions that prop.
+- RIGHT ~2/3 = clean panels separated by thin light-gray lines ONLY: FRONT VIEW (front full body), BACK VIEW (back full body), SIDE PROFILE CLOSE-UP (90° profile face close-up, not full body), COSTUME / SUIT DETAIL VIEW, MATERIAL / TEXTURE DETAIL (close-up imagery of cloth weave, metal sheen, leather creases, edge wear — imagery only, never words). Optional SIGNATURE PROP / EQUIPMENT DETAIL if the user prompt mentions that prop.
 - NO left-profile full-body panel. FRONT and BACK: same character, same outfit, same proportions, same lighting and scale; neutral standing, head-to-toe, arms at sides, no action pose. SIDE PROFILE CLOSE-UP complements FACE HERO (same identity/age/makeup; profile view, not duplicate front face).
-- Costume/material only in right-side panels. No color-swatch strip. Fine light-gray dividers. Cinematic industrial reference sheet, 4K detail density — not a poster, not a comic grid, not a photo collage.
+- Costume/material only in right-side panels. No color-swatch strip. Fine light-gray dividers only.
 
-Solid white only (RGB 255,255,255). No watermark logos. Panel titles and material tags printed ON the reference sheet are required. No environment/ground beyond minimal foot contact if needed. Follow ART STYLE / 画风 / MANDATORY ART STYLE at the start of the user message if present.`;
+TEXT RULE (hard): the finished image must contain ZERO lettering — no text, letters, words, numbers, captions, panel titles, labels, tags, signatures, logos, watermarks, or garbled/pseudo glyphs, including any title bar. Do not reserve space for text; leave that area as plain white. Panels are divided by lines only.
+
+Solid white only (RGB 255,255,255). No environment/ground beyond minimal foot contact if needed. Cinematic industrial reference sheet, 4K detail density — not a poster, not a comic grid, not a photo collage. Follow ART STYLE / 画风 / MANDATORY ART STYLE at the start of the user message if present.`;
 }
 
-/**
- * 分镜图片 prompt 二次优化：将分镜叙事描述转化为图片生成模型优化的 prompt
- * 供 imageService.js Step3.5 调用，结果回写 image_generations.prompt
- */
 function getImagePolishPrompt(cfg) {
   const isEn = isEnglish(cfg);
   if (isEn) {

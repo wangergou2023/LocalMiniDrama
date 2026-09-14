@@ -585,17 +585,23 @@ function repairUniversalSegmentText(text, opts = {}) {
  * —— 第一版就是这样，13 镜里明明 9 镜缺失却报 0。
  */
 const MOVEMENT_PATTERNS = [
-  [/push|推进|推镜|前推/i, /(镜头|画面|机位|摄影机)[^。；\n]{0,12}(前?推|推进)|\b(push in|dolly in|pushes in)\b/i],
-  [/pull|拉远|拉镜|后拉/i, /(镜头|画面|机位|摄影机)[^。；\n]{0,12}(后?拉|拉远)|\b(pull back|dolly out|pulls back)\b/i],
-  [/orbit|环绕|盘旋/i, /(镜头|画面|机位|摄影机)[^。；\n]{0,14}(环绕|盘旋|绕[^。；\n]{0,6}一圈)|\b(orbit|orbits|circles|arcs?)\b/i],
-  [/track|跟拍|跟镜/i, /(镜头|画面|机位|摄影机)[^。；\n]{0,12}(跟拍|跟镜|跟随)|\b(tracking shot|track(?:s|ing)? (?:the|him|her|them)|follows?)\b/i],
-  [/crane|升镜|升起/i, /(镜头|画面|机位|摄影机)[^。；\n]{0,12}(升起|上升|升降)|\b(crane|rises?|lifts?)\b/i],
+  [/push|推进|推镜|前推|dolly_track|dolly in/i,
+   /(镜头|画面|机位|摄影机)[^。；\n]{0,12}(前?推|推进)|\b(push(?:es|ing)? (?:in|forward|toward)|dolly[- ]?(?:in|forward)|dollies? (?:in|forward)|trucks? (?:in|forward))\b/i],
+  [/pull|拉远|拉镜|后拉|dolly out/i,
+   /(镜头|画面|机位|摄影机)[^。；\n]{0,12}(后?拉|拉远)|\b(pull(?:s|ing)? (?:back(?:ward)?|out|away)|dolly[- ]?(?:out|back)|dollies? (?:out|back)|withdraw(?:s|ing)?)\b/i],
+  [/orbit|环绕|盘旋|slowmo_orbit/i,
+   /(镜头|画面|机位|摄影机)[^。；\n]{0,14}(环绕|盘旋|绕[^。；\n]{0,6}一圈)|\b(orbit(?:s|ing)?|circl(?:e|es|ing)|arc(?:s|ing)?|swirl(?:s|ing)?)\b/i],
+  [/track|跟拍|跟镜|dolly_track/i,
+   /(镜头|画面|机位|摄影机)[^。；\n]{0,12}(跟拍|跟镜|跟随)|\b(track(?:s|ing)?|lateral track|tracking shot|follow(?:s|ing)?|dolly[- ]?(?:in|out)? and (?:a )?(?:lateral )?track)\b/i],
+  [/crane|升镜|升起/i,
+   /(镜头|画面|机位|摄影机)[^。；\n]{0,12}(升起|上升|升降)|\b(crane(?:s|ing)?|ris(?:e|es|ing)|lift(?:s|ing)?)\b/i],
   [/whip|甩镜|甩/i, /(镜头|画面|机位)[^。；\n]{0,10}甩|\bwhip pan\b/i],
-  [/pan|摇镜|横摇|平移/i, /(镜头|画面|机位|摄影机)[^。；\n]{0,12}(横摇|摇镜|平移|摇过)|\b(pan(?:s|ning)?|swivels?)\b/i],
-  [/tilt|俯仰|上下/i, /(镜头|画面|机位)[^。；\n]{0,12}(上摇|下摇|俯仰)|\b(tilts? up|tilts? down)\b/i],
-  [/zoom|变焦/i, /(镜头|画面)[^。；\n]{0,10}变焦|\bzoom(s|ing)?\b/i],
+  [/pan|摇镜|横摇|平移/i,
+   /(镜头|画面|机位|摄影机)[^。；\n]{0,12}(横摇|摇镜|平移|摇过)|\b(pan(?:s|ning)?|swivel(?:s|ing)?|glid(?:e|es|ing))\b/i],
+  [/tilt|俯仰|上下/i, /(镜头|画面|机位)[^。；\n]{0,12}(上摇|下摇|俯仰)|\btilt(?:s|ing)? (?:up|down)\b/i],
+  [/zoom|变焦/i, /(镜头|画面)[^。；\n]{0,10}变焦|\bzoom(?:s|ing)?\b/i],
   [/handheld|手持/i, /手持|\bhand-?held\b/i],
-  [/static|固定|定机位/i, /(固定机位|机位固定|定机位|静止镜头)|\b(static shot|locked-?off|fixed frame)\b/i],
+  [/static|固定|定机位/i, /(固定机位|机位固定|定机位|静止镜头)|\b(static shot|locked-?off|fixed frame|holds? steady)\b/i],
 ];
 
 /**

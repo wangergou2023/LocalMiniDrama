@@ -375,3 +375,25 @@ test('repairRef2va 会把误用的分镜序号重编号回 1..N', () => {
   const r2 = repairRef2va(good, { durationSec: 12 });
   assert.equal(r2.changes.some((c) => /重编号/.test(c)), false);
 });
+
+/**
+ * 时间推进的写法识别：优化师补丁用「（0s→2s）」，人工可能写「（第0秒→第2秒）」。
+ * 实测：补丁落库后检查器仍报"缺时间推进"，因为正则只认"前两秒/第3秒" —— 检查器与产出写法必须对齐。
+ */
+test('时间推进检查认区间写法：0s→2s / 第0秒→第2秒 / in the first two seconds', () => {
+  const m = require('../src/services/universalOmniMultiBeatFormat');
+  const mk = (id, duration, body) => ({
+    id, creation_mode: 'universal', movement: '', duration, storyboard_number: id,
+    universal_segment_text: `subject_definitions:\n<Subject 1> x\nsummary:\ny\nretention_analysis:\nz\ndetailed_description:\n${body}\noverall_soundscape:\ns\nnon_diegetic_music:\nnone\n`,
+  });
+  const rows = [
+    mk(1, 12, '[Shot 1] 最早两秒静止（0s→2s），随后升起（2s→9s），最后定格（9s→12s）。'),
+    mk(2, 12, '[Shot 1] 最早两秒静止（第0秒→第2秒），随后升起（第2秒→第9秒）。'),
+    mk(3, 12, '[Shot 1] In the first two seconds the camera holds; from the third second onward it rises.'),
+    mk(4, 12, '[Shot 1] 镜头缓缓升起，人物站在原地。'),   // 真的没写时间推进
+    mk(5, 6, '[Shot 1] 短镜，一句话说完。'),             // 短镜不检查
+  ];
+  const r = m.summarizeUniversalSegmentFormat(rows);
+  assert.equal(r.timeline_missing, 1, JSON.stringify(r.timeline_missing_sample));
+  assert.equal(r.timeline_missing_sample[0].id, 4);
+});

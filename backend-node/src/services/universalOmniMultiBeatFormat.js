@@ -627,7 +627,14 @@ function movementMentioned(text, movement) {
  * 「起幅→过程→落幅」的时间推进 —— 视频模型拿不到"什么时候该动镜头"的信息。
  * 只对**长镜（≥8 秒）**要求：短镜一句话就演完了，不写时间推进是正常的。
  */
-const TIMELINE_RE = /(前[一二三四五六七八九十\d]+秒|第[一二三四五六七八九十\d]+秒|\d\d:\d\d|起幅|落幅|\bin the first\b|\bfrom the (?:[\w]+|\d+(?:\.\d+)?) second\b|\bby the end\b|\bhalfway\b|\bseconds? (?:in|later)\b|\bat 0?\d)/i;
+const TIMELINE_RE = new RegExp([
+  '前[一二三四五六七八九十\\d]+秒', '第[一二三四五六七八九十\\d]+秒',
+  '\\d\\d:\\d\\d', '起幅', '落幅',
+  // 区间写法：0s→2s / （第0秒→第2秒）/ 2s -> 7s（优化师补丁与人工标注常用这种）
+  '\\d+(?:\\.\\d+)?\\s*s?\\s*(?:→|->)\\s*\\d+(?:\\.\\d+)?\\s*s?',
+  '\\bin the first\\b', '\\bfrom the (?:[\\w]+|\\d+(?:\\.\\d+)?) second\\b',
+  '\\bby the end\\b', '\\bhalfway\\b', '\\bseconds? (?:in|later)\\b', '\\bat 0?\\d',
+].join('|'), 'i');
 
 function hasTimelineCue(text) {
   const body = analysisTextOf(String(text || ''));

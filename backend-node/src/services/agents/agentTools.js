@@ -44,6 +44,61 @@ function analysisExcerpt(r, limit = 1600) {
   return body.length > limit ? `${body.slice(0, limit)}…（截断）` : body;
 }
 
+/**
+ * 内容保全检查（写操作的安全网）—— 优化师最容易犯的错是"顺手重写"，把对白/参考标签/段落删掉。
+ * 实测（drama7 ep21）：模型把 1048 字的六段文档改成 397 字的 §5 正文，14 个参考标签只剩 2 个。
+ */
+function checkContentPreservation(beforeText, afterText) {
+  const before = String(beforeText || '');
+  const after = String(afterText || '');
+  const beforeSections = Object.keys(ref2va.parseRef2vaSections(before).sections || {});
+  const afterSections = Object.keys(ref2va.parseRef2vaSections(after).sections || {});
+  const lost = beforeSections.filter((k) => !afterSections.includes(k));
+  if (lost.length) return { ok: false, error: `丢失段落：${lost.join('/')}` };
+
+  // 对白逐字保留（<d>…</d> 内容集合必须是超集）
+  const dlg = (t) => (t.match(/<d>[\s\S]*?<\/d>/g) || []).map((x) => x.replace(/\s+/g, ''));
+  const beforeDlg = dlg(before);
+  const afterDlg = new Set(dlg(after));
+  const lostDlg = beforeDlg.filter((x) => !afterDlg.has(x));
+  if (lostDlg.length) return { ok: false, error: `对白被改动/删除：${lostDlg[0].slice(0, 40)}` };
+
+  // 参考标签不得丢失
+  const labels = (t) => new Set(t.match(/<(Subject|Picture|Audio|Video) \d+>/g) || []);
+  const beforeLabels = labels(before);
+  const afterLabels = labels(after);
+  const lostLabels = [...beforeLabels].filter((x) => !afterLabels.has(x));
+  if (lostLabels.length) return { ok: false, error: `参考标签丢失：${lostLabels.slice(0, 6).join(',')}` };
+
+  // 体量不得大幅缩水（防止"压缩式改写"）
+  if (before.length >= 200 && after.length < before.length * 0.6) {
+    return { ok: false, error: `正文被过度压缩：${before.length} → ${after.length} 字` };
+  }
+  return { ok: true, preserved_sections: afterSections.length, preserved_labels: afterLabels.size };
+}
+
+/** 把某一镜的单个段落替换掉（其余段落原样保留） */
+function spliceSection(text, section, newBody) {
+  const raw = String(text || '');
+  const sections = ref2va.parseRef2vaSections(raw).sections || {};
+  if (!Object.keys(sections).length) return { ok: false, error: '原文不是六段结构，无法按段落打补丁' };
+  const out = ref2va.REF2VA_SECTIONS
+    .map((k) => `${k}:\n${k === section ? String(newBody).trim() : String(sections[k] || '').trim()}`)
+    .join('\n');
+  return { ok: true, text: out };
+}
+
+/** 校验 + 机械修复 + 写库（所有写路径共用） */
+function writeSegmentText(db, log, id, text, durationSec) {
+  const rep = ref2va.repairRef2va(text, { durationSec });
+  if (rep.fatal) return { ok: false, error: `格式无法修复：${rep.changes.join('; ')}` };
+  const v = ref2va.validateRef2va(rep.text, { durationSec });
+  if (!v.ok) return { ok: false, error: `校验未通过：${v.problems.slice(0, 3).join('; ')}` };
+  db.prepare('UPDATE storyboards SET universal_segment_text = ?, updated_at = ? WHERE id = ?')
+    .run(rep.text, new Date().toISOString(), id);
+  return { ok: true, data: { storyboard_id: id, chars: rep.text.length, repairs: rep.changes } };
+}
+
 const TOOLS = {
   // ─────────── 只读 ───────────
   list_storyboards: {
@@ -133,23 +188,41 @@ const TOOLS = {
   // ─────────── 写（只有 write / orchestrate 层可用；正常路径走 applySuggestions） ───────────
   update_segment_text: {
     kind: 'write',
-    desc: '写入某镜的 universal_segment_text（内部会先校验+机械修复，格式不过则不写）',
+    desc: '整篇替换某镜的 universal_segment_text（会先做格式校验 + 内容保全检查：对白/参考标签/段落不得丢失）',
     params: { storyboard_id: 'number', text: 'string' },
     run: (db, log, a) => {
       const id = Number(a.storyboard_id);
-      const row = db.prepare('SELECT duration FROM storyboards WHERE id = ? AND deleted_at IS NULL').get(id);
+      const row = db.prepare('SELECT duration, universal_segment_text FROM storyboards WHERE id = ? AND deleted_at IS NULL').get(id);
       if (!row) return { ok: false, error: '分镜不存在' };
       const text = String(a.text || '').trim();
       if (!text) return { ok: false, error: '文本为空' };
-      let finalText = text;
-      let rep = ref2va.repairRef2va(text, { durationSec: Number(row.duration) || undefined });
-      if (rep.fatal) return { ok: false, error: `格式无法修复：${rep.changes.join('; ')}` };
-      finalText = rep.text;
-      const v = ref2va.validateRef2va(finalText, { durationSec: Number(row.duration) || undefined });
-      if (!v.ok) return { ok: false, error: `校验未通过：${v.problems.slice(0, 3).join('; ')}` };
-      db.prepare('UPDATE storyboards SET universal_segment_text = ?, updated_at = ? WHERE id = ?')
-        .run(finalText, new Date().toISOString(), id);
-      return { ok: true, data: { storyboard_id: id, chars: finalText.length, repairs: rep.changes } };
+      const guard = checkContentPreservation(String(row.universal_segment_text || ''), text);
+      if (!guard.ok) return { ok: false, error: `内容保全校验未通过：${guard.error}` };
+      return writeSegmentText(db, log, id, text, Number(row.duration) || undefined);
+    },
+  },
+
+  update_section_text: {
+    kind: 'write',
+    desc: '只替换某一镜的**单个段落**（如 detailed_description），其余段落原样保留 —— 优化师默认走这条路',
+    params: { storyboard_id: 'number', section: 'string', text: 'string' },
+    run: (db, log, a) => {
+      const id = Number(a.storyboard_id);
+      const section = String(a.section || '').trim();
+      if (!ref2va.REF2VA_SECTIONS.includes(section)) {
+        return { ok: false, error: `段落名不合法：${section}（可用：${ref2va.REF2VA_SECTIONS.join('/')}）` };
+      }
+      const row = db.prepare('SELECT duration, universal_segment_text FROM storyboards WHERE id = ? AND deleted_at IS NULL').get(id);
+      if (!row) return { ok: false, error: '分镜不存在' };
+      const text = String(a.text || '').trim();
+      if (!text) return { ok: false, error: '段落文本为空' };
+      const spliced = spliceSection(String(row.universal_segment_text || ''), section, text);
+      if (!spliced.ok) return { ok: false, error: spliced.error };
+      const guard = checkContentPreservation(String(row.universal_segment_text || ''), spliced.text);
+      if (!guard.ok) return { ok: false, error: `内容保全校验未通过：${guard.error}` };
+      const written = writeSegmentText(db, log, id, spliced.text, Number(row.duration) || undefined);
+      if (!written.ok) return written;
+      return { ok: true, data: { ...written.data, section, preserved: guard } };
     },
   },
 
@@ -222,4 +295,4 @@ function toolsForAgent(agentId) {
     .map((n) => ({ name: n, kind: TOOLS[n].kind, desc: TOOLS[n].desc }));
 }
 
-module.exports = { TOOLS, executeTool, toolsForAgent, loadStoryboards, slimShot, analysisExcerpt };
+module.exports = { TOOLS, executeTool, toolsForAgent, loadStoryboards, slimShot, analysisExcerpt, checkContentPreservation, spliceSection };

@@ -39,7 +39,7 @@ const READ_TOOLS = [
 ];
 
 /** 写工具（只有 write / orchestrate 层能用，且必须走确认流程） */
-const WRITE_TOOLS = ['update_segment_text', 'update_storyboard_field'];
+const WRITE_TOOLS = ['update_segment_text', 'update_section_text', 'update_storyboard_field'];
 
 /** 调度层专属：调用另一个角色 */
 const ORCHESTRATE_TOOLS = ['run_agent', 'list_agents'];
@@ -136,6 +136,9 @@ const AGENTS = [
       '保持所有结构记号原样：<Subject N>/<Picture N>/<Audio j>、retention 固定标记、[Shot N] At MM:SS.mmm、<d>…</d>、<scenetrans>/<cutoff>。',
       '补内容而不是重写剧情：台词逐字保留，不得删减动作/因果/情绪转折。',
       '每条建议必须给 reason（为什么这么改），并给出改动范围（改了哪段）。',
+      '**必须为每一条被指定的镜都产出建议**：确实不需要改的，放进 skipped 并写明理由；不许交空建议列表。',
+      '默认走**段落补丁**：section 填要改的段名（通常是 detailed_description），after 填**该段的新全文**；其余五段由系统原样保留。',
+      '只有在用户明确要求整篇重写时才返回整篇（section 留空），且必须保留全部六段、对白逐字、所有 <Subject N>/<Picture N> 标签 —— 系统会逐项校验，丢了就拒收。',
     ],
     outputContract: {
       type: 'json',

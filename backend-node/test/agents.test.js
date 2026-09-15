@@ -216,3 +216,50 @@ test('确定性结论强制并入报告：LLM 漏判的规则问题也会出现�
   const ok = buildDeterministicViolations({ summarize: { duration_coverage: { ratio: 0.97, script_seconds: 198, shots_seconds: 193, short_by: 5 } } }, 'auditor');
   assert.equal(ok.some((x) => /剧情完整性/.test(x.rule)), false);
 });
+
+test('内容保全：丢段落/丢对白/丢参考标签/过度压缩 一律拒收', async () => {
+  const { checkContentPreservation, spliceSection } = agentTools;
+  const doc = [
+    'subject_definitions:', '- <Subject 1> 是 <Picture 1> 中的「大厅」。- <Subject 2> 是 <Picture 2> 中的「国王」。',
+    'summary:', '概述。',
+    'retention_analysis:', '<Subject 1> (appears in [Shot 1]): fully_preserved - 沿用。',
+    'detailed_description:', '[Shot 1] 中景。<d>[Chinese] 台词原文。</d>',
+    'overall_soundscape:', '环境声。', 'non_diegetic_music:', '无。',
+  ].join('\n');
+  assert.equal(checkContentPreservation(doc, doc).ok, true);
+  // 丢段落
+  assert.match(checkContentPreservation(doc, '[Shot 1] 只剩正文').error, /丢失段落/);
+  // 丢对白
+  assert.match(checkContentPreservation(doc, doc.replace('<d>[Chinese] 台词原文。</d>', '')).error, /对白被改动\/删除/);
+  // 丢参考标签
+  assert.match(checkContentPreservation(doc, doc.replace('<Picture 2>', '')).error, /参考标签丢失/);
+  // 段落补丁：只换 §5，其余段落原样保留
+  const spliced = spliceSection(doc, 'detailed_description', '[Shot 1] 前三秒推近，第四秒起完全固定。<d>[Chinese] 台词原文。</d>');
+  assert.equal(spliced.ok, true);
+  assert.match(spliced.text, /subject_definitions/);
+  assert.match(spliced.text, /台词原文/);
+  assert.match(spliced.text, /第四秒起完全固定/);
+  assert.equal(spliced.text.includes('旧正文'), false);
+});
+
+test('段落补丁落库：保全校验通过才写，写后其余段落与对白不变', async () => {
+  const db = makeDb();
+  const original = db.prepare('SELECT universal_segment_text t FROM storyboards WHERE id=1').get().t;
+  const newBody = original.split('detailed_description:')[1].split('overall_soundscape:')[0].trim().replace('第四秒起固定', '第四秒起完全固定');
+  const okRes = await applySuggestions(db, log, {
+    suggestions: [{ storyboard_id: 1, field: 'universal_segment_text', section: 'detailed_description', after: newBody }],
+  });
+  assert.equal(okRes.applied_count, 1, JSON.stringify(okRes));
+  const after = db.prepare('SELECT universal_segment_text t FROM storyboards WHERE id=1').get().t;
+  assert.match(after, /第四秒起完全固定/);
+  assert.match(after, /subject_definitions/);
+  assert.match(after, /non_diegetic_music/);
+  assert.equal(okRes.applied[0].section, 'detailed_description');
+
+  // 整篇替换但丢段落 → 拒收
+  const bad = await applySuggestions(db, log, {
+    suggestions: [{ storyboard_id: 1, field: 'universal_segment_text', after: '只有一句正文' }],
+  });
+  assert.equal(bad.applied_count, 0);
+  assert.match(bad.rejected[0].error, /内容保全校验未通过|丢失段落/);
+});

@@ -50,6 +50,20 @@ async function gatherContext(db, log, agentId, { episodeId, storyboardIds, withS
       noncompliant_count: fmt && fmt.data ? fmt.data.noncompliant : null,
       noncompliant: fmt && fmt.data ? fmt.data.items.slice(0, 5) : null,
     };
+    // 指定了镜号时，确定性结论也要跟着收敛 —— 否则模型会看到别的镜的违规，
+    // 误以为任务与它们有关（实测优化师因此全跳过、0 条建议）。
+    if (idSet && deterministic.summarize) {
+      const keep = (arr) => (Array.isArray(arr) ? arr.filter((x) => idSet.has(Number(x.id ?? x.storyboard_id))) : []);
+      deterministic.summarize = {
+        ...deterministic.summarize,
+        movement_missing_sample: keep(deterministic.summarize.movement_missing_sample),
+        timeline_missing_sample: keep(deterministic.summarize.timeline_missing_sample),
+        movement_missing: keep(deterministic.summarize.movement_missing_sample).length,
+        timeline_missing: keep(deterministic.summarize.timeline_missing_sample).length,
+      };
+      deterministic.noncompliant = (deterministic.noncompliant || []).filter((x) => idSet.has(Number(x.storyboard_id)));
+      deterministic.noncompliant_count = deterministic.noncompliant.length;
+    }
   } catch (_) { /* 自检失败不阻塞审查 */ }
 
   let script = '';
@@ -97,7 +111,7 @@ async function runAgent(db, log, params = {}) {
   for (const shots of batches) {
     const userPrompt = buildUserPrompt({
       agentId, episodeId, storyboards: shots, deterministic: batches.length === 1 ? ctx.deterministic : null,
-      script: ctx.script, targetIds: null, instruction,
+      script: ctx.script, targetIds, instruction,
     });
     const raw = await llm(db, log, { systemPrompt, userPrompt, json: agent.outputContract.type === 'json', maxTokens: 12000 });
     const parsed = agent.outputContract.type === 'json' ? parseJsonLoose(raw) : { text: String(raw || '') };
@@ -124,6 +138,8 @@ async function runAgent(db, log, params = {}) {
   const meta = {
     shots: ctx.shots.length,
     batches: batches.length,
+    parsed_batches: merged.parsed_batches,
+    failed_batches: merged.failed_batches,
     ms: Date.now() - started,
     deterministic_used: !!ctx.deterministic,
   };
@@ -210,6 +226,7 @@ function mergeReports(reports) {
 /** 给建议补上"改前"内容，便于前端做 diff（不落库） */
 function enrichSuggestions(suggestions, shots, db, log, agent) {
   const allowed = agent.allowedFields || ['universal_segment_text'];
+  const SECTIONS = require('../ref2vaFormat').REF2VA_SECTIONS;
   const out = [];
   for (const s of Array.isArray(suggestions) ? suggestions : []) {
     const id = Number(s.storyboard_id);
@@ -217,11 +234,20 @@ function enrichSuggestions(suggestions, shots, db, log, agent) {
     const field = String(s.field || 'universal_segment_text');
     if (!allowed.includes(field)) continue;
     const row = db.prepare(`SELECT ${field === 'duration' ? 'duration' : field} AS before FROM storyboards WHERE id = ?`).get(id);
+    // 段落补丁模式：section 指明要改哪一段，after 是该段新全文；其余段落由系统保留
+    const section = s.section && SECTIONS.includes(String(s.section).trim()) ? String(s.section).trim() : null;
+    let before = row ? row.before : null;
+    if (section) {
+      const full = db.prepare('SELECT universal_segment_text t FROM storyboards WHERE id = ?').get(id);
+      const parsed = require('../ref2vaFormat').parseRef2vaSections(String((full && full.t) || ''));
+      before = (parsed.sections || {})[section] || '';
+    }
     out.push({
       storyboard_id: id,
       shot_number: s.shot_number != null ? s.shot_number : null,
       field,
-      before: row ? row.before : null,
+      section,
+      before,
       after: String(s.after),
       reason: s.reason || '',
       fixes: Array.isArray(s.fixes) ? s.fixes : [],
@@ -244,10 +270,16 @@ async function applySuggestions(db, log, params = {}) {
     const field = String((s && s.field) || 'universal_segment_text');
     if (!Number.isFinite(id) || s.after == null) { rejected.push({ storyboard_id: s && s.storyboard_id, error: '参数不完整' }); continue; }
     try {
-      const res = field === 'universal_segment_text'
-        ? await executeTool(db, log, agentId, 'update_segment_text', { storyboard_id: id, text: s.after })
-        : await executeTool(db, log, agentId, 'update_storyboard_field', { storyboard_id: id, field, value: s.after });
-      if (res && res.ok) applied.push({ storyboard_id: id, field, repairs: (res.data && res.data.repairs) || [] });
+      const section = s.section && require('../ref2vaFormat').REF2VA_SECTIONS.includes(String(s.section)) ? String(s.section) : null;
+      let res;
+      if (section) {
+        res = await executeTool(db, log, agentId, 'update_section_text', { storyboard_id: id, section, text: s.after });
+      } else if (field === 'universal_segment_text') {
+        res = await executeTool(db, log, agentId, 'update_segment_text', { storyboard_id: id, text: s.after });
+      } else {
+        res = await executeTool(db, log, agentId, 'update_storyboard_field', { storyboard_id: id, field, value: s.after });
+      }
+      if (res && res.ok) applied.push({ storyboard_id: id, field, section, repairs: (res.data && res.data.repairs) || [], preserved: (res.data && res.data.preserved) || null });
       else rejected.push({ storyboard_id: id, field, error: (res && res.error) || '写入失败' });
     } catch (e) {
       rejected.push({ storyboard_id: id, field, error: e.message });

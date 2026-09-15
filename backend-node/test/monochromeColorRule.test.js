@@ -414,3 +414,20 @@ test('§5 规范：画面内禁止文字/乱码字，台词只靠口型+声音',
   assert.match(en, /NO ON-SCREEN TEXT \(hard rule\)/);
   assert.match(en, /garbled or pseudo/);
 });
+
+/**
+ * 思考模式下的 max_tokens 下限（实测事故：storyboards/754 的全能提示词重生成给 2400，
+ * 开思考后预算全被思考吃掉、正文 0 字 → 「AI 返回内容为空」，连续 3 次失败）。
+ */
+test('aiClient：思考模式下 max_tokens 自动抬到下限，并给空返回带上诊断信息', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/services/aiClient.js'), 'utf8');
+  assert.match(src, /MIN_TOKENS_WITH_THINKING = 12000/);
+  assert.match(src, /function isThinkingEnabled\(config, model\)/);
+  assert.match(src, /思考模式下 max_tokens 过小，已上调/);
+  assert.match(src, /reasoningChars \+= rc\.length/);
+  assert.match(src, /思考输出 \$\{reasoningChars\} 字/);
+  // 只有开启思考时才抬升
+  assert.match(src, /isThinkingEnabled\(config, model\)/);
+});

@@ -156,6 +156,7 @@ function postJSONStream(url, headers, body, silenceTimeoutMs = 60000, onProgress
       }
 
       let accumulated = '';
+      let reasoningChars = 0;   // 只统计思考输出长度，用于空返回时的诊断
       let sseBuffer = '';
       let firstToken = true;
       // 必须用 StringDecoder 而不是 chunk.toString('utf-8')：
@@ -180,6 +181,8 @@ function postJSONStream(url, headers, body, silenceTimeoutMs = 60000, onProgress
           if (data === '[DONE]') continue;
           try {
             const evt = JSON.parse(data);
+            const rc = evt.choices?.[0]?.delta?.reasoning_content;
+            if (rc) reasoningChars += rc.length;   // 只计数（思考内容不进正文），用于空返回时的诊断
             const delta = evt.choices?.[0]?.delta?.content;
             if (delta) {
               if (firstToken) {
@@ -211,6 +214,28 @@ function postJSONStream(url, headers, body, silenceTimeoutMs = 60000, onProgress
 }
 
 // 使用前端设置的「默认」与「优先级」：listConfigs 已按 is_default DESC, priority DESC 排序
+/**
+ * 思考模式下的 max_tokens 下限。
+ *
+ * 为什么需要它：开启 thinking 后，**思考 token 也计入 max_tokens**。调用方若按"非思考模式"给了
+ * 很小的预算（如全能提示词路线的 2400），模型会把预算全花在思考上、正文一个字都不输出，
+ * 而流式解析只累加 delta.content（reasoning 只计数不拼接）→ 最终判定"AI 返回内容为空"。
+ * 实测：storyboards/754 的 universal-segment-prompt-stream 连续 3 次全部返回空。
+ * max_tokens 只是上限、不是目标值，所以统一抬到下限不会额外花钱，只会避免这种"只思考不出正文"。
+ */
+const MIN_TOKENS_WITH_THINKING = 12000;
+
+/** 当前配置是否处于思考模式（provider/settings 语义与 applyDeepSeekChatOptions 一致） */
+function isThinkingEnabled(config, model) {
+  try {
+    const { resolveDeepSeekOptions } = require('./deepseekConfig');
+    const opts = resolveDeepSeekOptions(config || {}, model);
+    return !!(opts && opts.thinking === 'enabled');
+  } catch (_) {
+    return false;
+  }
+}
+
 function getDefaultConfig(db, serviceType) {
   const configs = aiConfigService.listConfigs(db, serviceType);
   const active = configs.filter((c) => c.is_active);
@@ -313,6 +338,12 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
   let finalMaxTokens = null;
   if (options.max_tokens != null) {
     finalMaxTokens = Number(options.max_tokens);
+    if (finalMaxTokens < MIN_TOKENS_WITH_THINKING && isThinkingEnabled(config, model)) {
+      log.warn('AI streamGenerateText: 思考模式下 max_tokens 过小，已上调', {
+        requested: finalMaxTokens, raised_to: MIN_TOKENS_WITH_THINKING, model,
+      });
+      finalMaxTokens = MIN_TOKENS_WITH_THINKING;
+    }
     if (settingsMaxTokens != null && finalMaxTokens > settingsMaxTokens) {
       log.warn('AI generateText: max_tokens 超过配置上限，已截断', {
         requested: finalMaxTokens, capped_to: settingsMaxTokens, model,
@@ -321,6 +352,13 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
     }
   } else if (settingsMaxTokens != null) {
     finalMaxTokens = settingsMaxTokens;
+  }
+  // 思考模式下思考 token 占预算：预算太小会"只思考、不出正文"，统一抬到下限
+  if (finalMaxTokens != null && finalMaxTokens < MIN_TOKENS_WITH_THINKING && isThinkingEnabled(config, model)) {
+    log.warn('AI generateText: 思考模式下 max_tokens 过小，已上调', {
+      requested: finalMaxTokens, raised_to: MIN_TOKENS_WITH_THINKING, model,
+    });
+    finalMaxTokens = MIN_TOKENS_WITH_THINKING;
   }
   // 确保不低于调用方声明的最低需求
   if (min_max_tokens != null) {
@@ -469,7 +507,7 @@ async function streamGenerateText(db, log, serviceType, userPrompt, systemPrompt
   );
   const content = res.body;
   if (!content) {
-    throw new Error('AI 返回内容为空');
+    throw new Error(`AI 返回内容为空（max_tokens=${finalMaxTokens ?? '默认'}，思考输出 ${reasoningChars} 字，正文 0 字 —— 通常是预算被思考吃满，可重试或调大 max_tokens）`);
   }
   log.info('AI streamGenerateText done', { model, text_length: content.length, elapsed_ms: Date.now() - startMs });
   return content;

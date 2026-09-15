@@ -263,3 +263,22 @@ test('段落补丁落库：保全校验通过才写，写后其余段落与对�
   assert.equal(bad.applied_count, 0);
   assert.match(bad.rejected[0].error, /内容保全校验未通过|丢失段落/);
 });
+
+test('模型把段名写在 field 里也算段落补丁（否则正确建议会被白名单误杀）', async () => {
+  const db = makeDb();
+  const original = db.prepare('SELECT universal_segment_text t FROM storyboards WHERE id=1').get().t;
+  const newBody = original.split('detailed_description:')[1].split('overall_soundscape:')[0].trim().replace('第四秒起固定', '第四秒起完全固定');
+  const fakeLlm = async () => JSON.stringify({
+    suggestions: [{ storyboard_id: 1, shot_number: 1, field: 'detailed_description', after: newBody, reason: '补时间推进' }],
+  });
+  const out = await runAgent(db, log, { agentId: 'optimizer', episodeId: 1, storyboardIds: [1], llm: fakeLlm });
+  assert.equal(out.suggestions.length, 1, JSON.stringify(out.suggestions));
+  assert.equal(out.suggestions[0].section, 'detailed_description');
+  assert.equal(out.suggestions[0].field, 'universal_segment_text');
+  // 落库后其余段落仍在
+  const res = await applySuggestions(db, log, { suggestions: out.suggestions });
+  assert.equal(res.applied_count, 1, JSON.stringify(res));
+  const after = db.prepare('SELECT universal_segment_text t FROM storyboards WHERE id=1').get().t;
+  assert.match(after, /第四秒起完全固定/);
+  assert.match(after, /subject_definitions/);
+});

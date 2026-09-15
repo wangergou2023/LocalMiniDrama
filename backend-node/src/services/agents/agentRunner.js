@@ -231,11 +231,14 @@ function enrichSuggestions(suggestions, shots, db, log, agent) {
   for (const s of Array.isArray(suggestions) ? suggestions : []) {
     const id = Number(s.storyboard_id);
     if (!Number.isFinite(id) || !s.after) continue;
-    const field = String(s.field || 'universal_segment_text');
-    if (!allowed.includes(field)) continue;
+    let field = String(s.field || 'universal_segment_text');
+    // 模型常把**段名**写在 field 里（实测 "field":"detailed_description"），等价于段落补丁 ——
+    // 初版只认 universal_segment_text，结果把 5 条正确建议全过滤掉了。
+    let section = s.section && SECTIONS.includes(String(s.section).trim()) ? String(s.section).trim() : null;
+    if (!section && SECTIONS.includes(field)) { section = field; field = 'universal_segment_text'; }
+    if (!section && !allowed.includes(field)) continue;
     const row = db.prepare(`SELECT ${field === 'duration' ? 'duration' : field} AS before FROM storyboards WHERE id = ?`).get(id);
     // 段落补丁模式：section 指明要改哪一段，after 是该段新全文；其余段落由系统保留
-    const section = s.section && SECTIONS.includes(String(s.section).trim()) ? String(s.section).trim() : null;
     let before = row ? row.before : null;
     if (section) {
       const full = db.prepare('SELECT universal_segment_text t FROM storyboards WHERE id = ?').get(id);

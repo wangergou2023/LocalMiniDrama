@@ -1688,7 +1688,7 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
   // 3) 格式：以**库里实际存下来的文本**为准做只读复核（任何路径都能算，包括部分恢复）
   let formatReport = null;
   try {
-    const stored = summarizeUniversalSegmentFormat(storyboards, { styleZh: opts.styleZh || '' });
+    const stored = summarizeUniversalSegmentFormat(storyboards, { styleZh: opts.styleZh || '', scriptContent });
     formatReport = {
       checked: stored.checked,
       noncompliant: stored.noncompliant,
@@ -1704,6 +1704,8 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
       movement_missing_sample: stored.movement_missing_sample || [],
       timeline_missing: stored.timeline_missing || 0,
       timeline_missing_sample: stored.timeline_missing_sample || [],
+      // 剧情完整性：分镜总时长 vs 剧本朗读时长（见「字字动画」的分镜规范：宁可加镜，不要省略剧情）
+      duration_coverage: stored.duration_coverage || null,
       fight_total: stored.fight_total,
       fight_cut: stored.fight_cut,
       fight_split_sequence: stored.fight_split_sequence,
@@ -1722,6 +1724,15 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
         noncompliant: stored.noncompliant,
         checked: stored.checked,
         sample: stored.samples,
+      });
+    }
+    if (stored.duration_coverage && stored.duration_coverage.ratio != null && stored.duration_coverage.ratio < 0.9) {
+      log.warn('[分镜] 分镜总时长明显短于剧本朗读时长 —— 可能压缩了剧情（宁可加镜或加长单镜，不要省略）', {
+        episode_id: episodeIdNum,
+        script_seconds: stored.duration_coverage.script_seconds,
+        shots_seconds: stored.duration_coverage.shots_seconds,
+        ratio: stored.duration_coverage.ratio,
+        short_by_seconds: stored.duration_coverage.short_by,
       });
     }
     if (stored.timeline_missing > 0) {

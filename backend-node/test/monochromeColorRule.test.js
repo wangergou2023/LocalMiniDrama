@@ -252,3 +252,38 @@ test('长镜（≥8秒）没写镜内时间推进（第几秒）也会被报出�
   assert.equal(r.timeline_missing, 1, JSON.stringify(r.timeline_missing_sample));
   assert.equal(r.timeline_missing_sample[0].id, 2);
 });
+
+/**
+ * 运镜动机库 + 剧情完整性优先 —— 适配自「字字动画」的镜头语言参考库/漫画分镜规范。
+ * 用户明确说过"别故意环绕"，所以动机库把「固定镜头」列为默认，环绕只在关系/情绪转折点用。
+ */
+test('§5 规范：运镜必须带动机 + 反面清单', () => {
+  const p = require('../src/services/promptI18n');
+  const spec = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
+  assert.match(spec, /运镜必须带动机/);
+  assert.match(spec, /方向 \+ 速度 \+ 跟随对象 \+ 叙事目的/);
+  assert.match(spec, /固定镜头＝让表演主导、克制观察（\*\*默认选择\*\*）/);
+  assert.match(spec, /只在转折点用，不要每镜都绕/);
+  assert.match(spec, /运镜反面清单/);
+  assert.match(spec, /每镜都推近\/都环绕/);
+});
+
+test('§5 规范：剧情完整性优先（宁可加镜不省略剧情）', () => {
+  const p = require('../src/services/promptI18n');
+  const spec = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
+  assert.match(spec, /剧情完整性优先/);
+  assert.match(spec, /不得省略\/压缩原文的动作/);
+  assert.match(spec, /4\.2 字\/秒/);
+});
+
+test('总时长覆盖统计：分镜总时长明显短于剧本朗读时长时能报出来', () => {
+  const m = require('../src/services/universalOmniMultiBeatFormat');
+  const rows = [1, 2].map((i) => ({ id: i, creation_mode: 'universal', duration: 10, storyboard_number: i, universal_segment_text: 'x' }));
+  const r = m.summarizeUniversalSegmentFormat(rows, { scriptContent: '字'.repeat(420) }); // 420 字 ≈ 100 秒
+  assert.equal(r.duration_coverage.script_seconds, 100);
+  assert.equal(r.duration_coverage.shots_seconds, 20);
+  assert.equal(r.duration_coverage.ratio, 0.2);
+  assert.equal(r.duration_coverage.short_by, 80);
+  // 没有剧本时不报（ratio=null）
+  assert.equal(m.summarizeUniversalSegmentFormat(rows, {}).duration_coverage.ratio, null);
+});

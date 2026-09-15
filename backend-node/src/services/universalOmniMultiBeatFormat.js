@@ -639,6 +639,29 @@ function hasTimelineCue(text) {
   return TIMELINE_RE.test(body);
 }
 
+/**
+ * 剧情完整性：本集所有镜的 duration 之和 vs 剧本按 4.2 字/秒朗读所需秒数。
+ *
+ * 来自「字字动画」的分镜规范（其漫画分镜第 15 条）：**情节和对白完整性优先** ——
+ * 格数/时长不够时要增加分镜，而不是省略剧情。
+ * 实测 drama7 ep21：13 镜合计 152 秒，而剧本 857 字 ≈ 204 秒朗读时长，提示剧情被压缩。
+ */
+const CHARS_PER_SECOND = 4.2;
+
+function summarizeDurationCoverage(storyboards, scriptContent) {
+  const rows = (Array.isArray(storyboards) ? storyboards : []).filter((r) => r && r.creation_mode === 'universal');
+  const totalSec = rows.reduce((a, r) => a + (Number(r.duration) || 0), 0);
+  const chars = String(scriptContent || '').replace(/\s+/g, '').length;
+  if (!chars || !rows.length) return { script_seconds: 0, shots_seconds: totalSec, ratio: null, short_by: 0 };
+  const scriptSec = Math.round(chars / CHARS_PER_SECOND);
+  return {
+    script_seconds: scriptSec,
+    shots_seconds: totalSec,
+    ratio: Number((totalSec / scriptSec).toFixed(2)),
+    short_by: Math.max(0, scriptSec - totalSec),
+  };
+}
+
 function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
   const rows = (Array.isArray(storyboards) ? storyboards : []).filter(
     (r) => r && r.creation_mode === 'universal'
@@ -679,6 +702,7 @@ function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
     multi_shot: multiShot,
     cut_total: cutTotal,
     // 运镜缺失（真问题）：movement 字段被整段忽略 —— 成片会变成基本不动的固定机位
+    duration_coverage: summarizeDurationCoverage(rows, opts.scriptContent),
     movement_missing: movementMissing.length,
     movement_missing_sample: movementMissing.slice(0, 5),
     // 长镜缺时间推进（"第几秒"）：模型不知道什么时候该动镜头，容易变成全程固定机位

@@ -397,3 +397,20 @@ test('时间推进检查认区间写法：0s→2s / 第0秒→第2秒 / in the f
   assert.equal(r.timeline_missing, 1, JSON.stringify(r.timeline_missing_sample));
   assert.equal(r.timeline_missing_sample[0].id, 4);
 });
+
+/**
+ * 画面内禁止文字（实测 drama7《焚毁纺锤》vg95）：开场 0.1–1.2 秒把中文台词画成一片乱码字形贴在火焰上。
+ * 台词只能靠口型+声音表达，绝不能靠画面文字。
+ */
+test('§5 规范：画面内禁止文字/乱码字，台词只靠口型+声音', () => {
+  const p = require('../src/services/promptI18n');
+  const zh = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
+  assert.match(zh, /画面内禁止文字（硬规则）/);
+  assert.match(zh, /不得出现任何文字/);
+  assert.match(zh, /乱码字或伪字形/);
+  assert.match(zh, /台词只能靠\*\*口型 \+ 声音\*\*表达/);
+  assert.match(zh, /唯一例外/);
+  const en = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'en' }, style: { default_style_en: 'x' } });
+  assert.match(en, /NO ON-SCREEN TEXT \(hard rule\)/);
+  assert.match(en, /garbled or pseudo/);
+});

@@ -9,7 +9,7 @@
  */
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { extractScriptDialogue, checkDialogueCoverage } = require('../src/utils/dialogueCoverage');
+const { extractScriptDialogue, checkDialogueCoverage, checkDialogueOverreach } = require('../src/utils/dialogueCoverage');
 
 describe('剧本台词提取', () => {
   it('无引号的独立台词行也能抽出来', () => {
@@ -72,4 +72,45 @@ describe('台词覆盖：无引号剧本也能算出覆盖率', () => {
     assert.equal(c.covered, 1);
     assert.equal(c.missing.length, 1);
   });
+});
+
+/**
+ * 剧本台词抽取的三处真实缺陷（都在 drama7 ep21 上实测出来）：
+ *  ① 引号只认 “”/" ，不认剧本常用的「」→ 必保台词被静默抽成空数组，覆盖率自检形同虚设
+ *  ② 「国王立刻下令：整段」被当成"说话人：台词"，冒号后的**旁白句**被吞成台词
+ *     → 成片里国王把「士兵们闯入每一户人家…火焰冲天」念了出来
+ *  ③ 说话人抓成了描述词（「声音嘶哑」「杖轻点爱洛的额头」）
+ */
+
+describe('剧本台词抽取的真实缺陷回归', () => {
+  it('角引号「」的台词要被抽出来', () => {
+  const script = '仙女展开银白翅膀，魔杖轻点爱洛的额头：「我不能解除诅咒，但可以减轻它。」';
+  const lines = extractScriptDialogue(script, { knownSpeakers: ['仙女', '爱洛'] });
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].line, '我不能解除诅咒，但可以减轻它。');
+  assert.equal(lines[0].speaker, '仙女', '应取引号前最近的角色名，而不是窗口里的描述词');
+});
+
+  it('无引号的「下令：台词。旁白句」只取台词，旁白不算台词', () => {
+  const script = '国王立刻下令：全国收缴所有纺锤，当众焚毁。士兵们闯入每一户人家，把纺锤扔进广场火堆，火焰冲天。';
+  const lines = extractScriptDialogue(script, { knownSpeakers: ['国王'] });
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].speaker, '国王', '说话人里的动作动词（立刻下令）要剥掉');
+  assert.equal(lines[0].line, '全国收缴所有纺锤，当众焚毁。');
+  assert.equal(/士兵们闯入/.test(lines[0].line), false, '旁白句不得进台词');
+});
+
+  it('checkDialogueOverreach 抓出「台词字段夹带旁白」', () => {
+  const scriptLines = [{ speaker: '国王', line: '全国收缴所有纺锤，当众焚毁。' }];
+  const storyboards = [
+    { id: 754, storyboard_number: 7, dialogue: '国王："全国收缴所有纺锤，当众焚毁。士兵们闯入每一户人家，把纺锤扔进广场火堆，火焰冲天。"' },
+    { id: 755, storyboard_number: 8, dialogue: '国王："全国收缴所有纺锤，当众焚毁。"' },
+    { id: 756, storyboard_number: 9, dialogue: '' },
+  ];
+  const ov = checkDialogueOverreach(scriptLines, storyboards);
+  assert.equal(ov.length, 1, JSON.stringify(ov));
+  assert.equal(ov[0].storyboard_id, 754);
+  assert.match(ov[0].extra, /士兵们闯入/);
+  assert.ok(ov[0].extra_chars >= 8);
+});
 });

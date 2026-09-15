@@ -1647,7 +1647,27 @@ async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
   // 1) 台词覆盖 —— 确定性字符串比对
   let dialogueCoverage = null;
   try {
-    dialogueCoverage = checkDialogueCoverage(scriptContent, storyboards);
+    let knownSpeakers = [];
+    try {
+      knownSpeakers = db.prepare(
+        `SELECT name FROM characters WHERE drama_id = (SELECT drama_id FROM episodes WHERE id = ?) AND deleted_at IS NULL`
+      ).all(episodeIdNum).map((r) => r.name).filter(Boolean);
+    } catch (_) { /* 取不到角色名不影响覆盖率 */ }
+    dialogueCoverage = checkDialogueCoverage(scriptContent, storyboards, { knownSpeakers });
+    // 台词越界：分镜 dialogue 里夹带了叙述句（实测 sb754 国王把旁白念了出来）
+    try {
+      const { extractScriptDialogue, checkDialogueOverreach } = require('../utils/dialogueCoverage');
+      const scriptLines = extractScriptDialogue(scriptContent, { knownSpeakers });
+      const overreach = checkDialogueOverreach(scriptLines, storyboards);
+      if (dialogueCoverage) dialogueCoverage.overreach = overreach;
+      if (overreach.length) {
+        log.warn('[分镜] 有分镜的台词字段夹带了旁白/叙述（角色会把旁白念出来）', {
+          episode_id: episodeIdNum,
+          count: overreach.length,
+          sample: overreach.slice(0, 3).map((x) => ({ shot: x.shot_number, extra: x.extra.slice(0, 40) })),
+        });
+      }
+    } catch (_) { /* 越界检查失败不影响其它自检 */ }
     if (dialogueCoverage && dialogueCoverage.missing.length > 0) {
       log.warn('[分镜] 剧本台词未全部覆盖 —— 以下台词在全部分镜里都找不到，必要时请增加分镜数重新生成', {
         episode_id: episodeIdNum,

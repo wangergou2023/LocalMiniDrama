@@ -446,3 +446,35 @@ test('streamGenerateText 也吃到了思考模式的 max_tokens 下限（初版�
   assert.match(seg, /思考输出 \$\{reasoningChars\} 字/);
   assert.equal(/extraArgs/.test(seg), false, '不应再有未声明的 extraArgs');
 });
+
+/**
+ * 对白镜切拍检查（实测 sb754《焚毁纺锤》）：44 字台词需要约 11 秒，却因 4 拍结构被切成两段 + <scenetrans>。
+ * 判据是**台词长度**（超过单镜 15 秒上限才允许跨拍），不是"是不是打斗镜" —— 初版按打斗过滤，
+ * 而这场对话戏被 detectFightShot 误判为打斗，于是真问题被静默吞掉。
+ */
+test('对白被切拍：台词能装下就必须单镜，超 15 秒才允许跨拍', () => {
+  const m = require('../src/services/universalOmniMultiBeatFormat');
+  const mk = (id, duration, body) => ({
+    id, creation_mode: 'universal', movement: '', duration, storyboard_number: id, title: '对话戏',
+    universal_segment_text: `subject_definitions:\n<Subject 1> x\nsummary:\ny\nretention_analysis:\nz\ndetailed_description:\n${body}\noverall_soundscape:\ns\nnon_diegetic_music:\nnone\n`,
+  });
+  const rows = [
+    // 42 字 ≈ 11 秒 < 15 秒 → 不该跨拍（真问题）
+    mk(1, 14, '[Shot 1] 中景。 [Shot 2] At 00:05.000, 切近景。 <d>[Chinese] 全国收缴所有纺锤，当众焚毁。士兵们闯入每一户人家，</d><scenetrans> [Shot 3] At 00:09.000, <d>[Chinese] 把纺锤扔进广场火堆，火焰冲天。</d>'),
+    // 单句超 15 秒（>59 字）→ 允许跨拍
+    mk(2, 15, `[Shot 1] 中景。 <d>[Chinese] ${'字'.repeat(70)}</d><scenetrans> [Shot 2] At 00:10.000, <d>[Chinese] 续句。</d>`),
+    // 无切拍、有台词 → 不算
+    mk(3, 10, '[Shot 1] 近景。 <d>[Chinese] 一句话。</d>'),
+    // 有切拍但无台词 → 不算（打斗镜本来就允许切）
+    mk(4, 12, '[Shot 1] 打斗。 [Shot 2] At 00:04.000, 反打。 [Shot 3] At 00:08.000, 收势。'),
+  ];
+  const list = m.checkDialogueCuts(rows);
+  assert.equal(list.length, 2, JSON.stringify(list));
+  const flagged = list.filter((x) => !x.allowed);
+  assert.equal(flagged.length, 1, JSON.stringify(list));
+  assert.equal(flagged[0].id, 1);
+  assert.ok(flagged[0].need_sec <= 15, '需要的秒数应小于上限才判违规');
+  assert.equal(list.find((x) => x.id === 2).allowed, true);
+  const r = m.summarizeUniversalSegmentFormat(rows);
+  assert.equal(r.dialogue_cut, 1);
+});

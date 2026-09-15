@@ -361,6 +361,11 @@ ${monochromeStyle ? `  HARD RULE (this project is monochrome): never write colou
   Never write 分镜2：-style lines (one universal_segment_text = one generation call).
   Target 200-350 English words for a 5-10 s single clip (cover composition, subject, environment, action,
   camera, sound and dialogue); dialogue-dense clips prioritise the complete spoken timeline.
+  NO INTRA-SHOT CUTS IN DIALOGUE SHOTS (hard rule): a shot containing dialogue stays a single continuous take —
+  never use [Shot 2]+ there, because a cut tears one spoken line in half and breaks lip-sync (observed: a 44-character
+  line split across two beats with <scenetrans>). Put any camera move BEFORE the line and lock the camera while it is
+  spoken. Cross-beat dialogue is allowed only when a single line's required seconds exceed the 15 s clip ceiling, and
+  then BOTH sides must carry <scenetrans>.
   NO ON-SCREEN TEXT (hard rule): the finished frame must contain NO lettering at all — no subtitles, floating
   dialogue text, shop signs, banners, notices, letter contents, watermarks or logos, and no garbled or pseudo
   glyphs (H3 has been observed painting the Chinese line as a slab of garbled characters over the flames for
@@ -458,6 +463,10 @@ ${monochromeStyle ? `- **单色项目硬规则（本片画风是单色）**：§
   ③ 远景要求看清细微表情、特写要求展示全身动作；④ 打斗全靠碎片特写，看不清谁对谁做了什么；
   ⑤ 悬念场景过早拍清答案；⑥ 表情只写「生气/难过/震惊」，没有眉眼、嘴角、呼吸、姿态细节。
 - **剧情完整性优先**：分镜总数或总时长不够时，**增加分镜、或给足单镜时长**，**不得省略/压缩原文的动作、因果、情绪转折与任何一句对白**。
+- **对白镜禁止切拍（硬规则）**：有台词的镜头**一律单镜一镜到底**，不得使用镜内剪辑点 ——
+  切镜会把一句台词拦腰截断，口型与情绪直接断掉（实测《焚毁纺锤》：44 字台词被 4 拍结构切成两段、用 <scenetrans> 跨拍）。
+  做法：整句台词完整落在同一拍里；镜头要动就压在台词**之前**，台词期间锁死。
+  **只有当单句台词所需秒数（字数 ÷ 4.2 + 1）超过单镜上限（15 秒）时**，才允许跨拍，且**两侧都必须写 <scenetrans>**。
 - **画面内禁止文字（硬规则）**：成片画面里**不得出现任何文字** —— 不写字幕/台词浮字/招牌/横幅/告示/书信内容/水印/logo，
   也不得出现**乱码字或伪字形**（实测 H3 会把中文台词画成一片乱码字贴在火焰上，持续 1 秒多，非常毁片）。
   台词只能靠**口型 + 声音**表达，绝不靠画面文字。唯一例外：剧本明确要求画面里出现文字（榜文、信件等）时，

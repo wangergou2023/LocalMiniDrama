@@ -669,6 +669,33 @@ function summarizeDurationCoverage(storyboards, scriptContent) {
   };
 }
 
+/**
+ * 对白镜切拍检查：有台词的镜不该用镜内剪辑点，切了就会把一句台词拦腰截断。
+ * 实测《焚毁纺锤》(sb754)：44 字台词被 4 拍结构切成两段、用 <scenetrans> 跨拍。
+ */
+function checkDialogueCuts(rows) {
+  const split = [];
+  for (const r of rows) {
+    const body = analysisTextOf(String(r.universal_segment_text || ''));
+    const dlg = [...body.matchAll(/<d>([\s\S]*?)<\/d>/g)].map((x) => x[1]).join('');
+    if (!dlg.trim()) continue;                                        // 没台词不检查
+    const cuts = parseCutMarkers(body).length;
+    const scenetrans = (body.match(/<scenetrans>/g) || []).length;
+    if (cuts < 2 && scenetrans === 0) continue;                       // 没切拍就没事
+    // 判据是**台词长度**，不是"是不是打斗镜"：
+    // 只有单句台词所需秒数超过单镜上限（H3 = 15.08s）时才允许跨拍。
+    const chars = dlg.replace(/^\s*\[[^\]]*\]\s*/, '').replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '').length;
+    const needSec = Math.round((chars / 4.2 + 1) * 10) / 10;
+    const allowed = needSec > 15;
+    split.push({
+      id: r.id ?? null, n: r.storyboard_number ?? null, cuts, scenetrans,
+      dialogue_chars: chars, need_sec: needSec, allowed,
+      is_fight: !!detectFightShot(r),
+    });
+  }
+  return split;
+}
+
 function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
   const rows = (Array.isArray(storyboards) ? storyboards : []).filter(
     (r) => r && r.creation_mode === 'universal'
@@ -702,6 +729,10 @@ function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
   try {
     pacing = checkFightPacing(rows);
   } catch (_) { /* 自检失败不影响格式复核 */ }
+  let dialogueCuts = [];
+  try {
+    dialogueCuts = checkDialogueCuts(rows);
+  } catch (_) { /* 自检失败不影响格式复核 */ }
   return {
     checked: rows.length,
     noncompliant: samples.length,
@@ -712,6 +743,9 @@ function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
     duration_coverage: summarizeDurationCoverage(rows, opts.scriptContent),
     movement_missing: movementMissing.length,
     movement_missing_sample: movementMissing.slice(0, 5),
+    // 对白镜切拍（把台词拦腰截断）：cuts>=2 或出现 <scenetrans>
+    dialogue_cut: dialogueCuts.filter((x) => !x.allowed).length,
+    dialogue_cut_sample: dialogueCuts.filter((x) => !x.allowed).slice(0, 5),
     // 长镜缺时间推进（"第几秒"）：模型不知道什么时候该动镜头，容易变成全程固定机位
     timeline_missing: timelineMissing.length,
     timeline_missing_sample: timelineMissing.slice(0, 5),
@@ -729,6 +763,7 @@ function summarizeUniversalSegmentFormat(storyboards, opts = {}) {
 }
 
 module.exports = {
+  checkDialogueCuts,
   DEFAULT_LINE3,
   LINE3_NO_SCENE,
   LINE3_MULTI,

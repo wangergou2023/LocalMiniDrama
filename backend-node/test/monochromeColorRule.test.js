@@ -188,15 +188,18 @@ test('deepseek 配置解析：enabled/disabled 都从 settings 正确读出', ()
  * 运镜缺失（实测 drama7 ep21）：13 镜里只有 4 镜的 ust 提到运镜，而且是从 action 文本里碰巧漏进来的；
  * movement 字段有值的 9 镜（推镜/跟镜/升镜/甩镜/拉镜）一条没写；时间戳 0 —— 等于完全没给模型运镜信息。
  */
-test('§5 规范：每镜必须写运镜四要素 + 镜内时间推进（起幅→过程→落幅）', () => {
+test('§5 规范：运镜按叙事需要（不硬凑）+ 镜内时间推进（起幅→过程→落幅）', () => {
   const p = require('../src/services/promptI18n');
   const spec = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
   assert.match(spec, /每镜必写清单/);
-  assert.match(spec, /运镜 = 类型 \+ 幅度 \+ 速度 \+ 时间推进/);
-  assert.match(spec, /原样复用其语义/);
+  assert.match(spec, /原样复用语义/);
   assert.match(spec, /镜内时间推进/);
   assert.match(spec, /起幅/);
   assert.match(spec, /落幅/);
+  // 用户明确要求：别故意环绕 —— 没给 movement 就固定机位，禁止硬加运镜
+  assert.match(spec, /严禁为了/);
+  assert.match(spec, /固定机位同样合格/);
+  assert.match(spec, /镜头怎么动（\*\*按叙事需要，不是必须动\*\*）/);
   // 反引号必须被处理掉（模板字符串内的裸反引号会让模块直接语法错误）
   assert.equal(/`/.test(spec.slice(spec.indexOf('每镜必写清单'), spec.indexOf('每镜必写清单') + 900)), false);
 });

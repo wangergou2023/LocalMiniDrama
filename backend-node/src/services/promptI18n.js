@@ -419,11 +419,13 @@ ${monochromeStyle ? `- **单色项目硬规则（本片画风是单色）**：§
   编号从 1 开始连续；**最多 4 镜**。
   **禁止**用「切镜到」「镜头2」这类叙述性措辞表达剪辑 —— 只有上面的记号才算剪辑点；
   也**禁止**「分镜2：」那类**行**（一条 universal_segment_text = 一次生成调用）。
-- **每镜必写清单（漏一样就是不合格）**：① 景别与机位；② **运镜 = 类型 + 幅度 + 速度 + 时间推进**；③ 主体动作与反应；④ 环境与光照；⑤ 音效；⑥ 有台词则写对白。
-  ②是**最常被漏掉**的一项（实测 13 镜里 9 镜的 「movement 字段」被整段忽略）。分镜字段给了 MOVEMENT 时必须**原样复用其语义**（如「环绕orbit」→ 写出环绕：绕谁、绕多大角度、多快），不得省略、不得改写成别的运动。
-- **镜内时间推进（"第几秒"）必须写出来**：单镜（无剪辑点）也要交代运镜随时间的演化 —— 起幅（开头落在什么景别/机位）→ 过程（什么时候开始动、朝哪动、多快，可用 in the first two seconds / from the third second onward 这类相对时间短语）→ 落幅（结束时的景别与构图）。
-  例：「[Shot 1] A medium shot on the witch … In the first two seconds the camera holds; from the third second onward it begins a slow 180° orbit around the cradle, tightening into a close-up of the spindle by the end.」
-  这是模型唯一能拿到"什么时候该动镜头"的信息；漏写就等于让模型自由发挥（实测会变成基本不动的固定机位）。
+- **每镜必写清单**：① 景别与机位；② 镜头怎么动（**按叙事需要，不是必须动**）；③ 主体动作与反应；④ 环境与光照；⑤ 音效；⑥ 有台词则写对白。
+  ②的规则：**分镜字段给了 MOVEMENT 就按它写**（原样复用语义，如「环绕orbit」→ 写清绕谁、多大角度、多快，不得省略或改成别的运动）；
+  **没给就写固定机位或轻微自然手持**。**严禁为了"这镜得有运镜"硬加环绕/推拉/甩镜** —— 运镜是叙事手段不是装饰：
+  只有剧情需要（交代空间关系、跟随主体、情绪推进）时才动镜头，其余一律稳住。
+- **镜内时间推进（"第几秒"）必须写出来**：单镜（无剪辑点）也要交代这一镜随时间的演化 —— 起幅 → 过程 → 落幅（可用 in the first two seconds / from the third second onward 这类相对时间短语）。
+  **变化的主体可以是画面内容而不是镜头**：人物动作、光线推移、烟雾/旗帜飘动、风起云散都算；**固定机位同样合格**（写 in the first two seconds the frame holds … 即可），不要为了凑"时间推进"去动镜头。
+  例（需要动镜时）：「[Shot 1] A medium shot on the witch … In the first two seconds the camera holds; from the third second onward it begins a slow 180° orbit around the cradle, tightening into a close-up of the spindle by the end.」
 - 单镜时长随内容**动态决定**（**常规 8-15 秒**，下限 5 秒）：短镜写精炼，长镜要把构图、主体、环境、动作、运镜、音效、对白写全写细；**不设字数硬指标**，但镜头有多长就要有多少内容支撑；
   **含对白的长镜优先**：同一空间的连续动作/完整对白**一镜到底**（duration 给到台词说得完的秒数），不要切成多条碎镜；
   对白多的镜头以**把话说完**为先，不必机械凑字数。

@@ -106,6 +106,21 @@ async function runAgent(db, log, params = {}) {
 
   // 合并多批结果
   const merged = mergeReports(reports);
+
+  // **确定性结论强制并入**：LLM 对"规则符合性"不如代码可靠（实测：它把缺时间推进的 #3/#5/#8 判成干净）。
+  // 所以把 summarize_episode / validate_formats 已经算出来的问题当作事实追加进报告，
+  // LLM 只负责它擅长的语义判断（剧情完整性、连贯性、运镜动机是否说得通）。
+  if (agent.layer === 'read' && ctx.deterministic) {
+    merged.deterministic_violations = buildDeterministicViolations(ctx.deterministic, agentId);
+    merged.deterministic_count = merged.deterministic_violations.length;
+    if (agentId === 'video_prompt_auditor' || agentId === 'auditor') {
+      merged.violations = (merged.violations || []).concat(merged.deterministic_violations);
+      // 注意：集级别的违规（如总时长偏短）storyboard_id 为 null，不能当成 0 号镜
+      const flagged = new Set(merged.deterministic_violations.map((v) => Number(v.storyboard_id)).filter((n) => Number.isFinite(n) && n > 0));
+      merged.low_score_ids = Array.from(new Set((merged.low_score_ids || []).concat([...flagged])));
+      if (Array.isArray(merged.clean_ids)) merged.clean_ids = merged.clean_ids.filter((id) => !flagged.has(Number(id)));
+    }
+  }
   const meta = {
     shots: ctx.shots.length,
     batches: batches.length,
@@ -126,6 +141,49 @@ async function runAgent(db, log, params = {}) {
     };
   }
   return { ok: true, agent_id: agentId, layer: agent.layer, report: merged, meta };
+}
+
+/**
+ * 把确定性自检结论翻译成与 LLM 同构的 violations（这样前端只需消费一种结构）。
+ * 覆盖：运镜缺失 / 长镜缺时间推进 / 格式不合规 / 总时长偏短。
+ */
+function buildDeterministicViolations(deterministic, agentId) {
+  const out = [];
+  const sum = (deterministic && deterministic.summarize) || {};
+  for (const s of sum.movement_missing_sample || []) {
+    out.push({
+      storyboard_id: s.id, shot_number: s.n, rule: '规则1 运镜',
+      severity: 'medium', source: 'deterministic',
+      evidence: `movement 字段为「${s.movement || '未指定'}」，但 §5 正文里没有对应的运镜描述`,
+      suggestion: '按 movement 字段补一句运镜（方向+速度+跟随对象+动机）；若不需要运镜就写固定机位',
+    });
+  }
+  for (const s of sum.timeline_missing_sample || []) {
+    out.push({
+      storyboard_id: s.id, shot_number: s.n, rule: '规则3 镜内时间推进',
+      severity: 'medium', source: 'deterministic',
+      evidence: `${s.duration} 秒长镜，正文里没有「第几秒→第几秒」的时间推进`,
+      suggestion: '补起幅→过程→落幅（可写 in the first two seconds … from the third second onward …；固定机位同样合格）',
+    });
+  }
+  const cov = sum.duration_coverage || {};
+  if (cov.ratio != null && cov.ratio < 0.9) {
+    out.push({
+      storyboard_id: null, shot_number: null, rule: '规则6 剧情完整性',
+      severity: 'high', source: 'deterministic',
+      evidence: `分镜总时长 ${cov.shots_seconds}s，剧本朗读时长 ${cov.script_seconds}s（覆盖率 ${cov.ratio}，短 ${cov.short_by}s）`,
+      suggestion: '补镜或给足单镜时长；不得压缩/省略原文动作与台词',
+    });
+  }
+  for (const item of (deterministic && deterministic.noncompliant) || []) {
+    out.push({
+      storyboard_id: item.storyboard_id, shot_number: item.shot_number, rule: '格式 Ref2VA 六段',
+      severity: 'high', source: 'deterministic',
+      evidence: (item.problems || []).slice(0, 2).join('; '),
+      suggestion: '按六段结构补齐/修正结构记号（可由系统机械修复）',
+    });
+  }
+  return out;
 }
 
 /** 审计类报告合并：scores/violations/breaks 追加，summary 以最后一批准 */
@@ -240,4 +298,4 @@ async function runOrchestrator(db, log, agent, { episodeId, instruction, llm, ta
   };
 }
 
-module.exports = { runAgent, applySuggestions, gatherContext, mergeReports, DEFAULT_AUDIT_BATCH };
+module.exports = { runAgent, applySuggestions, gatherContext, mergeReports, buildDeterministicViolations, DEFAULT_AUDIT_BATCH };

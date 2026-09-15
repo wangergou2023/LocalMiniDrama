@@ -193,3 +193,26 @@ test('路由模块能加载（未注册也不报错）', () => {
   const src = require('fs').readFileSync(path.join(ROOT, 'src/routes/agents.js'), 'utf8');
   assert.equal(/UPDATE\s+storyboards|INSERT\s+INTO|DELETE\s+FROM/i.test(src), false, '路由层不应直接写库');
 });
+
+test('确定性结论强制并入报告：LLM 漏判的规则问题也会出现在 violations 里', async () => {
+  const { buildDeterministicViolations } = require('../src/services/agents/agentRunner');
+  const ctx = {
+    summarize: {
+      movement_missing_sample: [{ id: 5, n: 5, movement: '推镜push' }],
+      timeline_missing_sample: [{ id: 3, n: 3, duration: 13 }],
+      duration_coverage: { script_seconds: 198, shots_seconds: 153, ratio: 0.77, short_by: 45 },
+    },
+    noncompliant: [{ storyboard_id: 9, shot_number: 9, problems: ['第一个镜头必须是 [Shot 1]'] }],
+  };
+  const v = buildDeterministicViolations(ctx, 'video_prompt_auditor');
+  const rules = v.map((x) => x.rule).join(' | ');
+  assert.match(rules, /规则1 运镜/);
+  assert.match(rules, /规则3 镜内时间推进/);
+  assert.match(rules, /规则6 剧情完整性/);
+  assert.match(rules, /格式 Ref2VA/);
+  assert.equal(v.every((x) => x.source === 'deterministic'), true);
+  assert.equal(v.find((x) => x.rule === '规则3 镜内时间推进').storyboard_id, 3);
+  // 覆盖率达标时不该报剧情完整性
+  const ok = buildDeterministicViolations({ summarize: { duration_coverage: { ratio: 0.97, script_seconds: 198, shots_seconds: 193, short_by: 5 } } }, 'auditor');
+  assert.equal(ok.some((x) => /剧情完整性/.test(x.rule)), false);
+});

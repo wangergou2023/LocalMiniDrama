@@ -1785,6 +1785,16 @@ function getUniversalOmniPolishPrompt(cfg = {}) {
   return `${getUniversalOmniSegmentPrompt(cfg)}
 
 ADDITIONAL_POLISH_MODE (short drama enhancement — the six-section format above is still mandatory):
+
+**POLISH 硬约束（比"信息密度"优先级更高，违反即不合格）**：
+1. **台词的唯一来源是 STORYBOARD FIELDS 的 DIALOGUE 字段**。FULL_EPISODE_SCRIPT 里紧跟「某某下令：」「某某说道：」
+   之后的**叙述/动作描述**（例如「士兵们闯入每一户人家，把纺锤扔进广场火堆，火焰冲天。」）**不是台词**，
+   不得写进 <d>…</d>，也不得让角色念出来 —— 那些内容交给画面与动作表现。
+   （实测：润色时从剧本重推台词，把旁白塞进 <d>，成片里国王念了一整段旁白。）
+2. **语言统一**：§5 正文一律中文（只有 §5.1 的项目风格块保持英文原样）。不得出现整句英文的正文片段。
+3. **对白镜单拍 + 禁文字**：含台词的镜一律单镜一镜到底（不用 [Shot 2]+、不用 <scenetrans>，除非单句台词超过 15 秒上限）；
+   画面内不得出现任何文字、字幕、招牌、浮字或乱码字形。
+
 - You receive FULL_EPISODE_SCRIPT plus NEIGHBOR blocks and structured fields. Use them for **continuity** and
   **information completeness** only; do NOT invent plot absent from SCRIPT + STORYBOARD FIELDS + the current draft.
 - **Structure is untouchable**: keep the six section names in order and keep every structural token verbatim —

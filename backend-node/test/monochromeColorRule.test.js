@@ -478,3 +478,18 @@ test('对白被切拍：台词能装下就必须单镜，超 15 秒才允许跨�
   const r = m.summarizeUniversalSegmentFormat(rows);
   assert.equal(r.dialogue_cut, 1);
 });
+
+/**
+ * 润色把台词来源搞错（实测 sb754）：润色提示词写着"台词逐条保留"+"必须与草稿有差异"，
+ * 于是它从 FULL_EPISODE_SCRIPT 重推台词，把「国王立刻下令：」之后的**旁白**塞进 <d>，
+ * 成片里国王念了一整段旁白（4 拍结构、英文片段、禁文字约束也一起回退）。
+ */
+test('润色规范：台词唯一来源是 DIALOGUE 字段 + 语言统一 + 对白镜单拍禁文字', () => {
+  const p = require('../src/services/promptI18n');
+  const polish = p.getUniversalOmniPolishPrompt({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
+  assert.match(polish, /POLISH 硬约束/);
+  assert.match(polish, /台词的唯一来源是 STORYBOARD FIELDS 的 DIALOGUE 字段/);
+  assert.match(polish, /不得写进 <d>…<\/d>/);
+  assert.match(polish, /语言统一/);
+  assert.match(polish, /对白镜单拍 \+ 禁文字/);
+});

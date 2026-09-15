@@ -359,6 +359,11 @@ ${monochromeStyle ? `  HARD RULE (this project is monochrome): never write colou
   Never write 分镜2：-style lines (one universal_segment_text = one generation call).
   Target 200-350 English words for a 5-10 s single clip (cover composition, subject, environment, action,
   camera, sound and dialogue); dialogue-dense clips prioritise the complete spoken timeline.
+  CAMERA HOLDS DURING DIALOGUE (hard rule): while a speaker's line is being delivered the camera stays
+  LOCKED — no cut, no push/pull, no orbit, no crane (a faint natural handheld is fine). Camera motion belongs
+  before or after the line; moving during speech smears the lip sync. Only the current speaker may show
+  mouth/throat articulation; other characters must not read as speaking, and the line must match that
+  character's mouth shapes.
 overall_soundscape: ambience and physical sounds across the whole clip (shot-synced events stay in
   detailed_description). If a reference audio layer supplies ambience, state its copy/reference relation here.
 non_diegetic_music: audience-only score; this project uses NO background music — write "none".
@@ -366,6 +371,15 @@ non_diegetic_music: audience-only score; this project uses NO background music �
 LANGUAGE: write the prose in Chinese for the in-app text (it is translated to English for the video model),
 but keep ALL structural tokens in English verbatim: section names, <Subject N>/<Picture N>/<Audio j>,
 the retention markers, [Shot N] At MM:SS.mmm, <d>…</d>, <scenetrans>, <cutoff>.
+PRE-OUTPUT SELF-CHECK (rewrite the shot if any item fails — never emit substandard content):
+1. CAST COMPLETE: every character appearing in this clip maps to a <Subject N> slot; never invent a character
+   that is absent, and never drop one listed in the storyboard fields.
+2. SCENE CONTINUITY: time of day, location and lighting continue seamlessly from the previous clip (unless the
+   script explicitly cuts); key prop positions/states carry over from the previous clip's ending.
+3. ACTION CONTINUITY: this clip's opening action continues the previous clip's ending state (use NEIGHBOR blocks).
+4. DIALOGUE: verbatim text inside <d>…</d>, correct speaker number, no mouth articulation for non-speakers.
+5. PROHIBITED CONTENT: rewrite blood/gore/nudity/political-sensitive wording with neutral terms, keeping the plot logic.
+
 Reference tokens: <Picture 1> = scene/environment; <Picture 2>+ = characters in characters[] order; then props.
 The environment constraint (keep verbatim as its own note inside subject_definitions or summary):
 ${DEFAULT_LINE3}`;
@@ -435,6 +449,9 @@ ${monochromeStyle ? `- **单色项目硬规则（本片画风是单色）**：§
   ③ 远景要求看清细微表情、特写要求展示全身动作；④ 打斗全靠碎片特写，看不清谁对谁做了什么；
   ⑤ 悬念场景过早拍清答案；⑥ 表情只写「生气/难过/震惊」，没有眉眼、嘴角、呼吸、姿态细节。
 - **剧情完整性优先**：分镜总数或总时长不够时，**增加分镜、或给足单镜时长**，**不得省略/压缩原文的动作、因果、情绪转折与任何一句对白**。
+- **台词期间镜头固定（对白镜硬规则）**：说话人开口的**这段时间里镜头保持固定** —— 不切镜、不推拉、不环绕、不升降（轻微自然手持可以）。
+  为什么：口型与镜头运动叠加会把嘴糊掉，观众看不出在说话；**要运镜就放在台词前后**。
+  同时：**只有当前说话人**可以有张嘴/喉部动作，其他角色**不得**出现疑似发声的口型；台词必须与该角色的口型同步。
   校验口径：本集所有镜的 duration 之和应 ≥ 该集剧本按 4.2 字/秒朗读所需的秒数；明显偏短说明剧情被压缩了（宁可加镜，不要省略）。
 - **镜内时间推进（"第几秒"）必须写出来**：单镜（无剪辑点）也要交代这一镜随时间的演化 —— 起幅 → 过程 → 落幅（可用 in the first two seconds / from the third second onward 这类相对时间短语）。
   **变化的主体可以是画面内容而不是镜头**：人物动作、光线推移、烟雾/旗帜飘动、风起云散都算；**固定机位同样合格**（写 in the first two seconds the frame holds … 即可），不要为了凑"时间推进"去动镜头。
@@ -451,6 +468,13 @@ ${monochromeStyle ? `- **单色项目硬规则（本片画风是单色）**：§
 
 **语言**：库内正文用中文（界面可读，交给视频模型前会英译）；但下列**结构记号一律英文原样**：
 段名、<Subject N>/<Picture N>/<Audio j>、retention 的固定标记、[Shot N] At MM:SS.mmm、<d>…</d>、<scenetrans>、<cutoff>。
+**输出前必检（不满足就重写这一镜 —— 不要输出不合格内容）**：
+1. **人物齐全**：本镜出现的角色必须都能对上 <Subject N> 槽位；**没出现的角色绝不写入**，分镜字段里列出的角色也不要漏；
+2. **场景连贯**：时间（晨/午/夜）、地点、光线与上一镜无缝衔接（除非剧本明确切换）；关键道具的位置与状态延续上一镜结尾；
+3. **动作承接**：本镜起始动作必须承接上一镜的结束状态（有 NEIGHBOR 上下文时以它为准）；
+4. **台词合规**：台词原文逐字保留、包在 <d>…</d> 里，说话人编号正确，非说话人不写口型；
+5. **违禁内容**：血腥/裸露/政治敏感等一律用中性词改写（保持剧情逻辑），不要原样输出。
+
 参考槽位：<Picture 1> = 场景/环境；<Picture 2> 起 = 角色（按 characters[] 顺序）；其后是道具。
 
 **环境参考约束**（作为一条独立说明写在 subject_definitions 或 summary 里，逐字照抄）：

@@ -287,3 +287,36 @@ test('总时长覆盖统计：分镜总时长明显短于剧本朗读时长时�
   // 没有剧本时不报（ratio=null）
   assert.equal(m.summarizeUniversalSegmentFormat(rows, {}).duration_coverage.ratio, null);
 });
+
+/**
+ * 适配自「字字动画」的两条规范：
+ *  #3 台词期间镜头固定（口型与运动叠加会糊掉嘴）
+ *  #4 输出前必检（人物齐全/场景连贯/动作承接/台词合规/违禁内容）
+ */
+test('§5 规范：台词期间镜头固定 + 只有说话人有口型', () => {
+  const p = require('../src/services/promptI18n');
+  const zh = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
+  assert.match(zh, /台词期间镜头固定/);
+  assert.match(zh, /不切镜、不推拉、不环绕、不升降/);
+  assert.match(zh, /要运镜就放在台词前后/);
+  assert.match(zh, /只有当前说话人/);
+  assert.match(zh, /不得/);
+  const en = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'en' }, style: { default_style_en: 'x' } });
+  assert.match(en, /CAMERA HOLDS DURING DIALOGUE/);
+  assert.match(en, /no cut, no push\/pull, no orbit, no crane/);
+  assert.match(en, /Only the current speaker may show/);
+});
+
+test('§5 规范：输出前必检五项齐全', () => {
+  const p = require('../src/services/promptI18n');
+  const zh = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
+  assert.match(zh, /输出前必检/);
+  for (const k of ['人物齐全', '场景连贯', '动作承接', '台词合规', '违禁内容']) {
+    assert.ok(zh.includes(k), '缺自检项 ' + k);
+  }
+  const en = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'en' }, style: { default_style_en: 'x' } });
+  assert.match(en, /PRE-OUTPUT SELF-CHECK/);
+  for (const k of ['CAST COMPLETE', 'SCENE CONTINUITY', 'ACTION CONTINUITY', 'DIALOGUE', 'PROHIBITED CONTENT']) {
+    assert.ok(en.includes(k), 'missing ' + k);
+  }
+});

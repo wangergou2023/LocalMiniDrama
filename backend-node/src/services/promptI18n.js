@@ -353,6 +353,8 @@ ${monochromeStyle ? `  HARD RULE (this project is monochrome): never write colou
   Use them ONLY when this shot's ACTION is a fight / chase / combo / rapid action burst whose beats one
   unbroken camera move cannot cover — then push the establishing beat into the first 1-2 seconds of [Shot 1]
   and give the remaining time to the clash. Every other shot stays single-shot.
+  Each universal_segment_text is ONE independent generation, so the first beat is ALWAYS [Shot 1] —
+  never number it with the storyboard index (storyboard 2 also starts at [Shot 1], not [Shot 2]).
   [Shot 1] carries NO timestamp; every later shot carries "At MM:SS.mmm,"; timestamps strictly increase and
   stay below the clip duration; numbering starts at 1 and is consecutive; at most 4 shots.
   Never express a cut with wording like "cut to shot 2" — only the notation above creates a cut.
@@ -429,6 +431,8 @@ ${monochromeStyle ? `- **单色项目硬规则（本片画风是单色）**：§
     [Shot 1] … / [Shot 2] At 00:03.200, the camera cuts to … / [Shot 3] At 00:05.600, …
   **只在**本镜 ACTION 是**打斗/追击/连招/快速动作爆发**、单个不中断的运镜演不完这些拍时才用；
   此时把定场压进 [Shot 1] 的前 1-2 秒，其余时长全给交锋。其余镜头一律单镜。
+  **每条 universal_segment_text 都是独立的一次生成，因此本镜第一拍永远是 [Shot 1]** ——
+  不要用分镜序号当编号（镜 2 里也写 [Shot 1]，不是 [Shot 2]）。
   [Shot 1] **不带**时间戳；其后每拍必须带 "At MM:SS.mmm,"；时间严格递增且小于本镜时长；
   编号从 1 开始连续；**最多 4 镜**。
   **禁止**用「切镜到」「镜头2」这类叙述性措辞表达剪辑 —— 只有上面的记号才算剪辑点；

@@ -340,3 +340,38 @@ test('分镜生成 user prompt 里带「本集总时长下限」硬数字', () =
   // 下限按 4.2 字/秒 × 95% 计算
   assert.match(src, /Math\.round\(scriptSec \* 0\.95\)/);
 });
+
+/**
+ * [Shot N] 编号：每条 ust = 一次独立生成，第一拍永远是 [Shot 1]。
+ * 实测 drama7 ep21（2026-09-15）：模型用分镜序号编号（镜2→[Shot 2]），15 镜里 14 镜被判不合规。
+ */
+test('规范写明：第一拍永远是 [Shot 1]，不得用分镜序号', () => {
+  const p = require('../src/services/promptI18n');
+  const zh = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
+  assert.match(zh, /本镜第一拍永远是 \[Shot 1\]/);
+  assert.match(zh, /不是 \[Shot 2\]/);
+  const en = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'en' }, style: { default_style_en: 'x' } });
+  assert.match(en, /first beat is ALWAYS \[Shot 1\]/);
+});
+
+test('repairRef2va 会把误用的分镜序号重编号回 1..N', () => {
+  const { repairRef2va, validateRef2va } = require('../src/services/ref2vaFormat');
+  const bad = [
+    'subject_definitions:', '- <Subject 1> 是 <Picture 1> 中的「宫殿」。',
+    'summary:', '镜头自地面升起。',
+    'retention_analysis:', '<Subject 1> (appears in [Shot 3]): fully_preserved - 沿用。',
+    'detailed_description:', '[Shot 3] 中景。前三秒镜头前推。 [Shot 5] At 00:05.000, the camera cuts to 近景。',
+    'overall_soundscape:', '环境声。', 'non_diegetic_music:', '无。',
+  ].join('\n');
+  const r = repairRef2va(bad, { durationSec: 12 });
+  assert.equal(r.fatal, false);
+  assert.ok(r.changes.some((c) => /重编号为 1\.\.2/.test(c)), JSON.stringify(r.changes));
+  const dd = r.text.split('detailed_description:')[1];
+  assert.match(dd, /\[Shot 1\]/);
+  assert.match(dd, /\[Shot 2\] At 00:05\.000/);
+  assert.equal(/\[Shot 3\]|\[Shot 5\]/.test(dd), false, dd);
+  // 首拍已经是 [Shot 1] 时不动
+  const good = bad.replace(/\[Shot 3\]/g, '[Shot 1]').replace('[Shot 5]', '[Shot 2]');
+  const r2 = repairRef2va(good, { durationSec: 12 });
+  assert.equal(r2.changes.some((c) => /重编号/.test(c)), false);
+});

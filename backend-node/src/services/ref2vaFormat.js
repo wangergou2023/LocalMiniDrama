@@ -330,11 +330,32 @@ function repairRef2va(text, opts = {}) {
     changes.push(`补 retention 行 ${k}`);
   }
 
+  // [Shot N] 重编号：每条 universal_segment_text 都是**独立的一次生成**，所以第一拍永远是 [Shot 1]。
+  // 实测（drama7 ep21，2026-09-15）：模型把镜头编号写成了分镜序号（镜2 → [Shot 2]、镜7 → [Shot 7]），
+  // 15 镜里 14 镜因此被判「第一个镜头必须是 [Shot 1]」不合规。这里做确定性重编号（保留剪辑时间戳）。
+  let dd = String(s.detailed_description || '').trim();
+  {
+    SHOT_RE.lastIndex = 0;
+    const nums = [];
+    let m2;
+    while ((m2 = SHOT_RE.exec(dd))) nums.push(Number(m2[1]));
+    const needsRenumber = nums.length > 0 && nums[0] !== 1;
+    if (needsRenumber) {
+      const map = new Map();
+      nums.forEach((n, i) => { if (!map.has(n)) map.set(n, i + 1); });
+      dd = dd.replace(/\[Shot\s+(\d+)\]/g, (full, d) => {
+        const to = map.get(Number(d));
+        return to ? `[Shot ${to}]` : full;
+      });
+      changes.push(`[Shot N] 重编号为 1..${map.size}（原首拍为 ${nums[0]}，模型误用了分镜序号）`);
+    }
+  }
+
   const sections = {
     subject_definitions: String(s.subject_definitions || '').trim(),
     summary: String(s.summary || '').trim() || `${String(opts.summaryFallback || '').trim() || '本镜沿用参考素材定义的主体与空间。'}`,
     retention_analysis: raGood.join('\n'),
-    detailed_description: String(s.detailed_description || '').trim(),
+    detailed_description: dd,
     overall_soundscape:
       String(s.overall_soundscape || '').trim() ||
       String(opts.soundscapeFallback || '').trim() ||

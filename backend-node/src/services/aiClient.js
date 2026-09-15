@@ -187,10 +187,10 @@ function postJSONStream(url, headers, body, silenceTimeoutMs = 60000, onProgress
             if (delta) {
               if (firstToken) {
                 firstToken = false;
-                if (onProgress) onProgress(0, 'first_token', '');
+                if (onProgress) onProgress(0, 'first_token', '', reasoningChars);
               }
               accumulated += delta;
-              if (onProgress) onProgress(accumulated.length, null, accumulated);
+              if (onProgress) onProgress(accumulated.length, null, accumulated, reasoningChars);
             }
           } catch (_) { /* 忽略无法解析的行 */ }
         }
@@ -338,12 +338,6 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
   let finalMaxTokens = null;
   if (options.max_tokens != null) {
     finalMaxTokens = Number(options.max_tokens);
-    if (finalMaxTokens < MIN_TOKENS_WITH_THINKING && isThinkingEnabled(config, model)) {
-      log.warn('AI streamGenerateText: 思考模式下 max_tokens 过小，已上调', {
-        requested: finalMaxTokens, raised_to: MIN_TOKENS_WITH_THINKING, model,
-      });
-      finalMaxTokens = MIN_TOKENS_WITH_THINKING;
-    }
     if (settingsMaxTokens != null && finalMaxTokens > settingsMaxTokens) {
       log.warn('AI generateText: max_tokens 超过配置上限，已截断', {
         requested: finalMaxTokens, capped_to: settingsMaxTokens, model,
@@ -459,6 +453,13 @@ async function streamGenerateText(db, log, serviceType, userPrompt, systemPrompt
   } else if (settingsMaxTokens != null) {
     finalMaxTokens = settingsMaxTokens;
   }
+  // 思考模式下思考 token 占预算：预算太小会"只思考、不出正文"（实测 2400 → 连续 3 次空返回）
+  if (finalMaxTokens != null && finalMaxTokens < MIN_TOKENS_WITH_THINKING && isThinkingEnabled(config, model)) {
+    log.warn('AI streamGenerateText: 思考模式下 max_tokens 过小，已上调', {
+      requested: finalMaxTokens, raised_to: MIN_TOKENS_WITH_THINKING, model,
+    });
+    finalMaxTokens = MIN_TOKENS_WITH_THINKING;
+  }
   if (min_max_tokens != null) {
     const minVal = Number(min_max_tokens);
     if (finalMaxTokens == null || finalMaxTokens < minVal) {
@@ -490,15 +491,17 @@ async function streamGenerateText(db, log, serviceType, userPrompt, systemPrompt
     stream: true,
   });
   let lastLen = 0;
+  let reasoningChars = 0;   // 思考输出字数（只统计、不进正文），空返回时用于诊断
   const res = await postJSONStream(
     url,
     { Authorization: 'Bearer ' + (config.api_key || '') },
     body,
     silenceMs,
-    (receivedLen, event, accumulated) => {
+    (receivedLen, event, accumulated, reasoningLen) => {
       if (event === 'first_token') {
         log.info('AI stream first token', { model, ttft_ms: Date.now() - startMs });
       }
+      if (typeof reasoningLen === 'number') reasoningChars = reasoningLen;   // 由 postJSONStream 透出
       if (!accumulated || accumulated.length <= lastLen) return;
       const delta = accumulated.slice(lastLen);
       lastLen = accumulated.length;

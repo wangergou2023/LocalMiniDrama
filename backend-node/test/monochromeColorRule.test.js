@@ -431,3 +431,18 @@ test('aiClient：思考模式下 max_tokens 自动抬到下限，并给空返回
   // 只有开启思考时才抬升
   assert.match(src, /isThinkingEnabled\(config, model\)/);
 });
+
+test('streamGenerateText 也吃到了思考模式的 max_tokens 下限（初版只补了 generateText）', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/services/aiClient.js'), 'utf8');
+  const i = src.indexOf('async function streamGenerateText');
+  assert.ok(i > 0);
+  const seg = src.slice(i, i + 9000);
+  assert.match(seg, /AI streamGenerateText: 思考模式下 max_tokens 过小，已上调/);
+  assert.match(seg, /MIN_TOKENS_WITH_THINKING/);
+  // 空返回诊断里的变量必须在本函数作用域内声明（初版引用了别的函数的变量 → ReferenceError）
+  assert.match(seg, /let reasoningChars = 0/);
+  assert.match(seg, /思考输出 \$\{reasoningChars\} 字/);
+  assert.equal(/extraArgs/.test(seg), false, '不应再有未声明的 extraArgs');
+});

@@ -23,6 +23,7 @@ const promptOverridesRoutes = require('./promptOverrides');
 const sceneModelMapRoutes = require('./sceneModelMap');
 const workflowRoutes = require('./workflows');
 const agentService = require('../services/agentService');
+const agentRoutes = require('./agents');
 
 function setupRouter(cfg, db, log) {
   const r = express.Router();
@@ -48,6 +49,7 @@ function setupRouter(cfg, db, log) {
   const videoMerges = videoMergeRoutes(db, log);
   const assets = assetRoutes(db, log);
   const audio = audioRoutes(db, log, cfg);
+  const agents = agentRoutes(db, cfg, log);
   const promptOverrides = promptOverridesRoutes.routes(db, log);
 
   // ---------- dramas ----------
@@ -261,6 +263,11 @@ function setupRouter(cfg, db, log) {
   // ---------- AI 导演助手 ----------
   r.post('/agent/chat', (req, res) => agentService.chat(db, log, cfg, req, res));
   r.post('/agent/qc', (req, res) => agentService.qc(db, log, cfg, req, res));
+  // ---- Agent 三层：只读审查 / 可写优化（建议→确认）/ 调度 ----
+  r.get('/agents', agents.list);
+  r.get('/agents/:agentId/tools', agents.tools);
+  r.post('/agents/:agentId/run', agents.run);
+  r.post('/agents/apply', agents.apply);
 
   // ---------- videos ----------
   r.get('/videos', videos.list);

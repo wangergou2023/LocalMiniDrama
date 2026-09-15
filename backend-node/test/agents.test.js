@@ -282,3 +282,31 @@ test('模型把段名写在 field 里也算段落补丁（否则正确建议会�
   assert.match(after, /第四秒起完全固定/);
   assert.match(after, /subject_definitions/);
 });
+
+test('上下文按镜号收敛：指定 storyboard_ids 后，确定性结论里不能出现别的镜（bug3 回归）', async () => {
+  const { gatherContext } = require('../src/services/agents/agentRunner');
+  const db = makeDb();
+  // 造两条"有毛病"的镜：movement 有值但 §5 没写运镜 / 长镜没写时间推进
+  const body = (shotTag) => [
+    'subject_definitions:', '- <Subject 1> 是 <Picture 1> 中的「大厅」。',
+    'summary:', '概述。',
+    'retention_analysis:', '<Subject 1> (appears in [Shot 1]): fully_preserved - 沿用。',
+    'detailed_description:', `${shotTag} 中景，画面保持不动。`,
+    'overall_soundscape:', '环境声。', 'non_diegetic_music:', '无。',
+  ].join('\n');
+  db.prepare(`INSERT INTO storyboards (id,episode_id,storyboard_number,title,duration,movement,shot_type,dialogue,creation_mode,universal_segment_text)
+              VALUES (11,1,11,'镜十一',12,'推镜push','中景','','universal',?)`).run(body('[Shot 1]'));
+  db.prepare(`INSERT INTO storyboards (id,episode_id,storyboard_number,title,duration,movement,shot_type,dialogue,creation_mode,universal_segment_text)
+              VALUES (12,1,12,'镜十二',13,'拉镜pull','全景','','universal',?)`).run(body('[Shot 1]'));
+
+  const ctxAll = await gatherContext(db, log, 'optimizer', { episodeId: 1, storyboardIds: null });
+  assert.ok(ctxAll.deterministic.summarize.movement_missing_sample.length >= 2, JSON.stringify(ctxAll.deterministic.summarize.movement_missing_sample));
+
+  const ctxScoped = await gatherContext(db, log, 'optimizer', { episodeId: 1, storyboardIds: [11] });
+  const ids = ctxScoped.deterministic.summarize.movement_missing_sample.map((x) => Number(x.id));
+  assert.deepEqual(ids, [11], '收敛后只应包含目标镜：' + JSON.stringify(ids));
+  assert.equal(ctxScoped.deterministic.summarize.movement_missing, 1);
+  assert.equal(ctxScoped.deterministic.summarize.timeline_missing_sample.every((x) => Number(x.id) === 11), true);
+  // 指定的镜本身也要出现在上下文里
+  assert.deepEqual(ctxScoped.shots.map((s) => Number(s.storyboard_id)), [11]);
+});

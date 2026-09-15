@@ -320,3 +320,23 @@ test('§5 规范：输出前必检五项齐全', () => {
     assert.ok(en.includes(k), 'missing ' + k);
   }
 });
+
+test('对白镜运镜规则可执行化：默认固定机位 + 必须写台词时间点 + 台词窗内禁运动', () => {
+  const p = require('../src/services/promptI18n');
+  const zh = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
+  assert.match(zh, /有台词的镜头默认固定机位/);
+  assert.match(zh, /必须在正文里写出台词开始的时间点/);
+  assert.match(zh, /禁止在台词时间窗内出现任何镜头运动词/);
+});
+
+test('分镜生成 user prompt 里带「本集总时长下限」硬数字', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/services/episodeStoryboardService.js'), 'utf8');
+  assert.match(src, /durationFloorHint/);
+  assert.match(src, /本集总时长下限 —— 硬性/);
+  assert.match(src, /不得低于 \$\{minSec\} 秒/);
+  assert.match(src, /TOTAL LENGTH FLOOR — HARD/);
+  // 下限按 4.2 字/秒 × 95% 计算
+  assert.match(src, /Math\.round\(scriptSec \* 0\.95\)/);
+});

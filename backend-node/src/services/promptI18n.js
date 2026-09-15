@@ -452,6 +452,10 @@ ${monochromeStyle ? `- **单色项目硬规则（本片画风是单色）**：§
 - **台词期间镜头固定（对白镜硬规则）**：说话人开口的**这段时间里镜头保持固定** —— 不切镜、不推拉、不环绕、不升降（轻微自然手持可以）。
   为什么：口型与镜头运动叠加会把嘴糊掉，观众看不出在说话；**要运镜就放在台词前后**。
   同时：**只有当前说话人**可以有张嘴/喉部动作，其他角色**不得**出现疑似发声的口型；台词必须与该角色的口型同步。
+  **执行方式（必须照做，否则这条等于没写）**：
+  ① **有台词的镜头默认固定机位**；② 若确实需要运镜，**必须在正文里写出台词开始的时间点**（如 "in the last four seconds he says …" / "from the sixth second onward she says …"），
+  **并把运镜全部压在该时间点之前**（例如 "the camera pushes in during the first three seconds, then holds locked for the rest of the shot as he says …"）；
+  ③ 禁止在台词时间窗内出现任何镜头运动词。
   校验口径：本集所有镜的 duration 之和应 ≥ 该集剧本按 4.2 字/秒朗读所需的秒数；明显偏短说明剧情被压缩了（宁可加镜，不要省略）。
 - **镜内时间推进（"第几秒"）必须写出来**：单镜（无剪辑点）也要交代这一镜随时间的演化 —— 起幅 → 过程 → 落幅（可用 in the first two seconds / from the third second onward 这类相对时间短语）。
   **变化的主体可以是画面内容而不是镜头**：人物动作、光线推移、烟雾/旗帜飘动、风起云散都算；**固定机位同样合格**（写 in the first two seconds the frame holds … 即可），不要为了凑"时间推进"去动镜头。

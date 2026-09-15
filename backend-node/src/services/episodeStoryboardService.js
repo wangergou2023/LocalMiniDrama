@@ -2031,8 +2031,24 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   const wantUniversalOmni = universalOmni === true || universalOmni === 1 || String(universalOmni || '').toLowerCase() === 'true';
   const suffix = promptI18n.getStoryboardUserPromptSuffix(cfg, effectiveShotDuration, { universalOmni: wantUniversalOmni });
 
+  // 剧情完整性：把「本集总时长下限」算成硬数字给模型。
+  // 只写在系统规范里太抽象（实测总时长在 153~184 秒之间飘，剧本朗读时长是 198 秒），
+  // 这里直接给出下限秒数与差值，模型才有个可对齐的靶子。
+  let durationFloorHint = '';
+  try {
+    const scriptChars = String(scriptContent || '').replace(/\s+/g, '').length;
+    const scriptSec = Math.round(scriptChars / 4.2);
+    if (scriptSec > 0) {
+      const sumDur = (arr) => arr.reduce((a, b) => a + (Number(b && b.duration) || 0), 0);
+      const minSec = Math.round(scriptSec * 0.95);   // 允许 5% 弹性，低于这个值就是压缩了剧情
+      durationFloorHint = promptI18n.isEnglish(cfg)
+        ? `\n\n[TOTAL LENGTH FLOOR — HARD] The script is ${scriptChars} characters ≈ ${scriptSec}s of speech at 4.2 chars/s. The sum of all shot durations in this episode MUST be at least ${minSec}s (95% of that). If the shot list you produced sums to less, ADD SHOTS or LENGTHEN shots — never compress or drop script content, and never drop a line of dialogue.`
+        : `\n\n【本集总时长下限 —— 硬性】本集剧本 ${scriptChars} 字 ≈ ${scriptSec} 秒朗读时长（4.2 字/秒）。你输出的所有镜头 duration 之和**不得低于 ${minSec} 秒**（朗读时长的 95%）。如果加起来不够，就**增加分镜或加长单镜** —— 严禁压缩、省略剧本内容，严禁丢任何一句台词。`;
+    }
+  } catch (_) { /* 取不到剧本就不加这条 */ }
+
   let userPrompt =
-    `${scriptLabel}\n${scriptContent}\n\n${taskLabel}\n${taskInstruction}${extraConstraint}\n\n${charListLabel}\n${characterList}\n\n${charConstraint}\n\n${sceneListLabel}\n${sceneList}\n\n${sceneConstraint}\n\n${propListLabel}\n${propList}\n\n${propConstraint}\n\n${suffix}`;
+    `${scriptLabel}\n${scriptContent}\n\n${taskLabel}\n${taskInstruction}${extraConstraint}\n\n${charListLabel}\n${characterList}\n\n${charConstraint}\n\n${sceneListLabel}\n${sceneList}\n\n${sceneConstraint}\n\n${propListLabel}\n${propList}\n\n${propConstraint}\n\n${suffix}${durationFloorHint}`;
 
   // 全能模式：把两个必填字段的提醒放在**用户提示词结尾**（模型最后读到的、也是最权威的位置）。
   // 这一条是实测逼出来的 —— 只写在系统提示词末尾时，模型会整批漏掉 universal_segment_text。

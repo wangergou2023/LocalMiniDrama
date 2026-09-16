@@ -14,12 +14,25 @@ const { getAgent } = require('./agentRegistry');
 const { executeTool, slimShot, analysisExcerpt, loadStoryboards } = require('./agentTools');
 const { buildSystemPrompt, buildUserPrompt, parseJsonLoose } = require('./agentPrompts');
 
-const DEFAULT_AUDIT_BATCH = 12;
+// 一批镜数。实测：12 镜/批 + 开思考时，输入约 9k token，模型把 12000 预算全花在思考上
+// → 返回空内容（HTTP 500「AI 返回内容为空」）。降到 6 镜/批后单批输入减半。
+const DEFAULT_AUDIT_BATCH = 6;
 
-async function defaultLlm(db, log, { systemPrompt, userPrompt, json = true, maxTokens = 8000, temperature = 0.2 }) {
+/** Agent 调用的默认预算：开思考时要留足"思考 + 正文"，否则会整批返回空 */
+function agentTokenBudget(db) {
+  try {
+    const { storyboardMaxTokens } = require('../episodeStoryboardService');
+    const v = storyboardMaxTokens(db);
+    if (Number.isFinite(v) && v > 0) return v;      // 开思考 32768 / 否则 16384
+  } catch (_) { /* 取不到就用兜底值 */ }
+  return 16000;
+}
+
+async function defaultLlm(db, log, { systemPrompt, userPrompt, json = true, maxTokens = null, temperature = 0.2 }) {
+  const budget = Math.max(Number(maxTokens) || 0, agentTokenBudget(db));
   return aiClient.generateText(db, log, 'text', userPrompt, systemPrompt, {
     json_mode: json,
-    max_tokens: maxTokens,
+    max_tokens: budget,
     temperature,
     scene_key: 'agent_review',
   });
@@ -29,8 +42,9 @@ async function defaultLlm(db, log, { systemPrompt, userPrompt, json = true, maxT
 async function gatherContext(db, log, agentId, { episodeId, storyboardIds, withScript = false }) {
   const listRes = await executeTool(db, log, agentId, 'list_storyboards', { episode_id: episodeId });
   let shots = (listRes && listRes.data) || [];
+  // 注意：显式传空数组 ≠ 不限（否则一次"没有目标镜"的调用会扫全 15 镜、白烧一次 LLM）
   const idSet = Array.isArray(storyboardIds) && storyboardIds.length
-    ? new Set(storyboardIds.map(Number))
+    ? new Set(storyboardIds.map(Number).filter((n) => Number.isFinite(n)))
     : null;
   if (idSet) shots = shots.filter((s) => idSet.has(Number(s.storyboard_id)));
 
@@ -84,6 +98,11 @@ async function runAgent(db, log, params = {}) {
   if (!agent) return { ok: false, error: `未知角色：${agentId}`, agent_id: agentId };
   const episodeId = Number(params.episodeId || params.episode_id);
   if (!Number.isFinite(episodeId) || episodeId <= 0) return { ok: false, error: '缺少有效的 episode_id', agent_id: agentId };
+  // 显式传了空数组说明"本次没有目标镜"，直接返回空，避免误扫整集
+  const rawIds = params.storyboardIds || params.storyboard_ids;
+  if (Array.isArray(rawIds) && rawIds.length === 0) {
+    return { ok: true, agent_id: agentId, layer: agent.layer, report: { note: 'storyboard_ids 为空数组，未指定任何镜，未执行任何调用' }, meta: { shots: 0, skipped_all: true } };
+  }
 
   const llm = params.llm || defaultLlm;
   const targetIds = params.storyboardIds || params.storyboard_ids || null;
@@ -113,7 +132,31 @@ async function runAgent(db, log, params = {}) {
       agentId, episodeId, storyboards: shots, deterministic: batches.length === 1 ? ctx.deterministic : null,
       script: ctx.script, targetIds, instruction,
     });
-    const raw = await llm(db, log, { systemPrompt, userPrompt, json: agent.outputContract.type === 'json', maxTokens: 12000 });
+    let raw;
+    try {
+      raw = await llm(db, log, { systemPrompt, userPrompt, json: agent.outputContract.type === 'json' });
+    } catch (e) {
+      // 空返回（思考吃满预算）时把这一批对半拆开重试：输入减半，思考负担随之减半
+      if (/返回内容为空/.test(String(e && e.message)) && shots.length > 1) {
+        log.warn('[agent] 批次返回为空，拆分重试', { agent: agentId, size: shots.length });
+        const mid = Math.ceil(shots.length / 2);
+        for (const half of [shots.slice(0, mid), shots.slice(mid)]) {
+          const up = buildUserPrompt({
+            agentId, episodeId, storyboards: half, deterministic: batches.length === 1 ? ctx.deterministic : null,
+            script: ctx.script, targetIds: null, instruction,
+          });
+          try {
+            const rawHalf = await llm(db, log, { systemPrompt, userPrompt: up, json: agent.outputContract.type === 'json' });
+            const p = agent.outputContract.type === 'json' ? parseJsonLoose(rawHalf) : { text: String(rawHalf || '') };
+            reports.push(p || { parse_error: true, raw_excerpt: String(rawHalf || '').slice(0, 600) });
+          } catch (e2) {
+            reports.push({ parse_error: true, error: e2.message });
+          }
+        }
+        continue;
+      }
+      throw e;
+    }
     const parsed = agent.outputContract.type === 'json' ? parseJsonLoose(raw) : { text: String(raw || '') };
     reports.push(parsed || { parse_error: true, raw_excerpt: String(raw || '').slice(0, 600) });
   }

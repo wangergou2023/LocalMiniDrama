@@ -310,3 +310,23 @@ test('上下文按镜号收敛：指定 storyboard_ids 后，确定性结论里�
   // 指定的镜本身也要出现在上下文里
   assert.deepEqual(ctxScoped.shots.map((s) => Number(s.storyboard_id)), [11]);
 });
+
+test('显式空 storyboard_ids 不等于"整集"（否则会白烧一次全片 LLM）', async () => {
+  const db = makeDb();
+  let called = 0;
+  const fakeLlm = async () => { called += 1; return '{}'; };
+  const out = await runAgent(db, log, { agentId: 'optimizer', episodeId: 1, storyboardIds: [], llm: fakeLlm });
+  assert.equal(out.ok, true);
+  assert.equal(called, 0, '空数组时不应调用 LLM');
+  assert.equal(out.meta.skipped_all, true);
+  assert.match(out.report.note, /空数组/);
+});
+
+test('Agent 预算跟随思考设置 + 批次 6 + 空返回拆分重试', () => {
+  const src = require('fs').readFileSync(path.join(__dirname, '../src/services/agents/agentRunner.js'), 'utf8');
+  assert.match(src, /DEFAULT_AUDIT_BATCH = 6/);
+  assert.match(src, /function agentTokenBudget\(db\)/);
+  assert.match(src, /storyboardMaxTokens\(db\)/);
+  assert.match(src, /批次返回为空，拆分重试/);
+  assert.match(src, /mid = Math\.ceil\(shots\.length \/ 2\)/);
+});

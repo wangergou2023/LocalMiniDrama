@@ -1928,13 +1928,19 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   } catch (_) {}
   const imageRatio = aspectRatio || dramaAspectRatio || cfg?.style?.default_video_ratio || '16:9';
 
-  // 计算单镜建议时长（秒）：
-  // 项目 metadata 中的 video_clip_duration（如 15 秒/段）优先于「总时长÷镜数」，
-  // 否则前端同时传总时长+镜数时会把每镜压成过短（与「每段秒数」配置矛盾）。
-  // 无项目配置时再使用总时长÷镜数；再否则 null。
+  let scriptContent = (episode.script_content && String(episode.script_content).trim())
+    ? String(episode.script_content)
+    : (episode.description && String(episode.description).trim())
+      ? String(episode.description)
+      : '';
+  if (!scriptContent) {
+    throw new Error('剧本内容为空，请先生成剧集内容');
+  }
+
   // 分镜总数：显式传了就用传的，没传就按剧本时长推导（否则模型会切出 20+ 个 7-8 秒碎片）。
-  // 必须**先于**下面的单镜时长计算 —— 那里要用它，放在后面会触发 TDZ
-  // （实测：带 video_duration 调 /episodes/:id/storyboards 直接 500「Cannot access 'effectiveStoryboardCount' before initialization」）。
+  // 顺序要求：scriptContent 声明 → 本块 → 单镜时长块（后者要用 effectiveStoryboardCount）。
+  // 顺序错会触发 TDZ：实测带 video_duration 调 /episodes/:id/storyboards 直接 500
+  // 「Cannot access 'effectiveStoryboardCount' before initialization」。
   const effectiveStoryboardCount = deriveStoryboardCount(scriptContent, storyboardCount, videoClipDuration);
   if (!Number(storyboardCount) && effectiveStoryboardCount) {
     log.info('[分镜] 未指定分镜数量 → 按剧本时长自动推导', {
@@ -1945,6 +1951,10 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
     });
   }
 
+  // 计算单镜建议时长（秒）：
+  // 项目 metadata 中的 video_clip_duration（如 15 秒/段）优先于「总时长÷镜数」，
+  // 否则前端同时传总时长+镜数时会把每镜压成过短（与「每段秒数」配置矛盾）。
+  // 无项目配置时再使用总时长÷镜数；再否则 null。
   let effectiveShotDuration = null;
   const impliedFromTotal =
     videoDuration && effectiveStoryboardCount
@@ -1956,15 +1966,6 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
     effectiveShotDuration = impliedFromTotal;
   } else {
     effectiveShotDuration = null;
-  }
-
-  let scriptContent = (episode.script_content && String(episode.script_content).trim())
-    ? String(episode.script_content)
-    : (episode.description && String(episode.description).trim())
-      ? String(episode.description)
-      : '';
-  if (!scriptContent) {
-    throw new Error('剧本内容为空，请先生成剧集内容');
   }
 
   const characters = db.prepare(

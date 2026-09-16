@@ -330,6 +330,7 @@ subject_definitions: one line per tracked referenced item.
   last frame / composition anchor. An image used merely to define a character, scene, costume or style must
   NOT get a standalone <Picture N> entry.
   Reference audio: <Audio 1> is the voice-timbre reference for <Subject 2> (S1).
+  Off-screen narration with no on-screen subject: <Audio 1> is the voice-timbre reference for the off-screen narrator (S1).
 summary: one paragraph narrating the subjects, the shot flow and each reference asset's role, using ONLY the
   labels already defined above (never introduce a new label here).
 retention_analysis: one line per defined label, with these FIXED English markers:
@@ -411,6 +412,7 @@ ${DEFAULT_LINE3}`;
 - **<Picture N> 只在「该图本身充当某个镜头的首帧/关键帧/尾帧/构图锚」时才单独列条目**；
   只用来定义角色、场景、服装或风格的图，**不要**为它单列 <Picture N>，写进对应 <Subject N> 定义即可。
 - 参考音频写成：<Audio 1> is the voice-timbre reference for <Subject 2> (S1).
+- **画外解说 / 旁白没有对应画面主体时**（宣传片、纪录片式解说），写成：<Audio 1> is the voice-timbre reference for the off-screen narrator (S1). —— 这种情况绑说话人标签即可，不要硬塞一个 <Subject N>。
 
 **summary:**（一段话）
 用上面**已定义好的标签**叙述主体、镜头走向与各参考素材的作用。**不得引入新标签**。
@@ -1743,6 +1745,8 @@ HARD REQUIREMENTS FOR THIS CLIP
 - <Picture N> gets its own entry ONLY when the image itself is used as a first frame / keyframe / last frame /
   composition anchor. Do not create standalone <Picture N> entries for images that only define appearance.
 - Reference audio must be written as: <Audio 1> is the voice-timbre reference for <Subject 2> (S1).
+- When a line is delivered by an off-screen narrator (promo films, documentary-style VO) and has no on-screen subject,
+  write: <Audio 1> is the voice-timbre reference for the off-screen narrator (S1). — bind the speaker tag, do not invent a <Subject N>.
   When only timbre is referenced, never carry the reference audio's original words into the clip.
 - retention_analysis: one line per defined label, using the FIXED English markers
   (fully_preserved / partially_preserved / attribute_transfer / weak_reference; audio: fully_copy /

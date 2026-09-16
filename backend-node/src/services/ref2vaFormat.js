@@ -125,10 +125,17 @@ function validateRef2va(text, opts = {}) {
   const defKeys = new Set(defined.map((l) => l.raw));
   for (const l of summaryLabels) if (!defKeys.has(l.raw)) problems.push(`summary 引入了未定义的标签 ${l.raw}`);
 
-  // <Audio j> 必须绑到 subject（§2.4）
+  // <Audio j> 必须绑到主体或明确的说话人（§2.4）
+  // 例外：画外解说 / 旁白在画面里**没有对应主体**，只能绑说话人标签 ——
+  // 实测宣传片项目（ep23）10/10 镜都写成「<Audio 1> 是画外解说的人声音色参考，对应说话人 (S1)」，
+  // 旧校验一律判不合规，属于规范缺口而非产出问题。
   const audioDefs = (s.subject_definitions || '').split('\n').filter((l) => /<Audio\s+\d+>/i.test(l));
   for (const line of audioDefs) {
-    if (!/<Subject\s+\d+>/i.test(line)) problems.push(`<Audio j> 定义未绑定 <Subject N>：${line.slice(0, 50)}`);
+    const boundToSubject = /<Subject\s+\d+>/i.test(line);
+    const boundToSpeaker = /\(S\d+\)/.test(line) || /(off-screen|narrator|voice-over|画外|旁白|解说)/i.test(line);
+    if (!boundToSubject && !boundToSpeaker) {
+      problems.push(`<Audio j> 定义未绑定 <Subject N> 或说话人：${line.slice(0, 50)}`);
+    }
   }
 
   // retention_analysis：每条固定标记，且不写 (Sx)（§4）

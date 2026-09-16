@@ -249,3 +249,38 @@ describe('首帧提示词：结构与实测定稿一致', () => {
     assert.equal(a, '凹脸尖腮');
   });
 });
+
+/**
+ * 画外解说的音频绑定（实测宣传片 ep23）：宣传片没有对应画面主体，解说音色只能绑说话人标签。
+ * 旧校验一律要求绑 <Subject N>，导致 10/10 镜全被判不合规 —— 是规范缺口，不是产出错误。
+ */
+it('Ref2VA 校验：<Audio j> 绑说话人（画外解说）也算合规', () => {
+  const { validateRef2va } = require('../src/services/ref2vaFormat');
+  const mk = (audioLine) => [
+    'subject_definitions:', audioLine,
+    '<Subject 1> 是 <Picture 1> 中的「实验室」。',
+    'summary:', '概述 <Subject 1>。',
+    'retention_analysis:', '<Subject 1> (appears in [Shot 1]): fully_preserved - 沿用。',
+    'detailed_description:', '[Shot 1] 中景。前三秒推近，第四秒起固定。',
+    'overall_soundscape:', '环境声。', 'non_diegetic_music:', '无。',
+  ].join('\n');
+  const narrator = validateRef2va(mk('<Audio 1> is the voice-timbre reference for the off-screen narrator (S1).'), { durationSec: 12 });
+  assert.equal(narrator.ok, true, JSON.stringify(narrator.problems));
+  const zh = validateRef2va(mk('<Audio 1> 是画外解说的人声音色参考，对应说话人 (S1)。'), { durationSec: 12 });
+  assert.equal(zh.ok, true, JSON.stringify(zh.problems));
+  // 主体绑定的老写法仍然合规
+  assert.equal(validateRef2va(mk('<Audio 1> is the voice-timbre reference for <Subject 1> (S1).'), { durationSec: 12 }).ok, true);
+  // 完全不绑的仍应报错
+  const bad = validateRef2va(mk('<Audio 1> 是一段背景音乐。'), { durationSec: 12 });
+  assert.equal(bad.ok, false);
+  assert.ok(bad.problems.some((p) => /Audio/.test(p)));
+});
+
+it('§5 规范里写明画外解说的音频绑定写法', () => {
+  const p = require('../src/services/promptI18n');
+  const zh = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
+  assert.match(zh, /画外解说 \/ 旁白没有对应画面主体时/);
+  assert.match(zh, /off-screen narrator \(S1\)/);
+  const en = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'en' }, style: { default_style_en: 'x' } });
+  assert.match(en, /Off-screen narration with no on-screen subject/);
+});

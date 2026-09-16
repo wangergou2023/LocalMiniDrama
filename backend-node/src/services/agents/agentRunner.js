@@ -148,7 +148,7 @@ async function runAgent(db, log, params = {}) {
           try {
             const rawHalf = await llm(db, log, { systemPrompt, userPrompt: up, json: agent.outputContract.type === 'json' });
             const p = agent.outputContract.type === 'json' ? parseJsonLoose(rawHalf) : { text: String(rawHalf || '') };
-            reports.push(p || { parse_error: true, raw_excerpt: String(rawHalf || '').slice(0, 600) });
+            reports.push(attachStoryboardIds(p, half, log) || { parse_error: true, raw_excerpt: String(rawHalf || '').slice(0, 600) });
           } catch (e2) {
             reports.push({ parse_error: true, error: e2.message });
           }
@@ -158,7 +158,7 @@ async function runAgent(db, log, params = {}) {
       throw e;
     }
     const parsed = agent.outputContract.type === 'json' ? parseJsonLoose(raw) : { text: String(raw || '') };
-    reports.push(parsed || { parse_error: true, raw_excerpt: String(raw || '').slice(0, 600) });
+    reports.push(attachStoryboardIds(parsed, shots, log) || { parse_error: true, raw_excerpt: String(raw || '').slice(0, 600) });
   }
 
   // 合并多批结果
@@ -243,6 +243,49 @@ function buildDeterministicViolations(deterministic, agentId) {
     });
   }
   return out;
+}
+
+/**
+ * 把模型返回的 findings 挂回真实的 storyboard_id。
+ *
+ * 为什么需要：批内 6 镜时模型经常把每条的 shot_number 都写成 1（或干脆不写 storyboard_id），
+ * 于是前端/低分清单无法定位到具体镜。这里按"批内顺序 + shot_number 匹配"尽量补上 id，
+ * 补不上的保留 shot_number 并标记 unmatched（宁可不定位，也不要定位错）。
+ */
+function attachStoryboardIds(report, shots, log) {
+  if (!report || typeof report !== 'object' || !Array.isArray(shots) || !shots.length) return report;
+  const byNumber = new Map(shots.map((x) => [Number(x.shot_number), Number(x.storyboard_id)]));
+  const listKeys = ['violations', 'scores', 'breaks', 'suggestions'];
+  const idOf = (item, idx, used) => {
+    const given = Number(item && item.storyboard_id);
+    if (Number.isFinite(given) && byNumberHas(byNumber, given)) return given;
+    if (Number.isFinite(given) && shots.some((x) => Number(x.storyboard_id) === given)) return given;
+    const num = Number(item && item.shot_number);
+    if (Number.isFinite(num) && byNumber.has(num) && !used.has(byNumber.get(num))) return byNumber.get(num);
+    // 顺序回退：同一条 findings 列表通常按镜序排列，且每条镜最多一条
+    const fallback = Number((shots[idx] || {}).storyboard_id);
+    if (Number.isFinite(fallback) && !used.has(fallback)) return fallback;
+    return null;
+  };
+  for (const k of listKeys) {
+    if (!Array.isArray(report[k])) continue;
+    const used = new Set();
+    report[k] = report[k].map((item, idx) => {
+      if (!item || typeof item !== 'object') return item;
+      const id = idOf(item, Math.min(idx, shots.length - 1), used);
+      if (id) { used.add(id); return { ...item, storyboard_id: id }; }
+      return { ...item, storyboard_id: null, unmatched: true };
+    });
+  }
+  if (log && typeof log.debug === 'function') {
+    const n = (report.violations || []).filter((x) => x && x.unmatched).length;
+    if (n) log.debug('[agent] findings 未能定位到 storyboard_id', { unmatched: n });
+  }
+  return report;
+}
+function byNumberHas(map, sbId) {
+  for (const v of map.values()) if (v === sbId) return true;
+  return false;
 }
 
 /** 审计类报告合并：scores/violations/breaks 追加，summary 以最后一批准 */
@@ -376,4 +419,4 @@ async function runOrchestrator(db, log, agent, { episodeId, instruction, llm, ta
   };
 }
 
-module.exports = { runAgent, applySuggestions, gatherContext, mergeReports, buildDeterministicViolations, DEFAULT_AUDIT_BATCH };
+module.exports = { runAgent, applySuggestions, gatherContext, mergeReports, buildDeterministicViolations, attachStoryboardIds, DEFAULT_AUDIT_BATCH };

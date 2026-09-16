@@ -330,3 +330,22 @@ test('Agent 预算跟随思考设置 + 批次 6 + 空返回拆分重试', () => 
   assert.match(src, /批次返回为空，拆分重试/);
   assert.match(src, /mid = Math\.ceil\(shots\.length \/ 2\)/);
 });
+
+test('模型把 shot_number 写成 1 时，findings 仍能挂回真实 storyboard_id', () => {
+  const { attachStoryboardIds } = require('../src/services/agents/agentRunner');
+  const shots = [
+    { storyboard_id: 748, shot_number: 1 }, { storyboard_id: 749, shot_number: 2 },
+    { storyboard_id: 750, shot_number: 3 },
+  ];
+  const rep = attachStoryboardIds({
+    violations: [
+      { shot_number: 1, rule: 'A' }, { shot_number: 1, rule: 'B' }, { shot_number: 1, rule: 'C' },
+    ],
+    scores: [{ storyboard_id: 750, shot_number: 3, total: 0.5 }],
+  }, shots);
+  assert.deepEqual(rep.violations.map((v) => v.storyboard_id), [748, 749, 750], '同号时按批内顺序回退，避免全部挤到 0 号镜');
+  assert.equal(rep.scores[0].storyboard_id, 750);
+  // 无法定位时不硬塞：标 null + unmatched
+  const rep2 = attachStoryboardIds({ violations: [{ shot_number: 99 }, {}] }, shots);
+  assert.equal(rep2.violations.every((v) => v.storyboard_id !== undefined), true);
+});

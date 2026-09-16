@@ -128,7 +128,7 @@ describe('分镜数量自动推导', () => {
  *   Cannot access 'effectiveStoryboardCount' before initialization → HTTP 500。
  * 只有传了总时长才会走到那行表达式，所以之前一直没暴露。
  */
-test('generateStoryboard：effectiveStoryboardCount 声明早于使用（TDZ 回归）', () => {
+it('generateStoryboard：effectiveStoryboardCount 声明早于使用（TDZ 回归）', () => {
   const fs = require('fs');
   const path = require('path');
   const src = fs.readFileSync(path.join(__dirname, '../src/services/episodeStoryboardService.js'), 'utf8');

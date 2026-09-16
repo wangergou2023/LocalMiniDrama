@@ -136,9 +136,9 @@ it('generateStoryboard：effectiveStoryboardCount 声明早于使用（TDZ 回�
   assert.ok(start > 0, '未找到 generateStoryboard');
   const body = src.slice(start, start + 60000);
   const decl = body.indexOf('const effectiveStoryboardCount = deriveStoryboardCount');
-  const use = body.indexOf('effectiveStoryboardCount');
-  assert.ok(decl > 0 && use > 0, '未找到声明或使用');
+  // 注意：要用**真实代码表达式**定位首次使用 —— 直接 indexOf 标识符会命中注释里的报错信息
+  // （初版就是这样误判的，报"声明必须在后"）。
+  const use = body.indexOf('videoDuration && effectiveStoryboardCount');
+  assert.ok(decl > 0 && use > 0, '未找到声明或真实使用点');
   assert.ok(decl < use, `声明(${decl}) 必须早于首次使用(${use})`);
-  // 该使用点必须就是那段基于 videoDuration 的表达式（说明我们锁的是真实触发路径）
-  assert.match(body.slice(use - 20, use + 60), /videoDuration && effectiveStoryboardCount/);
 });

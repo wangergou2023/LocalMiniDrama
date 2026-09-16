@@ -121,3 +121,24 @@ describe('分镜数量自动推导', () => {
     assert.equal(svc.deriveStoryboardCount('字'.repeat(50000), null, 15), 40);
   });
 });
+
+/**
+ * TDZ 回归：generateStoryboard 里 effectiveStoryboardCount 必须先声明后使用。
+ * 实测（ep23 宣传片，带 video_duration 调用 /episodes/:id/storyboards）：
+ *   Cannot access 'effectiveStoryboardCount' before initialization → HTTP 500。
+ * 只有传了总时长才会走到那行表达式，所以之前一直没暴露。
+ */
+test('generateStoryboard：effectiveStoryboardCount 声明早于使用（TDZ 回归）', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/services/episodeStoryboardService.js'), 'utf8');
+  const start = src.indexOf('function generateStoryboard(db, log, episodeId');
+  assert.ok(start > 0, '未找到 generateStoryboard');
+  const body = src.slice(start, start + 60000);
+  const decl = body.indexOf('const effectiveStoryboardCount = deriveStoryboardCount');
+  const use = body.indexOf('effectiveStoryboardCount');
+  assert.ok(decl > 0 && use > 0, '未找到声明或使用');
+  assert.ok(decl < use, `声明(${decl}) 必须早于首次使用(${use})`);
+  // 该使用点必须就是那段基于 videoDuration 的表达式（说明我们锁的是真实触发路径）
+  assert.match(body.slice(use - 20, use + 60), /videoDuration && effectiveStoryboardCount/);
+});

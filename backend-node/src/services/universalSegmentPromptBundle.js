@@ -2,7 +2,7 @@
  * 全能片段（Omni / Seedance 多图参考）用户消息构建：供「生成」与「润色」共用。
  * @param {import('better-sqlite3').Database} db
  * @param {number} sbId
- * @param {object} reqBody 可选 duration、force_without_reference_images（为 true 时不校验场景/角色/道具是否已上图，仍构建提示词）
+ * @param {object} reqBody 可选 duration
  * @param {{ universalSegmentOverride?: string | undefined }} opts 若传入则覆盖库中的 universal 写入 CURRENT_UNIVERSAL_SEGMENT
  * @returns {{ ok:true, userPrompt:string, durationLabel:string, durationSec:number, sbId:number, episodeId:number, storyboardNumber:number } | { ok:false, code:'not_found'|'bad_request', message:string }}
  */
@@ -12,7 +12,6 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     detectFightShot, FIGHT_INTRA_SHOTS,
   } = require('./universalOmniMultiBeatFormat');
   const bodyIn = reqBody && typeof reqBody === 'object' ? reqBody : {};
-  const forceWithoutReferenceImages = !!bodyIn.force_without_reference_images;
 
   // MiniMax H3 参考图引用适配：官方 r2va 示例用「参考图N」而非「@图片N」。
   // 判断当前视频默认配置的 provider，若是 MiniMax 则生成/润色时直接教 AI 用「参考图N」。
@@ -273,17 +272,11 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
               : `「${s.summary}」→ ${s.tag}（外貌/动作绑定 ${s.tag} ，示例：${s.tag} 的侧脸）`
           ),
         ].join('\n')
-      : slots.length === 0 && forceWithoutReferenceImages
-        ? [
-            'CHARACTER_IMAGE_BINDING（无图强制模式）:',
-            '- 尚无已解析的 @图片 槽位；ORDERED_CHARACTER_NAMES 仅用于剧情理解，禁止写成 @姓名 指代参考图。',
-            '- 若输出中出现 @图片N，仅表示与将来补图顺序对齐的占位，勿将具体外貌绑定到错误序号。',
-          ].join('\n')
-        : [
+      : [
             'CHARACTER_IMAGE_BINDING: 当前无「角色」参考槽位；若出现人物且 @图片1 为场景，勿将人物外貌写在 @图片1。',
           ].join('\n');
 
-  if (slots.length === 0 && !forceWithoutReferenceImages) {
+  if (slots.length === 0) {
     return {
       ok: false,
       code: 'bad_request',
@@ -320,7 +313,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     ].join('\n');
     // 第3行随本镜是否镜内切镜而变：单镜形态含「须单镜头完整连续画面」，
     // 与正文里的 [Shot 2] At MM:SS.mmm 直接冲突，多镜时必须换成多镜形态。
-    // 环境参考约束：给模型逐字引用的一段话（写进 subject_definitions 或 summary）
+    // 环境参考约束：给模型逐字引用的一段话（写在参考图映射行之后、detailed_description 之前）
     line3Required = slots[0].kind === '场景'
       ? `环境、光影与陈设定性参考 ${slots[0].tag}。若 ${slots[0].tag} 为宫格或多画面拼图，禁止成片复刻其分格或并列布局，仅提取统一的空间、光线与氛围语义；须一次生成内的连续画面。`
       : '本片段以首张参考图 <Picture 1> 作为画面锚点展开。';
@@ -505,25 +498,27 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
       ].join('\n');
   } catch (_) {}
 
-  // 旧的四行块契约（第1行风格/第2行声明/第3行 LINE3/第4行分镜行）已废弃 ——
-  // 现在只有 Ref2VA 官方六段结构，契约随之改写（否则「生成/润色」会把六段正文改回旧格式）。
+  // 契约必须与系统提示词里的规范**完全同一套**：只有精简格式（映射行 + 三段）。
+  // 这里以前是旧六段契约（subject_definitions → summary → retention_analysis + <Subject N>），
+  // 而系统提示词明令禁止 <Subject N> 与那三段元数据 —— 同一份提示词里两套格式，
+  // 模型写出来的东西就在两者之间漂移，落库前又会被判不合规。
   const multiBeatContract = [
-    'REF2VA_CONTRACT（一条 universal_segment_text = 一次生成调用，必须写全官方六段）:',
-    '- 六段顺序固定、段名用英文原样：subject_definitions → summary → retention_analysis →' +
-      ' detailed_description → overall_soundscape → non_diegetic_music。',
-    '- **标签分层**：角色/场景/道具这类可复用可见内容一律建 <Subject N>，并把图片来源写进定义：' +
-      '「<Subject 2> 是 <Picture 2> 中的角色「唐僧」——外貌、发型与服装来自该图。」；' +
-      '<Picture N> **只在**该图本身充当某镜首帧/关键帧/尾帧/构图锚时才单独列条目。',
-    '- retention_analysis 每个标签一行，标记必须是**固定英文值**：可见内容 fully_preserved /' +
-      ' partially_preserved / attribute_transfer / weak_reference；音频 fully_copy / partially_copy /' +
-      ' reference / weak_reference。本节不写 (Sx)。',
-    '- detailed_description 先 1-2 句英文风格句，再逐镜头：[Shot 1] 不带时间戳；' +
-      '其后每镜写 [Shot N] At MM:SS.mmm, the camera cuts to …（时间严格递增且小于本镜时长）。' +
-      '单镜 5-10 秒目标 200-350 个英文词，构图/主体/环境/动作/运镜/音效/对白都要写全。',
-    '- 说话人写 <Subject N> (Sx) says, <d>[Chinese] 台词原文</d>；跨切镜台词两侧写 <scenetrans>，' +
+    'REF2VA_CONTRACT（一条 universal_segment_text = 一次生成调用，按**精简格式**写全）:',
+    '- 段名前先写参考图映射行，每张图一行，编号只能用 IMAGE_SLOT_MAP 里存在的：' +
+      '「<Picture 1>：场景「名字」——沿用其空间结构、光线与氛围。」' +
+      '「<Picture 2>：角色「名字」——外貌、发型与服装来自该图。」' +
+      '「<Picture 3>：道具「名字」——外形与材质来自该图。」',
+    '- 正文只有三段、顺序固定、段名用英文原样：detailed_description → overall_soundscape →' +
+      ' non_diegetic_music。',
+    '- **禁止** subject_definitions / summary / retention_analysis 三段元数据，**禁止** <Subject N>，' +
+      '禁止 @图片N / @人物N / 灵境单行格式 / 已废弃的四行块格式。',
+    '- detailed_description 先 1-2 句项目风格句（原样复述风格块，禁止引入冲突的颜色词），再逐镜头：' +
+      '[Shot 1] 不带时间戳；其后每镜写 [Shot N] At MM:SS.mmm, the camera cuts to …（时间严格递增且小于本镜时长）。' +
+      '单镜 5-10 秒目标 200-350 字，构图/主体/环境/动作/运镜/音效/对白都要写全。',
+    '- 说话人写「角色名 (S1) says, <d>[Chinese] 台词原文</d>」；跨切镜台词两侧写 <scenetrans>，' +
       '片尾截断写 <cutoff>。禁止概括台词。',
-    '- 参考音频写成 <Audio j> is the voice-timbre reference for <Subject N> (Sx).；' +
-      '只参考音色时不得复述参考音频里的原话。',
+    '- 参考音频写成「<Audio j> is the voice-timbre reference for the character “名字” (S1).」；' +
+      '本次没有提供参考音频时**一律不要出现 <Audio j>**；只参考音色时不得复述参考音频里的原话。',
     '- non_diegetic_music 本项目不使用背景音乐，写「无（不使用背景音乐）。」',
     `- INTRA_SHOT_CUTS: ${intraShots} —— H3 镜内镜头数。` +
       (keepingDraftCuts
@@ -547,7 +542,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     multiBeatContract,
     shotPacingBlock,
     neighborDetailBlock || null,
-    'ENV_REFERENCE_CONSTRAINT（把下面整句逐字写进 subject_definitions 或 summary）:',
+    'ENV_REFERENCE_CONSTRAINT（把下面整句逐字写在参考图映射行之后、detailed_description 之前）:',
     line3Required,
     `EPISODE_SCRIPT:\n${episodeScript || '(本集剧本为空；仅凭分镜与邻镜推断节奏，勿编造大段新剧情)'}`,
     chunk('EPISODE_TABLE_TITLE', episodeTableTitle),

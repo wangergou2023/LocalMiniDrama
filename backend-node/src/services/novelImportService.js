@@ -8,18 +8,37 @@ const { safeParseAIJSON } = require('../utils/safeJson');
 /**
  * 简单的章节检测（不调用 AI，基于规则）
  * 识别常见章节标题格式
+ *
+ * 两处必须分组的理由：
+ *   · 命名型（第N章/节/集，含漏写「第」的「十二集」）是**可靠**的章节标记；
+ *   · 松散型（`1.标题` / `【标题】` / `「标题」`）只是猜的 —— 策划案/剧本里的
+ *     `1.基本信息`、`1.景：吴家`、`2.1女主-韩悠兰` 全都会被它命中。
+ *   所以只要文本里存在命名型标记，就**只用命名型**，松散型只在不含命名型时才启用。
+ *   （实测《重生后过上了大女主生活》：把两种混着用会切出 48 个假章节，
+ *   其中 `1.景：吴家` 这种场景标签居多。）
  */
+// 漏写「第」：整行 = 数字 + 章/节/集（+ 不超过 12 字且不含句读的副标题）
+const BARE_CHAPTER_RE = /^((?:[零一二三四五六七八九十百千]|\d|[\uFF10-\uFF19]){1,4}\s*(?:章|节|集))\s*[^，。！？：；、,.!?;:"'“”‘’「」『』（）()《》〈〉【】\[\]\-—…\s]{0,12}$/;
+
+const NAMED_CHAPTER_PATTERNS = [
+  /^第\s*(?:[零一二三四五六七八九十百千]|\d|[\uFF10-\uFF19])+\s*(?:章|节|集)/,
+  BARE_CHAPTER_RE,
+  /^Chapter\s+\d+/i,
+  /^CHAPTER\s+\d+/,
+];
+const LOOSE_CHAPTER_PATTERNS = [
+  /^\d+[\.、]\s*.{2,20}$/,
+  /^【.{1,30}】$/,
+  /^「.{1,30}」$/,
+];
+
 function detectChaptersByRules(text) {
   const lines = text.split(/\r?\n/);
-  const chapterPatterns = [
-    /^第[零一二三四五六七八九十百千\d]+章/,
-    /^第[零一二三四五六七八九十百千\d]+节/,
-    /^Chapter\s+\d+/i,
-    /^CHAPTER\s+\d+/,
-    /^\d+[\.、]\s*.{2,20}$/,
-    /^【.{1,30}】$/,
-    /^「.{1,30}」$/,
-  ];
+  const hasNamedChapters = lines.some((l) => {
+    const t = l.trim();
+    return t && NAMED_CHAPTER_PATTERNS.some((p) => p.test(t));
+  });
+  const chapterPatterns = hasNamedChapters ? NAMED_CHAPTER_PATTERNS : LOOSE_CHAPTER_PATTERNS;
   const chapters = [];
   let currentStart = 0;
   let currentTitle = '序章';
@@ -35,7 +54,8 @@ function detectChaptersByRules(text) {
           chapters.push({ title: currentTitle, content });
         }
       }
-      currentTitle = line;
+      // 只有「漏写第」那种裸标题才补「第」，松散模式（【标题】/「标题」）原样保留
+      currentTitle = BARE_CHAPTER_RE.test(line) ? `第${line.replace(/\s+/g, '')}` : line;
       currentStart = i + 1;
     }
   }
@@ -81,11 +101,25 @@ ${truncated}
 async function importNovel(db, log, { text, title, maxChapters, aiSummarize }) {
   if (!text || !text.trim()) throw new Error('小说内容不能为空');
 
-  const chapters = detectChaptersByRules(text);
-  if (chapters.length === 0) {
+  const all = detectChaptersByRules(text);
+  if (all.length === 0) {
     // 没有检测到章节，整个文本作为一章
-    chapters.push({ title: title || '第一集', content: text.trim() });
+    all.push({ title: title || '第一集', content: text.trim() });
   }
+
+  // 第一个章节标题之前的内容（策划案/人物小传/故事大纲）单独摘出来，交给调用方写进「故事梗概」。
+  // 不摘的话它会挂在第一集头上：实测一份 5992 字策划案把第一集撑到 6671 字，
+  // 按「每集约 740 字」的规划折算 ≈ 200 个分镜，生成分镜时模型还会把人物小传当剧情。
+  let preamble = '';
+  if (all.length > 1 && all[0].title === '序章') {
+    const first = all[0].content || '';
+    // 真的是「序章/楔子/引子」正文时保留成章节，只有纯粹的策划案前言才摘走
+    if (!/^\s*(序章|楔子|引子|序言|前言)\s*$/m.test(first)) {
+      preamble = first;
+      all.shift();
+    }
+  }
+  const chapters = all;
 
   const limit = Math.min(maxChapters || 20, chapters.length);
   const result = [];
@@ -104,7 +138,7 @@ async function importNovel(db, log, { text, title, maxChapters, aiSummarize }) {
     });
   }
 
-  return { chapters: result, total: chapters.length };
+  return { chapters: result, total: chapters.length, preamble };
 }
 
 module.exports = { importNovel, detectChaptersByRules };

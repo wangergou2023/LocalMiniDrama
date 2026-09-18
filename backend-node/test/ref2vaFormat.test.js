@@ -97,18 +97,33 @@ describe('Ref2VA 机械修复：保住 detailed_description', () => {
   });
 });
 
-describe('Ref2VA 兜底模板：与正常产出同格式', () => {
-  it('产出的六段能通过自己的校验', () => {
+describe('Ref2VA 兜底模板：与正常产出同格式（精简格式）', () => {
+  it('产出能通过自己的校验，且槽位全部映射', () => {
     const slots = [
-      { index: 1, tag: '@图片1', kind: '场景', name: '荒山野岭山道' },
-      { index: 2, tag: '@图片2', kind: '角色', name: '唐僧' },
-      { index: 3, tag: '@图片3', kind: '道具', name: '金箍棒' },
+      { index: 1, tag: '<Picture 1>', kind: '场景', name: '荒山野岭山道' },
+      { index: 2, tag: '<Picture 2>', kind: '角色', name: '唐僧' },
+      { index: 3, tag: '<Picture 3>', kind: '道具', name: '金箍棒' },
     ];
     const t = buildRef2vaFallback({ location: '荒山野岭的山道', time: '傍晚' },
       { durationSec: 8, action: '唐僧勒马', atmosphere: '山风呼啸', dialogue: '唐僧：天色将晚。' },
       slots, { styleHint: 'Ink-wash style.', audioSlots: [{ index: 1, name: '唐僧', speakerId: 'S1' }] });
     const v = validateRef2va(t, { availablePictures: 3, availableAudios: 1, durationSec: 8, maxShots: 4 });
     assert.equal(v.ok, true, v.problems.join('|'));
-    assert.match(t, /<Audio 1> is the voice-timbre reference for <Subject 2> \(S1\)\./);
+    assert.equal(v.format, 'lean');
+    // 兜底必须是精简格式：段名前三条映射行（场景/角色/道具），且不再出现被禁的 <Subject N>
+    assert.match(t, /<Picture 1>：场景「荒山野岭山道」/);
+    assert.match(t, /<Picture 2>：角色「唐僧」/);
+    assert.match(t, /<Picture 3>：道具「金箍棒」/);
+    assert.doesNotMatch(t, /<Subject\s+\d+>/);
+    assert.doesNotMatch(t, /subject_definitions/);
+    assert.match(t, /<Audio 1> is the voice-timbre reference for the character “唐僧” \(S1\)\./);
+  });
+
+  it('没有可用槽位时不编造 <Picture N>（只留三段正文）', () => {
+    const t = buildRef2vaFallback({ location: '荒山野岭', time: '傍晚' },
+      { durationSec: 8, action: '唐僧勒马', atmosphere: '山风呼啸' }, [], {});
+    assert.doesNotMatch(t, /<Picture\s+\d+>/);
+    assert.match(t, /detailed_description:/);
+    assert.equal(validateRef2va(t, { durationSec: 8 }).ok, true, '无槽位的兜底也要自洽');
   });
 });

@@ -279,8 +279,10 @@ it('Ref2VA 校验：<Audio j> 绑说话人（画外解说）也算合规', () =>
 it('§5 规范里写明画外解说的音频绑定写法', () => {
   const p = require('../src/services/promptI18n');
   const zh = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
-  assert.match(zh, /画外解说 \/ 旁白没有对应画面主体时/);
+  // 规范口径：只有真的接了参考音频才写 <Audio j>，画外解说用 off-screen narrator (S1) 绑定
+  assert.match(zh, /一律不要出现 <Audio j>/);
   assert.match(zh, /off-screen narrator \(S1\)/);
+  // 规范只维护一套（中文），英文设置下输出同一份文本
   const en = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'en' }, style: { default_style_en: 'x' } });
-  assert.match(en, /Off-screen narration with no on-screen subject/);
+  assert.equal(en, zh);
 });

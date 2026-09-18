@@ -704,13 +704,51 @@ function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles, 
   // MiniMax H3 本地节点只用 <Picture i>/<Video k>/<Audio j> 标签把参考媒体编码进 conditioning；
   // 正文里的 @图片N / 参考图N 均为普通文本，不引入参考 token。
   // 逐张独立：把每张参考图接到各自的 ref_image_N，<Picture N> 编号从 1 起，与 ref_image_0.. 连接顺序一致。
+  // 「（@图片N）」是片段描述里给人看的图片标注，提交前先摘掉：H3 规范正文只认 <Picture N>，
+  // 而 @图片N 会被下面两条规则再转一次，正文里就出现 <Picture 1>（<Picture 1>） 这种重复参考标签。
+  // 摘除只发生在提交这一步，数据库与界面里仍然看得到 @图片N 标注。
   const toPictureTags = (s) =>
     String(s || '')
+      .replace(/（@图片\s*(\d+)）/g, '')
       .replace(/@图片\s*(\d+)/g, '<Picture $1>')
       .replace(/参考图\s*(\d+)/g, '<Picture $1>');
 
   // 历史遗留措辞修正抽到 utils/segmentTextNormalize.js 共用（英译前置步骤也要用，且必须在英译之前跑）
   let boundPrompt = markDialogue(fixLegacySegmentText(toPictureTags(promptText)), dialogueSpeakers);
+
+  // ── 提交前兜底：清掉本机已弃用的写法（历史 ust 里残留的，不改库、只在提交这一步处理）──
+  // 1) <Subject N>：本机只用 <Picture N> 指图 + 名字指人/物。能从句内定义里查到名字就换名字，
+  //    查不到就把这个 token 去掉（留着会让模型去找一个不存在的抽象层）。
+  const subjectNames = new Map();
+  {
+    const defRe = /<Subject\s+(\d+)>\s*(?:是|is)\s*[^\n]*?[「『"]([^」』"]+)[」』"]/g;
+    let dm;
+    while ((dm = defRe.exec(boundPrompt))) if (!subjectNames.has(dm[1])) subjectNames.set(dm[1], dm[2]);
+  }
+  let subjectDropped = 0;
+  boundPrompt = boundPrompt.replace(/<Subject\s+(\d+)>/g, (m, n) => {
+    subjectDropped++;
+    return subjectNames.get(String(n)) || '';
+  });
+  if (subjectDropped) {
+    boundPrompt = boundPrompt.replace(/[ \t]{2,}/g, ' ').replace(/，\s*，/g, '，');
+    if (log && typeof log.warn === 'function') {
+      log.warn('[ComfyUI/H3] 提交前清掉了历史 ust 里的 <Subject N>（本机只用 <Picture N> 指图 + 名字指人/物）', {
+        count: subjectDropped,
+      });
+    }
+  }
+  // 2) 悬空 <Audio j>：没有接参考音频时，正文里的 <Audio j> 一律去掉（模型会去续一段不存在的音色）
+  const wiredAudioCount = Math.min((Array.isArray(audioFiles) ? audioFiles.filter(Boolean).length : 0), 3);
+  if (!wiredAudioCount) {
+    const hadAudioMentions = /<Audio\s+\d+>/.test(boundPrompt);
+    boundPrompt = boundPrompt
+      .replace(/^\s*<Audio\s+\d+>\s*[:：][^\n]*\n?/gim, '')
+      .replace(/<Audio\s+\d+>\s*/g, '');
+    if (hadAudioMentions && log && typeof log.warn === 'function') {
+      log.warn('[ComfyUI/H3] 本次没有参考音频，提交前清掉了正文里的 <Audio j>');
+    }
+  }
 
   // 说话人 → (Sx) 编号表：供下面 <Audio j> 说明行把音轨绑到具体说话人
   const speakerIds = new Map();
@@ -798,13 +836,20 @@ function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles, 
   // 我们再加一遍 `<Picture N>: appearance reference for …` 就是重复定义（而且会与 subject 语义打架）。
   // 这种情况下只保留一句「禁止复刻参考拼图宫格」的引导句。
   const bodyText = String(promptText || '');
-  if (/^\s*subject_definitions\s*[:：]/im.test(bodyText)) {
+  // 正文自己已经指明了「第几张图是什么」就不要再拼自动说明头（否则同一张图会被写两遍，编号还可能不一致）：
+  //  · 六段结构：subject_definitions 里用 <Subject N> 是 <Picture N> … 定义
+  //  · 精简格式（本机折中版）：段名前直接写 <Picture N>：场景/角色/道具参考 …
+  const mapsPicturesItself = /^\s*(?:<Picture\s+\d+>\s*[:：][^\n]*\n?)+/i.test(bodyText)
+    || /^\s*subject_definitions\s*[:：]/im.test(bodyText);
+  if (mapsPicturesItself) {
     const gridLeadEn = '\n\nDo not reproduce the reference images\' multi-panel/grid layout, split screen or side-by-side panels in the delivered clip.\n';
     const gridLeadZh = '\n\n禁止在成片里复刻参考图的多宫格/分屏/并列布局。\n';
-    const lead = String(bodyText).replace(/<d>[\s\S]*?<\/d>/g, '').match(/[\u4e00-\u9fa5]/) ? gridLeadZh : gridLeadEn;
+    // 正文自己已经写了这条约束（规范要求写在参考图映射行之后）时不再重复加一行 —— 同一句说三遍没有增益
+    const alreadyTold = /(?:禁止|不得|不要)[^\n]{0,24}(?:宫格|分屏|并列布局)|(?:宫格|分屏|并列布局)[^\n]{0,16}(?:禁止|不得|不要)|do not reproduce[^\n]{0,40}(?:grid|split screen|multi-panel)/i.test(bodyText);
+    const lead = alreadyTold ? '' : (String(bodyText).replace(/<d>[\s\S]*?<\/d>/g, '').match(/[\u4e00-\u9fa5]/) ? gridLeadZh : gridLeadEn);
     if (promptText !== undefined) h3.inputs.prompt = lead + boundPrompt;
     if (log && typeof log.info === 'function') {
-      log.info('[ComfyUI/H3] 正文已是 Ref2VA 六段结构，跳过自动说明头（避免与 subject_definitions 重复定义标签）');
+      log.info('[ComfyUI/H3] 正文已自带 <Picture N> 映射，跳过自动说明头（避免重复定义标签）');
     }
     return '';
   }

@@ -85,7 +85,6 @@
                 <span :class="['type-badge', 'type-' + row.service_type]">
                   <el-icon class="type-icon">
                     <ChatDotRound v-if="row.service_type === 'text'" />
-                    <View v-else-if="row.service_type === 'vision'" />
                     <Picture v-else-if="row.service_type === 'image'" />
                     <Film v-else-if="row.service_type === 'storyboard_image'" />
                     <VideoCamera v-else-if="row.service_type === 'video'" />
@@ -275,7 +274,6 @@
           </template>
           <el-select v-model="form.service_type" placeholder="选择类型" style="width: 100%" @change="onServiceTypeChange">
             <el-option label="文本/对话" value="text" />
-            <el-option label="视觉质检(助手打分)" value="vision" />
             <el-option label="文本生成图片" value="image" />
             <el-option label="分镜图片生成" value="storyboard_image" />
             <el-option label="视频生成" value="video" />
@@ -1204,7 +1202,7 @@ input_reference = (图片文件，可选)</pre>
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, MagicStick, QuestionFilled, Download, Upload, Delete, ChatDotRound, Picture, Film, VideoCamera, Key, Microphone, Folder, View } from '@element-plus/icons-vue'
+import { Plus, MagicStick, QuestionFilled, Download, Upload, Delete, ChatDotRound, Picture, Film, VideoCamera, Key, Microphone, Folder } from '@element-plus/icons-vue'
 import { aiAPI } from '@/api/ai'
 import { generationSettingsAPI } from '@/api/prompts'
 import PromptEditor from '@/components/PromptEditor.vue'
@@ -1418,13 +1416,6 @@ const providerConfigs = {
     { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-v4-flash', 'deepseek-v4-pro'] },
     { id: 'qwen', name: '通义千问', models: ['qwen3-max', 'qwen-plus', 'qwen-flash'] },
     { id: 'agnes', name: 'Agnes AI', models: ['agnes-2.0-flash'] }
-  ],
-  vision: [
-    { id: 'openai', name: 'OpenAI 视觉', models: ['deepseek-v4-flash-vision-exp-hermes', 'gpt-4o', 'gpt-4o-mini', 'qwen-vl-max'] },
-    { id: 'volcengine', name: '火山引擎', models: ['doubao-1-5-vision-pro-32k-250115'] },
-    { id: 'qwen', name: '通义千问', models: ['qwen-vl-max', 'qwen-vl-plus'] },
-    { id: 'gemini', name: 'Google Gemini', models: ['gemini-2.5-flash', 'gemini-3-flash-preview'] },
-    { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-v4-flash-vision-exp-hermes'] },
   ],
   image: [
     { id: 'comfyui', name: 'ComfyUI', models: ['qwen-image-edit-2511'] },
@@ -1883,7 +1874,6 @@ const AGNES_CONFIGS = [
 function serviceTypeLabel(t) {
   const map = {
     text: '文本',
-    vision: '视觉质检',
     image: '文本生成图片',
     storyboard_image: '分镜图片生成',
     video: '视频',
@@ -2027,58 +2017,49 @@ async function submit() {
     const defaultModel = form.value.default_model && modelList.includes(form.value.default_model)
       ? form.value.default_model
       : modelList[0] || null
-    // TTS / 可灵 Omni 官方 AKSK / DeepSeek V4 参数打包进 settings
-    let settings = undefined
+    // settings 是**一份共享基底**：所有分支都改它，最后统一序列化一次。
+    // 之前每个分支都从 prev.settings 重新 parse、各自覆盖 settings —— 结果后一个分支把前一个
+    // 刚写进去的字段丢掉（实测：改了「工作流」再打开又变回旧值，因为视频画幅那段把它覆盖了）。
+    const prevRow = editingId.value ? list.value.find((r) => r.id === editingId.value) : null
+    const baseS = parseSettings(prevRow?.settings)
+    let settingsTouched = false
     if (form.value.service_type === 'tts') {
-      const s = {}
-      if (form.value.voice_id) s.voice_id = form.value.voice_id
-      if (form.value.group_id) s.group_id = form.value.group_id
-      settings = Object.keys(s).length ? JSON.stringify(s) : null
+      if (form.value.voice_id) baseS.voice_id = form.value.voice_id
+      else delete baseS.voice_id
+      if (form.value.group_id) baseS.group_id = form.value.group_id
+      else delete baseS.group_id
+      settingsTouched = true
     } else if (form.value.service_type === 'video' && form.value.api_protocol === 'kling_omni') {
-      let baseS = {}
-      if (editingId.value) {
-        const prev = list.value.find((r) => r.id === editingId.value)
-        if (prev?.settings) {
-          try {
-            baseS = JSON.parse(prev.settings)
-          } catch (_) {}
-        }
-      }
       if ((form.value.kling_access_key || '').trim()) baseS.kling_access_key = form.value.kling_access_key.trim()
       else delete baseS.kling_access_key
       if ((form.value.kling_secret_key || '').trim()) baseS.kling_secret_key = form.value.kling_secret_key.trim()
       else delete baseS.kling_secret_key
       if (form.value.kling_secret_key_base64) baseS.kling_secret_key_base64 = true
       else delete baseS.kling_secret_key_base64
-      settings = Object.keys(baseS).length ? JSON.stringify(baseS) : null
+      settingsTouched = true
     } else if (isDeepSeekOfficialForm.value) {
-      const prev = editingId.value ? list.value.find((r) => r.id === editingId.value) : null
-      const baseS = parseSettings(prev?.settings)
       baseS.deepseek_thinking = form.value.deepseek_thinking === 'enabled' ? 'enabled' : 'disabled'
       if (baseS.deepseek_thinking === 'enabled') {
         baseS.deepseek_reasoning_effort = form.value.deepseek_reasoning_effort === 'max' ? 'max' : 'high'
       } else {
         delete baseS.deepseek_reasoning_effort
       }
-      settings = Object.keys(baseS).length ? JSON.stringify(baseS) : null
+      settingsTouched = true
     }
-    // ComfyUI 工作流：合并到 settings
+    // ComfyUI 工作流（与画幅同存于 settings）
     if (form.value.workflow) {
-      const prev = editingId.value ? list.value.find((r) => r.id === editingId.value) : null
-      const baseS = parseSettings(prev?.settings)
       baseS.workflow = form.value.workflow
-      settings = Object.keys(baseS).length ? JSON.stringify(baseS) : null
+      settingsTouched = true
     }
-    // ComfyUI 视频画幅：与工作流同存于 settings（仅视频服务有意义）
+    // ComfyUI 视频画幅 / turbo
     if (showComfyMegapixels.value) {
-      const prev = editingId.value ? list.value.find((r) => r.id === editingId.value) : null
-      const baseS = parseSettings(prev?.settings)
       if (Number(form.value.megapixels) > 0) baseS.megapixels = Number(form.value.megapixels)
       else delete baseS.megapixels
       if (typeof form.value.turbo === 'boolean') baseS.turbo = form.value.turbo
       else delete baseS.turbo
-      settings = Object.keys(baseS).length ? JSON.stringify(baseS) : null
+      settingsTouched = true
     }
+    const settings = settingsTouched ? (Object.keys(baseS).length ? JSON.stringify(baseS) : null) : undefined
     const payload = {
       service_type: form.value.service_type,
       name: form.value.name,

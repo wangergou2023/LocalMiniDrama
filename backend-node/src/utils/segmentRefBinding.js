@@ -38,7 +38,8 @@ function buildSlotsForStoryboard(db, sb, opts = {}) {
   const slots = [];
   const push = (kind, name) => {
     const index = slots.length + 1;
-    slots.push({ index, tag: `@图片${index}`, kind, name: String(name || '').trim() || kind });
+    // 新约定（精简格式）：正文用 <Picture N> 指图，编号 = 提交顺序；@图片N 只作为历史写法兼容读取
+    slots.push({ index, tag: `<Picture ${index}>`, kind, name: String(name || '').trim() || kind });
   };
 
   // 场景
@@ -116,8 +117,52 @@ function buildSlotsForStoryboard(db, sb, opts = {}) {
   return slots;
 }
 
-/** 正文里所有 @图片N 的位置与后随词（用于判定绑定是否正确） */
+/** 正文里所有 @图片N 的位置与后随词（用于判定绑定是否正确；历史写法兼容） */
 const REF_RE = /@图片\s*(\d+)\s*/g;
+/** 新写法：<Picture N> */
+const PIC_RE = /<Picture\s+(\d+)>/g;
+
+/**
+ * 是否是精简格式（本机折中版）：段名前是 `<Picture N>：场景/角色/道具…` 映射行。
+ * 这种格式里参考图由映射行绑定，正文用名字指人或物 —— 不再要求正文里内联 @图片N。
+ */
+function isLeanUst(ust) {
+  const text = String(ust || '');
+  if (!/^\s*detailed_description\s*[:：]/m.test(text)) return false;
+  // 有 subject_definitions 的是旧六段格式；其余（含模型漏写映射行的情况）都按精简格式处理
+  return !/^\s*subject_definitions\s*[:：]/m.test(text);
+}
+
+/** 精简格式的绑定检查：每个槽位是否在映射行里被点名绑定；<Picture N> 是否越界；映射名是否对得上 */
+function checkLeanBinding(text, slots) {
+  const byIndex = new Map((slots || []).map((s) => [s.index, s]));
+  const unknown = [];
+  const mismatched = [];
+  const missing = [];
+  const bound = new Set();          // 已有 <Picture N> 映射行 / 内联引用，绑定成立的槽位
+  PIC_RE.lastIndex = 0;
+  let m;
+  while ((m = PIC_RE.exec(text))) {
+    const idx = Number(m[1]);
+    if (!byIndex.has(idx)) { if (!unknown.includes(idx)) unknown.push(idx); continue; }
+    bound.add(idx);
+    const lineEnd = text.indexOf('\n', m.index);
+    const line = text.slice(m.index, lineEnd === -1 ? text.length : lineEnd);
+    // 映射行形如：<Picture 2>：角色「韩悠兰」——…
+    if (/^\s*<Picture\s+\d+>\s*[:：]/.test(line)) {
+      const slot = byIndex.get(idx);
+      const name = slot && slot.name ? String(slot.name) : '';
+      if (name && !line.includes(name)) mismatched.push({ tag: `<Picture ${idx}>`, written: line.slice(0, 40), expectedTag: null });
+    }
+  }
+  // 精简格式的绑定**就是映射行**：槽位没有映射行 = 这张参考图没被指到，
+  // 哪怕正文里提到了名字也一样（用户看到的现象：「片段描述里少了角色」）。
+  for (const slot of slots || []) {
+    if (bound.has(slot.index)) continue;
+    missing.push({ tag: slot.tag, name: slot.name });
+  }
+  return { missing, unknown, mismatched };
+}
 
 /**
  * 正文使用的槽位与槽位表的差异。
@@ -158,6 +203,8 @@ function isPartOfLongerName(text, pos, name, allNames) {
  */
 function checkSegmentRefBinding(ust, slots, opts = {}) {
   const text = String(ust || '');
+  // 精简格式：绑定由段名前的 <Picture N> 映射行承担，正文用名字指人/物，不做内联 @图片N 要求
+  if (isLeanUst(text)) return checkLeanBinding(text, slots);
   const byIndex = new Map((slots || []).map((s) => [s.index, s]));
   const allNames = Array.from(new Set(
     (slots || []).map((s) => s.name).concat(Array.isArray(opts.knownNames) ? opts.knownNames : []).filter(Boolean)
@@ -199,6 +246,55 @@ function checkSegmentRefBinding(ust, slots, opts = {}) {
   return { missing, unknown, mismatched };
 }
 
+const KIND_HINT = {
+  场景: '沿用其空间结构、光线与氛围。',
+  角色: '其外貌、发型与服装来自该图。',
+  道具: '其外形来自该图。',
+};
+
+/**
+ * 精简格式的确定性修复：**补参考图映射行**。
+ *
+ * 精简格式里参考图全靠段名前的 `<Picture N>：场景/角色/道具「名字」——…` 映射行绑定，
+ * 正文只写名字。实测模型会写正文却漏掉某一行映射（或第一行都没写），
+ * 那样这个角色就拿不到参考图 —— 表现就是「片段描述里少了角色」。
+ *
+ * 补的范围是**槽位表里所有还没被映射的槽位**：槽位表就是「这次生成会送哪些参考图」的契约
+ * （场景 → 角色 → 道具，见 buildSlotsForStoryboard），映射行少了就等于那张参考图白送 ——
+ * 用户看到的现象是「片段描述里少了角色」。不像旧内联写法那样需要顾及句子通顺，
+ * 映射行是独立的头部条目，逐条补齐不会破坏正文。
+ *
+ * 越界的 <Picture N> 一律不动（不确定是模型指错还是槽位表缺图，宁可不改）。
+ */
+function repairLeanBinding(text, slots) {
+  const raw = String(text || '');
+  const list = Array.isArray(slots) ? slots : [];
+  const changes = [];
+  if (!raw.trim() || !list.length) return { text: raw, changes };
+
+  const lines = raw.split('\n');
+  const mapped = new Set();
+  let firstSectionIdx = -1;
+  let lastMappingIdx = -1;
+  lines.forEach((l, i) => {
+    if (/^\s*(detailed_description|overall_soundscape|non_diegetic_music)\s*[:：]/i.test(l) && firstSectionIdx < 0) firstSectionIdx = i;
+    const m = l.match(/^\s*<Picture\s+(\d+)>\s*[:：]/);
+    if (m) { mapped.add(Number(m[1])); lastMappingIdx = i; }
+  });
+  const add = [];
+  for (const slot of list) {
+    if (!slot || !slot.name) continue;
+    if (mapped.has(Number(slot.index))) continue;
+    add.push(`${slot.tag}：${slot.kind}「${slot.name}」——${KIND_HINT[slot.kind] || '沿用其外观与设定。'}`);
+    changes.push(`补映射行 ${slot.tag}=${slot.kind}「${slot.name}」`);
+  }
+  if (!add.length) return { text: raw, changes };
+
+  const at = lastMappingIdx >= 0 ? lastMappingIdx + 1 : (firstSectionIdx >= 0 ? firstSectionIdx : lines.length);
+  const out = [...lines.slice(0, at), ...add, ...lines.slice(at)].join('\n');
+  return { text: out, changes };
+}
+
 /**
  * 就地修正三类绑定问题（**确定性**，不调模型）：
  *   ① 序号写错（@图片N 后随另一个槽位的名字）→ 换成正确槽位
@@ -210,6 +306,8 @@ function checkSegmentRefBinding(ust, slots, opts = {}) {
  * @returns {{text:string, changes:string[]}}
  */
 function repairSegmentRefBinding(ust, slots, opts = {}) {
+  // 精简格式不写内联引用（往正文里插 @图片N 反而会退回旧写法），但**缺的映射行必须补**
+  if (isLeanUst(ust)) return repairLeanBinding(String(ust || ''), slots);
   const raw = String(ust || '');
   const changes = [];
   if (!raw.trim() || !(slots || []).length) return { text: raw, changes };
@@ -269,4 +367,4 @@ function repairSegmentRefBinding(ust, slots, opts = {}) {
   return { text: changes.length ? lines.join('\n') : raw, changes };
 }
 
-module.exports = { buildSlotsForStoryboard, checkSegmentRefBinding, repairSegmentRefBinding, hasMediaRef };
+module.exports = { buildSlotsForStoryboard, checkSegmentRefBinding, repairSegmentRefBinding, hasMediaRef, isLeanUst };

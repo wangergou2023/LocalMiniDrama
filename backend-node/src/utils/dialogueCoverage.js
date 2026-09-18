@@ -1,22 +1,14 @@
 /**
- * 剧本 → 分镜 的「台词覆盖率」自检。
+ * 剧本台词抽取：把剧本里**真正被说出来**的台词逐句抽出来。
  *
- * 为什么需要这个 —— 实测两次：
- *   三打白骨精   剧本 21 句台词 → 分镜只保住 13 句，丢 10 句
- *   真假美猴王   剧本 10 句台词 → 分镜保住  9 句，丢  1 句
+ * 用途只有一个 —— 生成分镜时把这份清单塞进 system prompt，要求模型逐字保留
+ * （见 episodeStoryboardService 的「必须逐字保留的台词清单」）。
  *
- * 而且丢失是**静默**的：丢掉的那几句既不在 storyboards.dialogue，也不在
- * universal_segment_text，也不在 video_prompt —— 整个剧情点在分镜里根本不存在。
- * 「三打白骨精」丢的正是「你连杀三人，佛门慈悲何在？」「你这泼猴，连伤两命！」
- * 这类台词，结果是「唐僧为什么最后要赶走悟空」的因果链被挖空，而全流程零告警。
- *
- * 成因是容量：实测 **分镜能承载的台词数 ≈ 1 句/镜**。镜数不足时模型会合并节拍，
- * 而合并时优先保画面动作、牺牲台词（分镜数由「总时长÷单镜秒数」推得，见前端
- * estimateVideoDurationSecFromCharLen —— 该公式原先按 10 字/秒折算，比中文口播
- * 的 4.2 字/秒快一倍多，于是镜数偏少、台词被挤掉）。
- *
- * 本模块只做**只读自检**，不改分镜、不重试、不挡出片：缺句就返回清单，由调用方告警。
- * 真正的修复是「加镜」，那需要人判断，不适合自动做。
+ * 抽取规则的两处坑（都在真实剧本上踩过，见下方各函数注释）：
+ *   ① 只认 `…道：“台词”` 的引号形式 → 新剧本把对白写成「角色：台词」独立成行，
+ *      于是抽出空清单，必保台词清单形同不存在；
+ *   ② 说话人抓成描述词、「下令：台词。旁白句」把旁白一起吞成台词
+ *      → 成片里角色把旁白念了出来。
  */
 
 /**
@@ -177,97 +169,7 @@ function normalizeForMatch(s) {
   return String(s || '').replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, '');
 }
 
-/**
- * 把一个分镜行的所有可见文本拼起来 —— 台词可能在 dialogue，也可能只被写进正文，
- * 两者都算「覆盖到了」。video_prompt / narration 也一并纳入，宁可漏报不可误报。
- */
-function storyboardSearchText(sb) {
-  if (!sb) return '';
-  return [
-    sb.title,
-    sb.dialogue,
-    sb.narration,
-    sb.action,
-    sb.result,
-    sb.video_prompt,
-    sb.universal_segment_text,
-  ]
-    .filter(Boolean)
-    .join('\n');
-}
-
-/**
- * 检查剧本台词是否都被分镜覆盖。
- *
- * @param {string} scriptText  episodes.script_content
- * @param {Array<object>} storyboards 该集全部分镜行（含 dialogue / universal_segment_text 等）
- * @returns {{ total: number, covered: number, missing: Array<{index:number,speaker:string,line:string}>,
- *             located: Array<{line:string, storyboard_id:(number|null)}> } | null}
- *         剧本没有台词时返回 null（无从校验）
- */
-function checkDialogueCoverage(scriptText, storyboards, opts = {}) {
-  const script = extractScriptDialogue(scriptText, opts);
-  if (script.length === 0) return null;
-
-  const rows = Array.isArray(storyboards) ? storyboards : [];
-  const haystacks = rows.map((sb) => ({ id: sb && sb.id != null ? sb.id : null, text: normalizeForMatch(storyboardSearchText(sb)) }));
-  const all = haystacks.map((h) => h.text).join('\n');
-
-  const missing = [];
-  const located = [];
-  for (const item of script) {
-    const needle = normalizeForMatch(item.line);
-    if (!needle) continue;
-    if (all.includes(needle)) {
-      // 定位到具体是哪一镜覆盖的，便于人工核对归属是否合理
-      const hit = haystacks.find((h) => h.text.includes(needle));
-      located.push({ line: item.line, storyboard_id: hit ? hit.id : null });
-    } else {
-      missing.push(item);
-    }
-  }
-
-  return {
-    total: script.length,
-    covered: script.length - missing.length,
-    missing,
-    located,
-  };
-}
-
-/**
- * 台词字段越界：分镜的 dialogue 里除了剧本台词本体之外，还夹带了叙述句。
- * 实测 sb754：dialogue = 国王："全国收缴所有纺锤，当众焚毁。士兵们闯入每一户人家，把纺锤扔进广场火堆，火焰冲天。"
- * 而剧本台词只有「全国收缴所有纺锤，当众焚毁。」→ 结果国王把旁白念了出来。
- */
-function checkDialogueOverreach(scriptLines, storyboards) {
-  const norm = (t) => String(t || '').replace(/[\s“”"'「」『』]/g, '');
-  const lines = (Array.isArray(scriptLines) ? scriptLines : [])
-    .map((x) => ({ speaker: x.speaker, line: x.line, key: norm(x.line) }))
-    .filter((x) => x.key);
-  const out = [];
-  for (const sb of Array.isArray(storyboards) ? storyboards : []) {
-    const raw = String((sb && sb.dialogue) || '').trim();
-    if (!raw) continue;
-    const d = norm(raw).replace(/^[\u4e00-\u9fa5]{1,6}[:：]/, '');
-    if (!d) continue;
-    const hit = lines.filter((l) => d.includes(l.key));
-    if (!hit.length) continue;                       // 找不到对应交给覆盖率检查
-    const longest = hit.slice().sort((a, b) => b.key.length - a.key.length)[0];
-    const extra = d.split(longest.key).join('').replace(/^[:：]/, '').trim();
-    if (extra.length >= 8) {
-      out.push({
-        storyboard_id: sb.id ?? null, shot_number: sb.storyboard_number ?? null,
-        script_line: longest.line, extra: extra.slice(0, 100), extra_chars: extra.length,
-      });
-    }
-  }
-  return out;
-}
-
 module.exports = {
   extractScriptDialogue,
-  checkDialogueOverreach,
-  checkDialogueCoverage,
   normalizeForMatch,
 };

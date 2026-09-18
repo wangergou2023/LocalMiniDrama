@@ -418,37 +418,6 @@ describe('真抽帧（需要 ffmpeg）：复用同一个抽帧函数 + 自动锚
   });
 });
 
-describe('质量报告里的尾帧衔接统计', () => {
-  const { buildStoryboardQualityReport } = require('../src/utils/storyboardQualityReport');
-
-  it('统计承接 / 剪辑点 / 未判定，并说明「承接的会自动接上一镜末帧」', () => {
-    const rows = [
-      { id: 1, storyboard_number: 1, duration: 5, link_prev_tail: null },
-      { id: 2, storyboard_number: 2, duration: 5, link_prev_tail: 1 },
-      { id: 3, storyboard_number: 3, duration: 5, link_prev_tail: 0 },
-      { id: 4, storyboard_number: 4, duration: 5, link_prev_tail: 1 },
-    ];
-    const report = buildStoryboardQualityReport({ storyboards: rows });
-    assert.equal(report.stats.tail_link_continues, 2);
-    assert.equal(report.stats.tail_link_cut, 1);
-    assert.equal(report.stats.tail_link_unjudged, 1);
-    const tail = report.reasons.find((r) => r.includes('尾帧衔接判定'));
-    assert.ok(tail, 'reason 里要说明判定结果');
-    assert.match(tail, /自动把上一镜视频的末帧作为本镜首帧/);
-    assert.match(tail, /剪辑点.*不会接尾帧/);
-    // 说明性信息不能把「均通过」那句挤掉
-    assert.ok(report.reasons.some((r) => r.includes('均通过')));
-  });
-
-  it('全未判定时不出这一条，结论也不受影响', () => {
-    const rows = [{ id: 1, storyboard_number: 1, duration: 5 }, { id: 2, storyboard_number: 2, duration: 5 }];
-    const report = buildStoryboardQualityReport({ storyboards: rows });
-    assert.equal(report.stats.tail_link_unjudged, 2);
-    assert.equal(report.reasons.some((r) => r.includes('尾帧衔接判定')), false);
-    assert.equal(report.verdict, 'ok');
-  });
-});
-
 describe('maybeAutoAnchorPrevTailFrame：不满足条件时静默跳过', () => {
   it('本项目开关关掉 → 返回 null，不抽帧', () => {
     const db = createTestDb();

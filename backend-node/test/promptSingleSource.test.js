@@ -61,32 +61,32 @@ describe('提示词关键规则：打斗按拍（不许悄悄回退）', () => {
   it('分镜要素后缀与全能片段规范都带着镜内剪辑点写法', () => {
     assert.match(promptI18n.getStoryboardUserPromptSuffix(ZH, 8), /打斗\/追击\/连招镜可按拍镜内切镜/);
     const spec = promptI18n.getUniversalOmniMultiBeatFormatSpec(ZH);
-    assert.match(spec, /subject_definitions/);
     assert.match(spec, /\[Shot N\] At MM:SS\.mmm/);
-    // 官方六段结构：必须写明六段顺序与 retention 固定标记
-    assert.match(spec, /subject_definitions/);
-    assert.match(spec, /fully_preserved/);
-    assert.match(spec, /不要\*\*为它单列/);
+    // 精简格式（本机折中版）：参考图映射行 + 三段，不再有 subject_definitions / retention_analysis
+    assert.match(spec, /精简格式/);
+    assert.match(spec, /<Picture 1>：场景/);
+    assert.match(spec, /detailed_description/);
+    assert.match(spec, /overall_soundscape/);
+    assert.match(spec, /non_diegetic_music/);
+    assert.match(spec, /\*\*不要\*\* subject_definitions/);   // 只作为「不要写」出现
   });
 
-  it('全能片段/润色提示词都要求保留结构记号（六段 + 标签 + 时间戳）', () => {
+  it('全能片段提示词要求保留结构记号（精简三段 + 映射行 + 时间戳）', () => {
     const seg = promptI18n.getUniversalOmniSegmentPrompt();
-    assert.match(seg, /subject_definitions/);
-    assert.match(seg, /retention_analysis/);
-    assert.match(seg, /<Subject N>/);
+    assert.match(seg, /精简格式/);
+    assert.match(seg, /<Picture N>/);
     assert.match(seg, /\[Shot N\] At MM:SS\.mmm/);
-    const pol = promptI18n.getUniversalOmniPolishPrompt();
-    assert.match(pol, /Structure is untouchable/);
-    assert.match(pol, /six section names in order/);
+    assert.match(seg, /\*\*不要\*\* subject_definitions/);   // 六段元数据已废弃
+    assert.doesNotMatch(seg, /fully_preserved/);
   });
 
   it('用户提示词的 JSON 字段清单覆盖系统提示词定义的所有必要字段', () => {
     // 这份 JSON 清单才是模型照着填的那份；漏写的字段模型就不返回，而且**静默为空**。
-    // 实测：emotion_intensity 三个项目 0/99、layout_description 在 drama2 那批 0/21、
+    // 实测：emotion_intensity 三个项目 0/99、（历史）layout_description 在 drama2 那批 0/21、
     // drama4 新批次连 lighting_style / depth_of_field 也一起丢了（0/65）。
     const zh = promptI18n.getStoryboardUserPromptSuffix(ZH, 8);
     const en = promptI18n.getStoryboardUserPromptSuffix(EN, 8);
-    for (const f of ['lighting_style', 'depth_of_field', 'narration', 'emotion_intensity', 'layout_description']) {
+    for (const f of ['lighting_style', 'depth_of_field', 'narration', 'emotion_intensity']) {
       assert.match(zh, new RegExp('\\b' + f + '\\b'), 'zh 清单缺 ' + f);
       assert.match(en, new RegExp('\\b' + f + '\\b'), 'en 清单缺 ' + f);
     }
@@ -99,7 +99,7 @@ describe('提示词关键规则：打斗按拍（不许悄悄回退）', () => {
     // 两段拼起来就是真正发出去的提示词
     assert.equal((body + '\n\n' + locked).trim(), real);
     // 字段清单必须跟着走，否则设置页里那份会悄悄变旧
-    for (const f of ['segment_index', 'lighting_style', 'depth_of_field', 'narration', 'emotion_intensity', 'layout_description']) {
+    for (const f of ['segment_index', 'lighting_style', 'depth_of_field', 'narration', 'emotion_intensity']) {
       assert.match(locked, new RegExp('\\b' + f + '\\b'), 'locked_suffix 缺 ' + f);
     }
   });

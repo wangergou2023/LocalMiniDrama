@@ -163,7 +163,6 @@
 
     <div class="panel-actions">
       <el-button size="small" :loading="saving" @click.stop="saveFields">保存</el-button>
-      <el-button v-if="!isUniversal" size="small" :loading="busyStep === 'polish'" @click.stop="polishPrompt">润色</el-button>
       <el-button v-if="!isUniversal" size="small" type="primary" :loading="busyStep === 'image'" @click.stop="runStep('image')">生图</el-button>
       <el-button size="small" type="primary" :loading="busyStep === 'video'" @click.stop="runStep('video')">生视频</el-button>
       <el-button size="small" type="warning" :loading="busyStep === 'audio'" @click.stop="runStep('audio')">配音</el-button>
@@ -345,23 +344,6 @@ async function deleteStoryboard() {
   } catch (e) {
     if (e === 'cancel') return
     ElMessage.error(e?.message || '删除失败')
-  }
-}
-
-async function polishPrompt() {
-  if (!props.storyboard?.id) return
-  busyStep.value = 'polish'
-  ctx?.nodeStatus?.set(sbNodeId.value, { step: 'polish', message: CANVAS_NODE_STATUS_LABELS.polish })
-  try {
-    const res = await storyboardsAPI.polishPrompt(props.storyboard.id)
-    if (res?.polished_prompt) form.image_prompt = res.polished_prompt
-    ElMessage.success('提示词已润色')
-    await ctx?.refreshDrama?.(true)
-  } catch (e) {
-    ElMessage.error(e?.message || '润色失败')
-  } finally {
-    busyStep.value = ''
-    ctx?.nodeStatus?.clear(sbNodeId.value)
   }
 }
 

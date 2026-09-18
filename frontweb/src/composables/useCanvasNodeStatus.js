@@ -36,7 +36,6 @@ export const CANVAS_NODE_STATUS_LABELS = {
   image: '生图中',
   video: '生视频中',
   audio: '配音中',
-  polish: '润色中',
   save: '保存中',
   ref_image: '生成参考图',
   generate_sb: 'AI 生成分镜',

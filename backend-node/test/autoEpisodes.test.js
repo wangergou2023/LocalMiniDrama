@@ -87,8 +87,29 @@ describe('全能模式的必填字段：必须写在用户提示词里（模型�
     const r = p.getStoryboardUniversalOmniUserReminder(ZH2);
     assert.match(r, /最高优先级/);
     assert.match(r, /每个镜头对象都必须同时包含/);
-    assert.match(r, /缺少 universal_segment_text 的镜头只能退化成通用模板文/);
+    assert.match(r, /缺少 universal_segment_text、或写成上述旧格式的镜头只能退化成通用模板文/);
     assert.match(p.getStoryboardUniversalOmniUserReminder({ app: { language: 'en' } }), /TWO MORE REQUIRED FIELDS/);
+  });
+
+  /**
+   * 这份「最高优先级」提醒曾经要求模型写**已废弃的四行块格式**
+   * （第1行风格句 / 第2行「生成一个由以下 1 个分镜组成的视频。」/ 第3行约束 / 第4行「分镜1： …」），
+   * 而落库前的修复只认精简三段格式 → 首轮写出来的 ust 一律被判「缺少 detailed_description」→ fatal
+   * → 整批换成兜底模板。实测第一集 50 镜：首轮 27 镜全是兜底模板，续写那 23 镜（提示词里只有规范、
+   * 没有这段旧提醒）才是模型的正常产出 —— 用户看到的就是「重新生成分镜出来的不是全能提示词」。
+   */
+  it('首轮提醒必须要求精简格式，并把旧四行块格式列为禁止项', () => {
+    const r = p.getStoryboardUniversalOmniUserReminder(ZH2);
+    assert.match(r, /精简格式/);
+    assert.match(r, /detailed_description/);
+    assert.match(r, /overall_soundscape/);
+    assert.match(r, /non_diegetic_music/);
+    assert.match(r, /<Picture 2>：角色/);
+    assert.match(r, /禁止\*\* subject_definitions/);
+    assert.match(r, /禁止\*\* <Subject N>/);
+    assert.match(r, /禁止.*四行块格式/);
+    // 不能再把旧格式当作**要求**（旧文案是「严格按全能片段块格式书写（第1行风格句 / …」）
+    assert.equal(/严格按全能片段块格式书写（第1行风格句/.test(r), false, '旧的四行块要求必须消失');
   });
 
   it('系统提示词里的全能说明也仍保留（双保险）', () => {

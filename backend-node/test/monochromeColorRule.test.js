@@ -28,20 +28,20 @@ test('中文规范：单色项目带硬规则，写实项目只带软规则', ()
   assert.match(photo, /色彩基调以风格块为准/);
 });
 
-test('英文规范：同样条件性生效', () => {
-  const mono = spec('en', MONO);
-  assert.match(mono, /HARD RULE \(this project is monochrome\)/);
-  assert.match(mono, /INK VALUES/);
+test('规范只维护一套（中文）：英文设置下输出同一份文本', () => {
+  const zhMono = spec('zh', MONO);
+  assert.equal(spec('en', MONO), zhMono);
+  assert.match(zhMono, /单色项目硬规则/);
 
-  const photo = spec('en', PHOTO);
-  assert.equal(/HARD RULE \(this project is monochrome\)/.test(photo), false);
-  assert.match(photo, /Palette: follow the style block/);
+  const zhPhoto = spec('zh', PHOTO);
+  assert.equal(spec('en', PHOTO), zhPhoto);
+  assert.equal(/单色项目硬规则/.test(zhPhoto), false);
 });
 
-test('判定覆盖中文画风词，且规范仍是六段结构', () => {
+test('判定覆盖中文画风词，且规范是精简三段', () => {
   const zhMono = spec('zh', '中国传统水墨画风格，泼墨写意技法，单色笔墨晕染');
   assert.match(zhMono, /单色项目硬规则/);
-  for (const sec of ['subject_definitions', 'summary', 'retention_analysis', 'detailed_description', 'overall_soundscape', 'non_diegetic_music']) {
+  for (const sec of ['detailed_description', 'overall_soundscape', 'non_diegetic_music']) {
     assert.ok(zhMono.includes(sec), '规范缺少段名 ' + sec);
   }
 });
@@ -52,10 +52,9 @@ test('规范里不要出现未展开的模板占位（插入的是条件文案�
   }
 });
 
-test('单镜「生成全能提示词 / 润色」这条路也吃到了硬规则（cfg 必须传进提示词构建器）', () => {
+test('单镜「生成全能提示词」这条路也吃到了硬规则（cfg 必须传进提示词构建器）', () => {
   const monoCfg = { app: { language: 'zh' }, style: { default_style_en: MONO } };
   assert.match(promptI18n.getUniversalOmniSegmentPrompt(monoCfg), /单色项目硬规则/);
-  assert.match(promptI18n.getUniversalOmniPolishPrompt(monoCfg), /单色项目硬规则/);
   const photoCfg = { app: { language: 'zh' }, style: { default_style_en: PHOTO } };
   assert.equal(/单色项目硬规则/.test(promptI18n.getUniversalOmniSegmentPrompt(photoCfg)), false);
   // 无参调用不能炸（老调用点兼容）
@@ -66,7 +65,6 @@ test('路由层给单镜提示词带上了项目画风 cfg', () => {
   const src = require('fs').readFileSync(require('path').join(__dirname, '../src/routes/storyboards.js'), 'utf8');
   assert.match(src, /styleCfgForStoryboard/);
   assert.match(src, /getUniversalOmniSegmentPrompt\(styleCfgForStoryboard\(db, sbId\)\)/);
-  assert.match(src, /getUniversalOmniPolishPrompt\(styleCfgForStoryboard\(db, sbId\)\)/);
 });
 
 /**
@@ -204,10 +202,10 @@ test('§5 规范：运镜按叙事需要（不硬凑）+ 镜内时间推进（�
   assert.equal(/`/.test(spec.slice(spec.indexOf('每镜必写清单'), spec.indexOf('每镜必写清单') + 900)), false);
 });
 
-test('§5 规范仍是六段结构、模板变量正常展开', () => {
+test('§5 规范是精简三段、模板变量正常展开', () => {
   const p = require('../src/services/promptI18n');
   const spec = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
-  for (const k of ['subject_definitions', 'summary', 'retention_analysis', 'detailed_description', 'overall_soundscape', 'non_diegetic_music']) {
+  for (const k of ['detailed_description', 'overall_soundscape', 'non_diegetic_music']) {
     assert.ok(spec.includes(k), '缺段名 ' + k);
   }
   assert.equal(/\$\{[a-z]/i.test(spec), false, spec.slice(0, 200));
@@ -301,10 +299,9 @@ test('§5 规范：台词期间镜头固定 + 只有说话人有口型', () => {
   assert.match(zh, /要运镜就放在台词前后/);
   assert.match(zh, /只有当前说话人/);
   assert.match(zh, /不得/);
+  // 规范只维护一套：英文设置下是同一份中文文本
   const en = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'en' }, style: { default_style_en: 'x' } });
-  assert.match(en, /CAMERA HOLDS DURING DIALOGUE/);
-  assert.match(en, /no cut, no push\/pull, no orbit, no crane/);
-  assert.match(en, /Only the current speaker may show/);
+  assert.equal(en, zh);
 });
 
 test('§5 规范：输出前必检五项齐全', () => {
@@ -315,8 +312,8 @@ test('§5 规范：输出前必检五项齐全', () => {
     assert.ok(zh.includes(k), '缺自检项 ' + k);
   }
   const en = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'en' }, style: { default_style_en: 'x' } });
-  assert.match(en, /PRE-OUTPUT SELF-CHECK/);
-  for (const k of ['CAST COMPLETE', 'SCENE CONTINUITY', 'ACTION CONTINUITY', 'DIALOGUE', 'PROHIBITED CONTENT']) {
+  assert.equal(en, zh);
+  for (const k of ['人物齐全', '场景连贯', '动作承接', '台词合规', '违禁内容']) {
     assert.ok(en.includes(k), 'missing ' + k);
   }
 });
@@ -351,7 +348,7 @@ test('规范写明：第一拍永远是 [Shot 1]，不得用分镜序号', () =>
   assert.match(zh, /本镜第一拍永远是 \[Shot 1\]/);
   assert.match(zh, /不是 \[Shot 2\]/);
   const en = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'en' }, style: { default_style_en: 'x' } });
-  assert.match(en, /first beat is ALWAYS \[Shot 1\]/);
+  assert.equal(en, zh);
 });
 
 test('repairRef2va 会把误用的分镜序号重编号回 1..N', () => {
@@ -411,8 +408,7 @@ test('§5 规范：画面内禁止文字/乱码字，台词只靠口型+声音',
   assert.match(zh, /台词只能靠\*\*口型 \+ 声音\*\*表达/);
   assert.match(zh, /唯一例外/);
   const en = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'en' }, style: { default_style_en: 'x' } });
-  assert.match(en, /NO ON-SCREEN TEXT \(hard rule\)/);
-  assert.match(en, /garbled or pseudo/);
+  assert.equal(en, zh);
 });
 
 /**
@@ -479,17 +475,3 @@ test('对白被切拍：台词能装下就必须单镜，超 15 秒才允许跨�
   assert.equal(r.dialogue_cut, 1);
 });
 
-/**
- * 润色把台词来源搞错（实测 sb754）：润色提示词写着"台词逐条保留"+"必须与草稿有差异"，
- * 于是它从 FULL_EPISODE_SCRIPT 重推台词，把「国王立刻下令：」之后的**旁白**塞进 <d>，
- * 成片里国王念了一整段旁白（4 拍结构、英文片段、禁文字约束也一起回退）。
- */
-test('润色规范：台词唯一来源是 DIALOGUE 字段 + 语言统一 + 对白镜单拍禁文字', () => {
-  const p = require('../src/services/promptI18n');
-  const polish = p.getUniversalOmniPolishPrompt({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
-  assert.match(polish, /POLISH 硬约束/);
-  assert.match(polish, /台词的唯一来源是 STORYBOARD FIELDS 的 DIALOGUE 字段/);
-  assert.match(polish, /不得写进 <d>…<\/d>/);
-  assert.match(polish, /语言统一/);
-  assert.match(polish, /对白镜单拍 \+ 禁文字/);
-});

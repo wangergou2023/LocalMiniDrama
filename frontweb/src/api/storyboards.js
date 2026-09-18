@@ -67,18 +67,6 @@ function postUniversalSegmentNdjsonStream(url, body, onDelta) {
 }
 
 export const storyboardsAPI = {
-  /**
-   * 生成质量报告（按需重算）。
-   * 生成任务结束时的那份报告校验的是**润色之前**的文本，而前端随后会逐条重写
-   * universal_segment_text，所以润色完成后要再调一次刷新结论。
-   * @param {number} episodeId
-   * @param {{beats?: boolean, stage?: 'after_polish'|'manual'}} [opts]
-   */
-  episodeQualityReport(episodeId, opts = {}) {
-    const beats = opts.beats === false ? '0' : '1'
-    const stage = opts.stage ? `&stage=${encodeURIComponent(opts.stage)}` : ''
-    return request.get(`/episodes/${episodeId}/storyboards/quality-report?beats=${beats}${stage}`)
-  },
   get(id) {
     return request.get(`/storyboards/${id}`)
   },
@@ -101,28 +89,14 @@ export const storyboardsAPI = {
   saveFramePrompt(id, frameType, data) {
     return request.put(`/storyboards/${id}/frame-prompts/${frameType}`, data || {})
   },
-  polishPrompt(id) {
-    return request.post(`/storyboards/${id}/polish-prompt`, {})
-  },
   /** 全能模式：根据分镜内容 AI 生成片段描述（非流式，兼容旧调用） */
   generateUniversalSegmentPrompt(id, body = {}) {
     return request.post(`/storyboards/${id}/universal-segment-prompt`, body)
   },
-  /** 全能模式生成：NDJSON 流式，可选 body.duration、body.force_without_reference_images */
+  /** 全能模式生成：NDJSON 流式，可选 body.duration */
   generateUniversalSegmentPromptStream(id, body, onDelta) {
     return postUniversalSegmentNdjsonStream(
       `/api/v1/storyboards/${id}/universal-segment-prompt-stream`,
-      body,
-      onDelta
-    )
-  },
-  /**
-   * 流式润色全能片段：NDJSON 行 {type:'delta',text} / {type:'done',universal_segment_text} / {type:'error',message}
-   * body.draft_universal_segment_text 为当前编辑区全文；可选 duration、force_without_reference_images
-   */
-  polishUniversalSegmentPromptStream(id, body, onDelta) {
-    return postUniversalSegmentNdjsonStream(
-      `/api/v1/storyboards/${id}/universal-segment-polish-stream`,
       body,
       onDelta
     )
@@ -140,16 +114,8 @@ export const storyboardsAPI = {
   linkTailFrame(id, data) {
     return request.post(`/storyboards/${id}/link-tail-frame`, data || {})
   },
-  /** 一键 AI 重新生成/优化本分镜的 layout_description（空间布局合同），自动参考上下分镜 */
-  regenerateLayoutDescription(id) {
-    return request.post(`/storyboards/${id}/regenerate-layout-description`, {})
-  },
   /** 按后端最新规则重建单镜 video_prompt（含音色锚点，不调用 AI） */
   rebuildVideoPrompt(id) {
     return request.post(`/storyboards/${id}/rebuild-video-prompt`, {})
-  },
-  /** 按对白/旁白拆成多条分镜（每条仅一人说话或仅画外旁白） */
-  splitByAudio(id) {
-    return request.post(`/storyboards/${id}/split-by-audio`, {})
   },
 }

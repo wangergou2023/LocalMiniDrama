@@ -599,10 +599,6 @@
                       <div v-else-if="char.error_msg || char.errorMsg" class="cover-placeholder error" :title="char.error_msg || char.errorMsg">{{ char.error_msg || char.errorMsg }}</div>
                       <div v-else class="cover-placeholder">暂无图</div>
                       <div v-if="dragOverResourceKey === 'char-' + char.id" class="asset-cover-drop-hint">松开上传</div>
-                      <button class="aidir-asset-btn" title="添加到 AI 导演（可加多个一起发送）" @click.stop="aidirFromAsset('character', char)">
-                        <el-icon :size="12"><Plus /></el-icon>
-                        <span>@AI</span>
-                      </button>
                     </div>
                     <!-- 额外参考图条 -->
                     <div v-if="parseExtraImages(char).length" class="extra-images-strip">
@@ -698,10 +694,6 @@
                       <div v-else-if="prop.error_msg || prop.errorMsg" class="cover-placeholder error" :title="prop.error_msg || prop.errorMsg">{{ prop.error_msg || prop.errorMsg }}</div>
                       <div v-else class="cover-placeholder">暂无图</div>
                       <div v-if="dragOverResourceKey === 'prop-' + prop.id" class="asset-cover-drop-hint">松开上传</div>
-                      <button class="aidir-asset-btn" title="添加到 AI 导演（可加多个一起发送）" @click.stop="aidirFromAsset('prop', prop)">
-                        <el-icon :size="12"><Plus /></el-icon>
-                        <span>@AI</span>
-                      </button>
                     </div>
                     <div v-if="parseExtraImages(prop).length" class="extra-images-strip">
                       <div v-for="ep in parseExtraImages(prop)" :key="ep" class="extra-thumb" title="点击设为主图（悬停左上角可放大预览）">
@@ -803,10 +795,6 @@
                       <div v-else-if="scene.error_msg || scene.errorMsg" class="cover-placeholder error" :title="scene.error_msg || scene.errorMsg">{{ scene.error_msg || scene.errorMsg }}</div>
                       <div v-else class="cover-placeholder">暂无图</div>
                       <div v-if="dragOverResourceKey === 'scene-' + scene.id" class="asset-cover-drop-hint">松开上传</div>
-                      <button class="aidir-asset-btn" title="添加到 AI 导演（可加多个一起发送）" @click.stop="aidirFromAsset('scene', scene)">
-                        <el-icon :size="12"><Plus /></el-icon>
-                        <span>@AI</span>
-                      </button>
                     </div>
                     <div v-if="parseExtraImages(scene).length" class="extra-images-strip">
                       <div v-for="ep in parseExtraImages(scene)" :key="ep" class="extra-thumb" title="点击设为主图（悬停左上角可放大预览）">
@@ -872,7 +860,7 @@
             首尾帧参考图（经典模式双槽；图生前先走专业帧提示词模块 first/last，再生图；视频绑定 first/last_frame_url）
           </el-checkbox>
           <el-checkbox v-model="storyboardUniversalOmni" @change="() => saveProjectSettings(false)">
-            全能分镜模式（每镜输出多子分镜段落式 universal_segment_text，与「生成/润色全能提示词」同版式）
+            全能分镜模式（每镜输出多子分镜段落式 universal_segment_text，与「生成全能提示词」同版式）
           </el-checkbox>
           <el-checkbox v-model="storyboardIncludeNarration" @change="() => saveProjectSettings(false)">
             生成分镜时生成解说旁白（narration，与对白分开，便于后期 TTS）
@@ -906,24 +894,14 @@
             <el-button
               type="primary"
               size="large"
-              :loading="storyboardGenerating || universalOmniPolishRunning"
-              :disabled="!currentEpisodeId || storyboardGenerating || universalOmniPolishRunning"
+              :loading="storyboardGenerating"
+              :disabled="!currentEpisodeId || storyboardGenerating"
               @click="onGenerateStoryboard"
             >
               {{ storyboards.length > 0 ? '重新生成分镜' : 'AI 生成分镜' }}
             </el-button>
             <ElButton type="info" plain size="large" @click="onAddSingleStoryboard">
             添加一个分镜
-            </ElButton>
-            <ElButton
-              v-if="qualityReport"
-              type="warning"
-              plain
-              size="large"
-              @click="qualityReportVisible = true"
-            >
-              质量报告
-              <template v-if="qualityReport.stats && qualityReport.stats.dialogue_missing">（缺 {{ qualityReport.stats.dialogue_missing }} 句台词）</template>
             </ElButton>
           </div>
           <template v-if="storyboards.length > 0">
@@ -933,7 +911,7 @@
                 plain
                 size="large"
                 :loading="batchImageRunning"
-                :disabled="!currentEpisodeId || batchImageRunning || batchVideoRunning || pipelineRunning || storyboardGenerating || universalOmniPolishRunning"
+                :disabled="!currentEpisodeId || batchImageRunning || batchVideoRunning || pipelineRunning || storyboardGenerating"
                 @click="startBatchImageGeneration"
               >
                 批量生成分镜图
@@ -943,7 +921,7 @@
                 plain
                 size="large"
                 :loading="batchVideoRunning"
-                :disabled="!currentEpisodeId || batchImageRunning || batchVideoRunning || pipelineRunning || storyboardGenerating || universalOmniPolishRunning"
+                :disabled="!currentEpisodeId || batchImageRunning || batchVideoRunning || pipelineRunning || storyboardGenerating"
                 @click="startBatchVideoGeneration"
               >
                 批量生成分镜视频
@@ -997,29 +975,14 @@
             <div v-for="(e, i) in batchVideoErrors" :key="i" class="batch-error-line">{{ e }}</div>
           </div>
         </div>
-        <div v-if="storyboardGenerating || universalOmniPolishRunning" class="storyboard-generating-tip">
+        <div v-if="storyboardGenerating" class="storyboard-generating-tip">
           <el-icon class="is-loading"><Loading /></el-icon>
-          <span v-if="universalOmniPolishRunning">
-            正在润色全能提示词：第 {{ universalOmniPolishProgress.current }} / {{ universalOmniPolishProgress.total }} 镜
-            <template v-if="universalOmniPolishProgress.label">（{{ universalOmniPolishProgress.label }}）</template>
-            …
-          </span>
-          <span v-else>正在分析剧本并拆解分镜，请稍候...</span>
+          <span>正在分析剧本并拆解分镜，请稍候...</span>
         </div>
         <div v-if="sbTruncatedWarning && !sbTruncatedDismissed && storyboards.length > 0" class="sb-truncated-warning">
           <el-icon><WarningFilled /></el-icon>
           <span>检测到分镜可能不完整（AI 输出被截断），请确认分镜数量是否符合预期，必要时可重新生成。</span>
           <el-button size="small" text @click="sbTruncatedDismissed = true">关闭</el-button>
-        </div>
-        <div v-if="sbDialogueMissing.length && !sbDialogueMissingDismissed && storyboards.length > 0" class="sb-truncated-warning">
-          <el-icon><WarningFilled /></el-icon>
-          <span>
-            有 {{ sbDialogueMissing.length }} 句剧本台词没有进分镜（分镜能承载的台词约 1 句/镜，镜数不够时会静默丢掉台词）。
-            建议加大「分镜数」重新生成。
-            <br />
-            缺失：{{ sbDialogueMissing.join('　|　') }}
-          </span>
-          <el-button size="small" text @click="sbDialogueMissingDismissed = true">关闭</el-button>
         </div>
         <template v-if="storyboards.length > 0">
           <template v-for="(sb, i) in storyboards" :key="sb.id">
@@ -1269,7 +1232,7 @@
                     <el-tooltip placement="top" :show-after="280" :show-arrow="false" popper-class="sb-universal-tooltip-popper">
                       <template #content>
                         <div class="sb-universal-tooltip">
-                          全能生视频链路（<strong>AI 配置 · 视频</strong> 中选接口规范：<code>kling_omni</code> 可灵 Omni、<code>volcengine_omni</code> 火山即梦 Seedance 2.0 多图参考、<code>minimax_h3</code> MiniMax H3 多模态参考；模型如 <code>kling-video-o1</code>、<code>doubao-seedance-2-0-260128</code>、<code>MiniMax-H3</code> 等以控制台为准）：此处为提交主提示词；只要本框有内容，生视频时<strong>只</strong>发送这段，不会拼接下方「视频提示词」里的动作/对话/旁白。参考图顺序一般为：场景 → 角色（多张）→ 物品（<strong>不含</strong>经典分镜中间主图）；请用 <strong>@图片1</strong>、<strong>@图片2</strong>…（<strong>@图片N 后建议加半角空格</strong>）对应参考图，勿用 @姓名 指图；有场景图时 <strong>@图片1</strong> 只表环境，人物从 <strong>@图片2</strong> 起。若场景参考是<strong>四宫格/多视角拼图</strong>，仅借空间与氛围，须在文案中写明<strong>单镜头完整画幅、禁止分屏宫格</strong>，避免成片模仿拼图布局。全能提示词下拉中「生成」会按<strong>本条分镜总时长</strong>与本集剧本、镜序、邻镜信息，自动决定子分镜数 M（第2行「由以下M个分镜…」），第4行起为「分镜1：T1秒:」…多行，且各段秒数之和等于本镜时长；第3行仍为环境/参考图约束；「生成」与「润色」均为<strong>流式输出</strong>到本框；「润色」在此基础上增强。若本框留空，则退回仅用「视频提示词」。
+                          全能生视频链路（<strong>AI 配置 · 视频</strong> 中选接口规范：<code>kling_omni</code> 可灵 Omni、<code>volcengine_omni</code> 火山即梦 Seedance 2.0 多图参考、<code>minimax_h3</code> MiniMax H3 多模态参考；模型如 <code>kling-video-o1</code>、<code>doubao-seedance-2-0-260128</code>、<code>MiniMax-H3</code> 等以控制台为准）：此处为提交主提示词；只要本框有内容，生视频时<strong>只</strong>发送这段，不会拼接下方「视频提示词」里的动作/对话/旁白。参考图顺序一般为：场景 → 角色（多张）→ 物品（<strong>不含</strong>经典分镜中间主图）；请用 <strong>@图片1</strong>、<strong>@图片2</strong>…（<strong>@图片N 后建议加半角空格</strong>）对应参考图，勿用 @姓名 指图；有场景图时 <strong>@图片1</strong> 只表环境，人物从 <strong>@图片2</strong> 起。若场景参考是<strong>四宫格/多视角拼图</strong>，仅借空间与氛围，须在文案中写明<strong>单镜头完整画幅、禁止分屏宫格</strong>，避免成片模仿拼图布局。全能提示词下拉中「生成」会按<strong>本条分镜总时长</strong>与本集剧本、镜序、邻镜信息，自动决定子分镜数 M（第2行「由以下M个分镜…」），第4行起为「分镜1：T1秒:」…多行，且各段秒数之和等于本镜时长；第3行仍为环境/参考图约束；「生成」为<strong>流式输出</strong>到本框。若本框留空，则退回仅用「视频提示词」。
                         </div>
                       </template>
                       <el-icon class="sb-universal-hint-icon" tabindex="0" role="img" aria-label="片段说明">
@@ -1295,20 +1258,6 @@
                     <template #dropdown>
                       <el-dropdown-menu>
                         <el-dropdown-item command="generate">生成全能提示词</el-dropdown-item>
-                        <el-dropdown-item command="generate-force">不查图片强制生成</el-dropdown-item>
-                        <el-dropdown-item command="polish" :disabled="!sbUniversalSegmentTrimmed(sb)">
-                          润色全能提示词
-                        </el-dropdown-item>
-                        <el-dropdown-item command="polish-force" :disabled="!sbUniversalSegmentTrimmed(sb)">
-                          不查图片强制润色
-                        </el-dropdown-item>
-                        <el-dropdown-item
-                          command="to-grok-video-tags"
-                          divided
-                          :disabled="!sbUniversalSegmentTrimmed(sb)"
-                        >
-                          改为 grok视频格式
-                        </el-dropdown-item>
                       </el-dropdown-menu>
                     </template>
                   </el-dropdown>
@@ -1440,10 +1389,6 @@
                 <!-- 单主图（未勾选首尾帧） -->
                 <template v-else>
                 <div class="sb-main-image-wrap">
-                  <button class="sb-aidir-btn" title="添加到 AI 导演（可加多个一起发送）" @click.stop="aidirFromStoryboard(sb)">
-                    <el-icon :size="12"><Plus /></el-icon>
-                    <span>@AI</span>
-                  </button>
                   <template v-if="getSbImage(sb.id)">
                     <img
                       :src="assetImageUrl(getSbImage(sb.id))"
@@ -1651,13 +1596,9 @@
           </template>
         </template>
         <!-- 分镜生成中提示条 -->
-        <div v-if="storyboardGenerating || universalOmniPolishRunning" class="sb-generating-tip">
+        <div v-if="storyboardGenerating" class="sb-generating-tip">
           <span class="sb-gen-dot" /><span class="sb-gen-dot" /><span class="sb-gen-dot" />
-          <span v-if="universalOmniPolishRunning" class="sb-gen-text">
-            全能片段润色中 {{ universalOmniPolishProgress.current }}/{{ universalOmniPolishProgress.total }}
-            <template v-if="universalOmniPolishProgress.label"> · {{ universalOmniPolishProgress.label }}</template>
-          </span>
-          <span v-else class="sb-gen-text">分镜持续生成中，客官稍等片刻…</span>
+          <span class="sb-gen-text">分镜持续生成中，客官稍等片刻…</span>
         </div>
         <div v-else-if="storyboards.length === 0" class="empty-tip">请先生成分镜</div>
       </section>
@@ -2440,16 +2381,7 @@
         </el-form-item>
         <el-form-item label="">
           <div style="width:100%">
-            <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
-              <span style="font-size:12px; color:#6b7280;">通用优化提示词（仅更新本字段，不影响首尾帧/关键帧专用提示词）</span>
-              <el-button
-                size="small"
-                type="warning"
-                plain
-                :loading="sbPromptPolishing"
-                @click="onPolishSbPrompt"
-              >{{ sbPromptPolishedText ? '重新生成' : '立即生成' }}</el-button>
-            </div>
+            <div style="font-size:12px; color:#6b7280; margin-bottom:4px;">通用优化提示词（仅更新本字段，不影响首尾帧/关键帧专用提示词）</div>
             <el-input
               v-model="sbPromptPolishedText"
               type="textarea"
@@ -2485,13 +2417,6 @@
       <div class="frame-prompt-editor-body">
         <div class="frame-prompt-editor-hint">
           此提示词将直接发给AI生成首/尾帧图片。支持编辑后保存，保存后点击「生成」即可使用新提示词。
-        </div>
-
-        <!-- 空间布局锚点（生成分镜时 AI 输出的最高优先级站位合同） -->
-        <div v-if="editingFramePromptSb?.layout_description" class="frame-layout-anchor">
-          <div class="frame-layout-anchor-label">本分镜空间布局锚点（首尾帧强制一致合同，最高优先级）</div>
-          <div class="frame-layout-anchor-text">{{ editingFramePromptSb.layout_description }}</div>
-          <div class="frame-layout-anchor-note">首帧必须严格按此生成初始站位；尾帧必须在完全相同的左右位置、距离、构图下仅演化姿态/表情/结果。</div>
         </div>
 
         <el-input
@@ -2530,6 +2455,16 @@
           <div class="vp-mode-hint">全能模式：中间为片段描述；生视频时使用 <strong>AI 配置里当前启用的视频</strong>（支持 <code>kling_omni</code> 可灵 Omni、<code>volcengine_omni</code> 火山即梦 Seedance 2.0、<code>minimax_h3</code> MiniMax H3 等；模型以 AI 配置为准）并合并场景/角色/道具等参考图（不含经典分镜主图）。经典字段保留，可随时切回。</div>
         </el-form-item>
         <el-row :gutter="12">
+          <el-col :span="6">
+            <el-form-item label="时长(秒)">
+              <el-input-number v-model="sbDuration[videoParamsTarget.id]" :min="1" :max="60" style="width:100%" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-collapse class="vp-advanced-collapse">
+          <el-collapse-item name="adv">
+            <template #title><span class="vp-advanced-title">高级参数：摄影 / 时空 / 画面结果（标题·地点·时间·景别·运镜·氛围·视角·灯光·景深·画面结果）</span></template>
+        <el-row :gutter="12">
           <el-col :span="12">
             <el-form-item label="标题">
               <el-input v-model="sbTitle[videoParamsTarget.id]" placeholder="镜头标题" />
@@ -2547,11 +2482,6 @@
           </el-col>
         </el-row>
         <el-row :gutter="12">
-          <el-col :span="6">
-            <el-form-item label="时长(秒)">
-              <el-input-number v-model="sbDuration[videoParamsTarget.id]" :min="1" :max="60" style="width:100%" />
-            </el-form-item>
-          </el-col>
           <el-col :span="6">
             <el-form-item label="景别">
               <el-select v-model="sbShotType[videoParamsTarget.id]" placeholder="景别" style="width:100%">
@@ -2661,30 +2591,12 @@
             </el-form-item>
           </el-col>
         </el-row>
-
-        <!-- 空间布局锚点：生成分镜时 AI 输出的最高优先级人物站位合同（首尾帧强制一致核心） -->
-        <el-form-item label="空间布局锚点（首尾帧人物站位合同）">
-          <div style="display:flex; gap:8px; align-items:flex-start; width:100%">
-            <el-input
-              v-model="sbLayoutDescription[videoParamsTarget.id]"
-              type="textarea"
-              :rows="3"
-              placeholder="例如：女主站画面左三分之一正对镜头，男主站右后侧侧身看向女主，中景，双人构图，平衡稳定"
-              style="flex:1"
-            />
-            <el-button
-              size="small"
-              :loading="regeneratingLayoutSbIds.has(videoParamsTarget.id)"
-              @click="onRegenerateLayoutDescription(videoParamsTarget)"
-              style="margin-top:4px; white-space:nowrap"
-            >
-              AI 重新生成/优化
-            </el-button>
-          </div>
-          <div style="font-size:11px;color:#64748b;margin-top:4px;line-height:1.35">
-            最高优先级空间合同（用于首尾帧站位锁定）。AI 可参考上下分镜一键重新生成/优化，点击右侧按钮触发。
-          </div>
+        <el-form-item label="画面结果">
+          <el-input v-model="sbResult[videoParamsTarget.id]" type="textarea" :rows="2" placeholder="动作完成后的画面结果（本镜落幅状态，下一镜的起点）" />
         </el-form-item>
+          </el-collapse-item>
+        </el-collapse>
+
 
         <el-form-item label="动作">
           <el-input v-model="sbAction[videoParamsTarget.id]" type="textarea" :rows="2" placeholder="动作描述" />
@@ -2694,35 +2606,6 @@
         </el-form-item>
         <el-form-item label="解说旁白">
           <el-input v-model="sbNarration[videoParamsTarget.id]" type="textarea" :rows="2" class="sb-narration-input" placeholder="画外解说 / 纪录片式旁白（与对白分开）" />
-        </el-form-item>
-        <el-form-item v-if="canSplitSbByAudio(videoParamsTarget)" label="多角色对白">
-          <div class="sb-split-audio-row">
-            <p class="sb-split-audio-tip">
-              本镜含多句对白或「对白+旁白」，Seedance 同镜易串音。可拆成多条分镜（每条仅一人说话或仅旁白），再分别生视频。
-            </p>
-            <el-button
-              type="warning"
-              plain
-              :loading="splitByAudioLoading"
-              @click="onSplitSbByAudio(videoParamsTarget)"
-            >
-              按对白拆镜
-            </el-button>
-          </div>
-        </el-form-item>
-        <el-form-item label="画面结果">
-          <el-input v-model="sbResult[videoParamsTarget.id]" type="textarea" :rows="2" placeholder="动作完成后的画面结果" />
-        </el-form-item>
-        <el-form-item label="视频提示词">
-          <div class="vp-video-prompt-hint">保存后将根据上方字段，由系统按最新规则自动生成（含角色音色锚点）。</div>
-          <el-input
-            v-if="videoParamsTarget?.video_prompt"
-            :model-value="videoParamsTarget.video_prompt"
-            type="textarea"
-            :rows="3"
-            readonly
-            style="color:#6b7280;margin-top:8px"
-          />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -2810,176 +2693,6 @@
     </Teleport>
 
     <!-- 生成质量报告：生成分镜完成后自动弹出，也可用工具栏的「质量报告」按钮重开 -->
-    <el-dialog v-model="qualityReportVisible" width="720px">
-      <template #header>
-        <span>分镜生成质量报告</span>
-        <el-tag
-          v-if="qualityReport && qualityReport.stage_label"
-          :type="qualityReport.stage === 'after_polish' ? 'success' : 'info'"
-          size="small"
-          style="margin-left: 10px"
-        >{{ qualityReport.stage_label }}</el-tag>
-      </template>
-      <template v-if="qualityReport">
-        <el-alert
-          :type="qualityReport.verdict === 'ok' ? 'success' : qualityReport.verdict === 'warn' ? 'warning' : 'error'"
-          :closable="false"
-          show-icon
-          :title="qualityReport.headline"
-        >
-          <template #default>
-            <div v-for="(r, i) in qualityReport.reasons" :key="i" style="line-height: 1.6">{{ r }}</div>
-          </template>
-        </el-alert>
-        <div
-          v-if="qualityReport.stage_hint"
-          style="margin-top: 8px; font-size: 12px; color: #909399; line-height: 1.6"
-        >
-          {{ qualityReport.stage_hint }}
-        </div>
-
-        <el-descriptions :column="2" border size="small" style="margin-top: 14px">
-          <el-descriptions-item label="分镜数">
-            {{ qualityReport.stats.shot_count }} 条
-            <span v-if="qualityReport.stats.requested_count">（请求 {{ qualityReport.stats.requested_count }}）</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="总时长">
-            {{ qualityReport.stats.total_duration }}s
-            <span v-if="qualityReport.stats.requested_duration">（请求 {{ qualityReport.stats.requested_duration }}）</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="剧本台词覆盖">
-            <span :style="{ color: qualityReport.stats.dialogue_missing ? '#f56c6c' : '#67c23a' }">
-              {{ qualityReport.stats.dialogue_covered }} / {{ qualityReport.stats.dialogue_total }}
-            </span>
-          </el-descriptions-item>
-          <el-descriptions-item label="剧情节拍覆盖">
-            <span v-if="!qualityReport.stats.beat_total" style="color: #909399">未检查</span>
-            <span v-else :style="{ color: qualityReport.stats.beat_missing ? '#e6a23c' : '#67c23a' }">
-              {{ qualityReport.stats.beat_covered }} / {{ qualityReport.stats.beat_total }}
-            </span>
-          </el-descriptions-item>
-          <el-descriptions-item label="提示词格式">
-            <span v-if="qualityReport.stats.universal_fatal" style="color: #f56c6c">
-              兜底替换 {{ qualityReport.stats.universal_fatal }} 条
-            </span>
-            <span v-else-if="qualityReport.stats.universal_repaired" style="color: #e6a23c">
-              自动修正 {{ qualityReport.stats.universal_repaired }} 条
-            </span>
-            <span v-else style="color: #67c23a">全部合规</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="打斗镜节奏">
-            <span v-if="qualityReport.stats.fights_without_cuts" style="color: #e6a23c">
-              {{ qualityReport.stats.fights_without_cuts }} 个定场过长
-            </span>
-            <span v-else-if="qualityReport.stats.fight_total" style="color: #67c23a">
-              {{ qualityReport.stats.fight_total }} 个打斗镜均正常
-              <span style="color: #909399">
-                （切拍 {{ qualityReport.stats.fight_cut || 0 }} · 拆连续镜 {{ qualityReport.stats.fight_split_sequence || 0 }} · 单拍 {{ qualityReport.stats.fight_single_beat || 0 }}）
-              </span>
-            </span>
-            <span v-else style="color: #909399">无打斗镜</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="尾帧衔接判定">
-            <!-- 半自动尾帧衔接：承接的镜渲染时自动接上一镜末帧；判为剪辑点的不接。
-                 判定结果可在分镜上有需要时人工翻转（link_prev_tail） -->
-            <span v-if="qualityReport.stats.tail_link_continues" style="color: #67c23a">
-              承接 {{ qualityReport.stats.tail_link_continues }} 条
-            </span>
-            <span v-else style="color: #909399">承接 0 条</span>
-            <span style="color: #909399">
-              · 剪辑点 {{ qualityReport.stats.tail_link_cut || 0 }} 条
-              <template v-if="qualityReport.stats.tail_link_unjudged"> · 未判定 {{ qualityReport.stats.tail_link_unjudged }} 条</template>
-            </span>
-          </el-descriptions-item>
-        </el-descriptions>
-
-        <div v-if="qualityReport.missing_dialogue && qualityReport.missing_dialogue.length" style="margin-top: 14px">
-          <div style="font-weight: 600; margin-bottom: 6px; color: #f56c6c">
-            以下剧本台词没有进任何分镜：
-          </div>
-          <div v-for="(m, i) in qualityReport.missing_dialogue" :key="i" style="line-height: 1.7; font-size: 13px">
-            · <span v-if="m.speaker">{{ m.speaker }}：</span>「{{ m.line }}」
-          </div>
-          <div style="margin-top: 6px; font-size: 12px; color: #909399">
-            分镜能承载的台词数约 1 句/镜。在「分镜数」里填一个更大的值重新生成即可补回（决定权在你，软件不会自动重跑）。
-          </div>
-        </div>
-
-        <div v-if="qualityReport.missing_beats && qualityReport.missing_beats.length" style="margin-top: 14px">
-          <div style="font-weight: 600; margin-bottom: 6px; color: #e6a23c">
-            语义判定认为以下剧本节拍没落到任何分镜（理解式判定，可能有误，请人工确认）：
-          </div>
-          <div v-for="(b, i) in qualityReport.missing_beats" :key="i" style="line-height: 1.7; font-size: 13px">
-            · {{ b.beat }}<span v-if="b.reason" style="color: #909399"> —— {{ b.reason }}</span>
-          </div>
-        </div>
-
-        <div v-if="qualityReport.fights_without_cuts && qualityReport.fights_without_cuts.length" style="margin-top: 14px">
-          <div style="font-weight: 600; margin-bottom: 6px; color: #e6a23c">
-            以下打斗镜把大部分时长花在定场与运镜上（交锋只剩最后一瞬）：
-          </div>
-          <div v-for="(f, i) in qualityReport.fights_without_cuts" :key="i" style="line-height: 1.7; font-size: 13px">
-            · 镜{{ f.storyboard_number != null ? f.storyboard_number : '?' }} {{ f.title }}
-            <span style="color: #909399">（正文里第一个交锋动作出现在 {{ f.combat_at_percent }}% 处）</span>
-          </div>
-          <div style="margin-top: 6px; font-size: 12px; color: #909399">
-            本地 H3 支持一次生成内切镜（<code>[Shot N] At MM:SS.mmm,</code>），把定场压进第一拍、其余时长留给交锋。
-            实测问题镜是 9 秒里 8 秒定场、交锋只在最后 0.8 秒。在这些镜上点「生成全能提示词」重写一次即可。
-            <br />
-            注：短交锋（1-2 拍）与已在分镜层面拆成连续镜的打斗段**不算问题**，不会列在这里。
-          </div>
-        </div>
-
-        <div v-if="qualityReport.cuts_without_fight && qualityReport.cuts_without_fight.length" style="margin-top: 10px">
-          <div style="font-weight: 600; margin-bottom: 6px; color: #909399">
-            以下镜头不是打斗但切了镜内拍（仅作参考，不是问题）：
-          </div>
-          <div v-for="(c, i) in qualityReport.cuts_without_fight" :key="i" style="line-height: 1.7; font-size: 13px">
-            · 镜{{ c.storyboard_number != null ? c.storyboard_number : '?' }} {{ c.title }}
-            <span style="color: #909399">（{{ c.cuts }} 拍）</span>
-          </div>
-          <div style="margin-top: 6px; font-size: 12px; color: #909399">
-            带对白的正反打（举耙对峙 → 近景怒目 → 切回对方）本来就会被剪成几拍，这类不算问题，所以不影响结论。
-          </div>
-        </div>
-
-        <el-table
-          v-if="qualityReport.shots && qualityReport.shots.length"
-          :data="qualityReport.shots"
-          size="small"
-          max-height="320"
-          style="margin-top: 14px"
-        >
-          <el-table-column prop="index" label="镜" width="52" />
-          <el-table-column prop="title" label="标题" width="130" show-overflow-tooltip />
-          <el-table-column prop="duration" label="时长" width="64">
-            <template #default="{ row }">{{ row.duration }}s</template>
-          </el-table-column>
-          <el-table-column label="对白">
-            <template #default="{ row }">
-              <span v-if="row.dialogue">{{ row.dialogue }}</span>
-              <span v-else style="color: #c0c4cc">（无对白）</span>
-            </template>
-          </el-table-column>
-        </el-table>
-
-        <div style="margin-top: 12px; font-size: 12px; color: #909399; line-height: 1.7">
-          台词覆盖与提示词骨架是**确定性判定**（字符串比对/结构校验），结论可信。<br />
-          剧情节拍覆盖是**语义判定**（LLM 读剧本与分镜清单做对照）—— 措辞不同也算覆盖
-          （例如「把前事细细叙来」就是「八戒沙僧将前事说了一遍」），但它仍可能有误，清单请自行确认。<br />
-          出片质量（口型、有没有念提示词、响度）需要能听能看，本报告覆盖不到。
-        </div>
-      </template>
-      <template #footer>
-        <span style="float: left; font-size: 12px; color: #909399">
-          <template v-if="qualityReport && qualityReport.computed_at">
-            计算于 {{ new Date(qualityReport.computed_at).toLocaleTimeString() }}
-          </template>
-        </span>
-        <el-button :loading="qualityReportRechecking" @click="onRecheckQuality">重新自检</el-button>
-        <el-button type="primary" @click="qualityReportVisible = false">关闭</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -2991,7 +2704,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Setting, Plus, Minus, Sunny, Moon, MagicStick, Upload, Delete, Check, Loading, WarningFilled, User, Box, Picture, Film, VideoCamera, Document, InfoFilled, Refresh, ZoomIn, QuestionFilled, DocumentAdd, Expand, Fold, VideoPlay, Grid, Close, Collection } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { useFilmStore } from '@/stores/film'
-import { useAidirStore } from '@/stores/aidir'
 import { useGenerationTaskStore, GEN_RESOURCE } from '@/stores/generationTaskStore'
 import { syncGeneratingSetsFromStore, buildEpisodeContext, buildExtractTaskMeta, isEpisodeExtractRunning } from '@/composables/useGenerationTaskSync'
 import { dramaAPI } from '@/api/drama'
@@ -3011,7 +2723,6 @@ import { propLibraryAPI } from '@/api/propLibrary'
 import { generationSettingsAPI } from '@/api/prompts'
 import { parseScriptIntoEpisodes, episodesListToPlainScript } from '@/utils/scriptEpisodes'
 import { estimateVideoDurationSecFromCharLen, STORYBOARD_PLAN_SECONDS, DEFAULT_VIDEO_CLIP_DURATION } from '@/utils/scriptDurationEstimate'
-import { parseTaskResult } from '@/utils/taskResult'
 import { exportStoryboardSheet } from '@/utils/exportStoryboardSheet'
 import StylePickerButton from '@/components/StylePickerButton.vue'
 import AIConfigContent from '@/components/AIConfigContent.vue'
@@ -3035,7 +2746,6 @@ const route = useRoute()
 const router = useRouter()
 const store = useFilmStore()
 const genStore = useGenerationTaskStore()
-const aidir = useAidirStore()
 const { isDark, toggle: toggleTheme } = useTheme()
 const { videoResolution: storeVideoResolution } = storeToRefs(store)
 
@@ -3219,20 +2929,8 @@ const currentEpisodeVideoUrl = computed(() => {
 const storyboardGenerating = computed(() =>
   isEpisodeExtractRunning(genStore, dramaId.value, currentEpisodeId.value, GEN_RESOURCE.GENERATE_STORYBOARD)
 )
-/** 分镜批量生成结束后，按镜序逐个润色全能片段（仅勾选全能模式且各镜为 universal 且有正文时） */
-const universalOmniPolishRunning = ref(false)
-const universalOmniPolishAbort = ref(false)
-const universalOmniPolishProgress = ref({ current: 0, total: 0, label: '' })
 const sbTruncatedWarning = ref(false)
 const sbTruncatedDismissed = ref(false)
-/** 剧本里没进分镜的台词（后端台词覆盖率自检结果），见 applyDialogueCoverageWarning */
-const sbDialogueMissing = ref([])
-const sbDialogueMissingDismissed = ref(false)
-/** 生成质量报告（后端 utils/storyboardQualityReport 产出）：生成完直接弹出来，见 applyQualityReport */
-const qualityReport = ref(null)
-const qualityReportVisible = ref(false)
-/** 「重新自检」按钮的 loading */
-const qualityReportRechecking = ref(false)
 const videoErrorMsg = ref('')
 // 一键全流程流水线
 const pipelineRunning = ref(false)
@@ -3459,7 +3157,7 @@ const navSteps = computed(() => {
   // 分镜脚本
   const sbList = storyboards.value || []
   const sbScriptDone = sbList.length > 0
-  const sbScriptGen = storyboardGenerating.value || universalOmniPolishRunning.value
+  const sbScriptGen = storyboardGenerating.value
     || epRunning.some((t) => t.resourceType === GEN_RESOURCE.GENERATE_STORYBOARD)
   const sbScriptStatus = sbScriptGen ? 'generating' : sbScriptDone ? 'done' : 'pending'
 
@@ -3520,14 +3218,6 @@ const allActiveTaskItems = computed(() => {
   if (isStoryGenRunning.value && !genStore.getAllRunningTasks().some((t) => t.resourceType === GEN_RESOURCE.GENERATE_STORY)) {
     addItem({ id: 'story-gen-local', label: '生成剧本...', kind: 'storyGenLocal' })
   }
-  if (universalOmniPolishRunning.value) {
-    const p = universalOmniPolishProgress.value
-    addItem({
-      id: 'universal-omni-polish',
-      label: `润色全能分镜 ${p.current}/${p.total}${p.label ? ' ' + p.label : ''}`,
-      kind: 'universalOmniPolish',
-    })
-  }
   if (batchImageRunning.value) {
     addItem({ id: 'batch-image', label: '批量生成分镜图...', kind: 'batchImage' })
   }
@@ -3567,11 +3257,6 @@ async function cancelActiveTask(item) {
       ElMessage.success('已取消剧本生成')
       return
     }
-    if (item.kind === 'universalOmniPolish') {
-      universalOmniPolishAbort.value = true
-      ElMessage.success('正在停止润色...')
-      return
-    }
     if (item.kind === 'batchImage') {
       batchImageStopping.value = true
       ElMessage.info('正在停止批量生图...')
@@ -3607,8 +3292,6 @@ const sbAngleS = ref({})   // 结构化视角：景别
 const sbMovement = ref({})
 const sbLighting = ref({})   // 灯光风格
 const sbDof = ref({})        // 景深
-const sbLayoutDescription = ref({})  // 空间布局与人物站位描述（生成分镜时 AI 输出的最高优先级合同，用于首尾帧强制一致）
-const regeneratingLayoutSbIds = reactive(new Set())  // 正在 AI 重新生成布局描述的分镜 id 集合
 /** 分镜创作模式：classic | universal（默认 classic，存库 storyboards.creation_mode） */
 const sbCreationMode = ref({})
 /** 全能模式片段描述（存库 universal_segment_text，与经典参考图字段独立） */
@@ -3631,7 +3314,6 @@ const inferringParams = ref(false)
 const showVideoParamsDialog = ref(false)
 const videoParamsTarget = ref(null)
 const videoParamsSaving = ref(false)
-const splitByAudioLoading = ref(false)
 const batchImageErrors = ref([])
 // 批量生成分镜视频
 const batchVideoRunning = ref(false)
@@ -3668,7 +3350,6 @@ const sbPromptImageText = ref('')       // 原始 image_prompt
 const sbPromptPolishedText = ref('')    // AI 优化后 polished_prompt
 const sbPromptVideoText = ref('')       // video_prompt
 const sbPromptSaving = ref(false)
-const sbPromptPolishing = ref(false)
 /** 首尾帧提示词编辑器 */
 const showFramePromptEditor = ref(false)
 const editingFramePromptSb = ref(null)
@@ -4324,49 +4005,7 @@ function isSbGenerating(sbId) {
     || generatingUniversalSegmentIds.has(sbId)
 }
 
-/**
- * 分镜图片旁的「+@」快捷按钮：把该分镜作为一个引用（类似添加文件）挂到 AI 导演输入框上方，
- * 可连续添加多个，最后连同文字一起发送。agent 收到 refs 精确定位并处理这些分镜。
- */
-function aidirFromStoryboard(sb) {
-  const sbId = sb?.id
-  if (!sbId) return
-  const num = sb?.storyboard_number ?? sb?.id
-  const title = sb?.title || sb?.segment_title || `分镜${num}`
-  const img = getSbImage(sbId)
-  const imgUrl = img ? assetImageUrl(img) : (sb?.composed_image ? imageUrl(sb.composed_image) : '')
-  const prompt = (img?.prompt || sb?.image_prompt || '').trim()
-  aidir.addRef({
-    type: 'storyboard',
-    id: sbId,
-    label: `#${num} ${title}`,
-    title: `${title} (分镜#${num})`,
-    img: imgUrl,
-    prefix: '',
-    prompt,
-  })
-}
 
-/**
- * 角色/道具/场景图片旁的「+@」快捷引用：把该资源作为引用挂到 AI 导演输入框。
- * agent 收到 type 为 character/scene/prop 的引用时，可调用 regenerate_asset_storyboards 批量重生成该资源关联的分镜图。
- */
-function aidirFromAsset(type, item) {
-  const id = item?.id
-  if (!id) return
-  const name = item?.name || item?.title || `${type}#${id}`
-  const imgUrl = item ? assetImageUrl(item) : ''
-  const typeLabel = type === 'character' ? '角色' : (type === 'scene' ? '场景' : '道具')
-  aidir.addRef({
-    type: type, // character / scene / prop
-    id,
-    label: `${name}`,
-    title: `${name} (${typeLabel}#${id})`,
-    img: imgUrl,
-    prefix: '',
-    prompt: (item?.prompt || item?.description || '').trim(),
-  })
-}
 
 function buildSbGenMeta(sb, resourceType, labelPrefix) {
   const num = sb?.storyboard_number ?? sb?.id
@@ -5070,7 +4709,6 @@ function syncStoryboardStateFromEpisode(ep) {
   const nextMovement = {}
   const nextLighting = {}
   const nextDof = {}
-  const nextLayoutDescription = {}
   const nextCreationMode = {}
   const nextUniversalSegment = {}
   for (const sb of boards) {
@@ -5092,7 +4730,6 @@ function syncStoryboardStateFromEpisode(ep) {
     nextMovement[sb.id] = (sb.movement ?? '').toString()
     nextLighting[sb.id] = sb.lighting_style || ''
     nextDof[sb.id] = sb.depth_of_field || ''
-    nextLayoutDescription[sb.id] = (sb.layout_description ?? '').toString()
     const charList = Array.isArray(sb.characters) ? sb.characters : (sb.characters != null ? [sb.characters] : [])
     nextCharIds[sb.id] = charList.map((c) => (typeof c === 'object' && c != null ? Number(c.id) : Number(c))).filter((n) => Number.isFinite(n))
     nextPropIds[sb.id] = Array.isArray(sb.prop_ids) ? sb.prop_ids : []
@@ -5119,7 +4756,6 @@ function syncStoryboardStateFromEpisode(ep) {
   sbMovement.value = nextMovement
   sbLighting.value = nextLighting
   sbDof.value = nextDof
-  sbLayoutDescription.value = nextLayoutDescription
   sbCreationMode.value = nextCreationMode
   sbUniversalSegmentText.value = nextUniversalSegment
 }
@@ -5774,11 +5410,13 @@ async function onImportNovel() {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
     let chapters = res.data?.data?.chapters || res.data?.chapters || []
+    // 第一个章节标题之前的内容（策划案/人物小传/故事大纲）由后端单独返回，写进「故事梗概」
+    let preamble = (res.data?.data?.preamble ?? res.data?.preamble ?? '').toString().trim()
     if (!chapters.length) {
       ElMessage.warning('未能识别到章节内容')
       return
     }
-    // 若后端只识别出 1 章，但正文里有多处「第N集」行首标题，用前端规则再拆（与保存剧本一致）
+    // 若后端识别出的章节比前端规则少，用前端规则再拆（与保存剧本一致）
     const clientParsed = parseScriptIntoEpisodes(text)
     if (clientParsed.split && clientParsed.episodes.length > chapters.length) {
       chapters = clientParsed.episodes.map((e, i) => ({
@@ -5787,6 +5425,8 @@ async function onImportNovel() {
         content: e.script_content,
         script: e.script_content,
       }))
+      // 前端规则会把前言挂进第一集，这时不要再往梗概里写一份，否则同一段文字出现两次
+      preamble = ''
     }
     const toEpisodeRow = (ch, i) => ({
       episode_number: i + 1,
@@ -5799,15 +5439,23 @@ async function onImportNovel() {
     const plainScript = episodesListToPlainScript(
       rows.map((r) => ({ title: r.title, script_content: r.script_content }))
     )
+    // 前言写进「故事梗概」：留着会挂在第一集头上，把第一集撑成别集的十倍时长
+    if (preamble) {
+      storyInput.value = preamble
+      if (store.dramaId) {
+        await dramaAPI.saveOutline(store.dramaId, { summary: preamble }).catch(() => {})
+      }
+    }
+    const preambleNote = preamble ? '，策划案前言已写入故事梗概' : ''
     if (store.dramaId && rows.length >= 2) {
       await dramaAPI.saveEpisodes(store.dramaId, rows)
       await loadDrama()
-      ElMessage.success(`已导入并拆分为 ${rows.length} 集`)
+      ElMessage.success(`已导入并拆分为 ${rows.length} 集${preambleNote}`)
     } else {
       store.setScriptContent(plainScript || rows[0]?.script_content || '')
       ElMessage.success(
         rows.length >= 2
-          ? `已导入 ${rows.length} 个章节（保存剧本时将写入多集）`
+          ? `已导入 ${rows.length} 个章节${preambleNote}（保存剧本时将写入多集）`
           : `成功导入 ${rows.length} 个章节，请继续编辑剧本`
       )
     }
@@ -6315,7 +5963,6 @@ async function onExportStoryboardSheet() {
           atmosphere: sbAtmosphere.value[id],
           shot_type: sbShotType.value[id],
           movement: sbMovement.value[id],
-          layout_description: sbLayoutDescription.value[id],
           universal_segment_text: sbUniversalSegmentText.value[id],
         }
         if (Object.prototype.hasOwnProperty.call(map, key)) {
@@ -6469,44 +6116,18 @@ function buildUniversalSegmentFieldOverrides(sb) {
     atmosphere: trimOrNull(sbAtmosphere.value[id] ?? sb.atmosphere),
     shot_type: trimOrNull(sbShotType.value[id] ?? sb.shot_type),
     movement: trimOrNull(sbMovement.value[id] ?? sb.movement),
-    layout_description: trimOrNull(sbLayoutDescription.value[id] ?? sb.layout_description),
   }
 }
 
-/** 全能片段：@图片N 转 Grok 占位符 <IMAGE_N> */
-function universalSegmentAtImageToGrokTags(text) {
-  return (text || '').replace(/@图片(\d+)/g, '<IMAGE_$1>')
-}
 
-function onUniversalSegmentToGrokVideoTags(sb) {
-  if (!sb?.id) return
-  const raw = (sbUniversalSegmentText.value[sb.id] ?? '').toString()
-  if (!raw.trim()) {
-    ElMessage.warning('请先填写或生成片段描述')
-    return
-  }
-  const next = universalSegmentAtImageToGrokTags(raw)
-  if (next === raw) {
-    ElMessage.info('未找到 @图片N 标记，无需转换')
-    return
-  }
-  sbUniversalSegmentText.value = { ...sbUniversalSegmentText.value, [sb.id]: next }
-  void onSaveUniversalSegmentField(sb)
-  ElMessage.success('已改为 Grok 视频占位符格式（<IMAGE_N>）')
-}
 
 function onUniversalSegmentPromptMenu(sb, cmd) {
-  if (cmd === 'generate') onGenerateUniversalSegmentPrompt(sb, {})
-  else if (cmd === 'generate-force') onGenerateUniversalSegmentPrompt(sb, { forceWithoutReferenceImages: true })
-  else if (cmd === 'polish') onPolishUniversalSegmentPromptStream(sb, {})
-  else if (cmd === 'polish-force') onPolishUniversalSegmentPromptStream(sb, { forceWithoutReferenceImages: true })
-  else if (cmd === 'to-grok-video-tags') onUniversalSegmentToGrokVideoTags(sb)
+  if (cmd === 'generate') onGenerateUniversalSegmentPrompt(sb)
 }
 
 /** 全能模式：根据当前分镜结构化字段流式生成片段描述（NDJSON） */
-async function onGenerateUniversalSegmentPrompt(sb, opts = {}) {
+async function onGenerateUniversalSegmentPrompt(sb) {
   if (!sb?.id || generatingUniversalSegmentIds.has(sb.id)) return
-  const force = !!opts.forceWithoutReferenceImages
   generatingUniversalSegmentIds.add(sb.id)
   let live = ''
   try {
@@ -6516,7 +6137,6 @@ async function onGenerateUniversalSegmentPrompt(sb, opts = {}) {
       {
         duration: durationSec,
         field_overrides: buildUniversalSegmentFieldOverrides(sb),
-        ...(force ? { force_without_reference_images: true } : {}),
       },
       (delta) => {
         live += delta
@@ -6534,189 +6154,11 @@ async function onGenerateUniversalSegmentPrompt(sb, opts = {}) {
       const row = list.find((x) => Number(x.id) === Number(sb.id))
       if (row) row.universal_segment_text = text
     }
-    ElMessage.success(force ? '已强制生成全能片段提示词（无图模式）' : '已根据分镜生成全能片段提示词')
+    ElMessage.success('已根据分镜生成全能片段提示词')
   } catch (e) {
     ElMessage.error(e.message || '生成失败，请检查文本模型配置')
   } finally {
     generatingUniversalSegmentIds.delete(sb.id)
-  }
-}
-
-/** 全能模式：结合剧本与邻镜流式润色片段描述（服务端 NDJSON） */
-async function onPolishUniversalSegmentPromptStream(sb, opts = {}) {
-  if (!sb?.id || generatingUniversalSegmentIds.has(sb.id)) return
-  const force = !!opts.forceWithoutReferenceImages
-  const draft = sbUniversalSegmentTrimmed(sb)
-  if (!draft) {
-    ElMessage.warning('请先填写或生成片段描述后再润色')
-    return
-  }
-  generatingUniversalSegmentIds.add(sb.id)
-  let live = ''
-  try {
-    const durationSec = universalSegmentDurationSecForSb(sb)
-    const data = await storyboardsAPI.polishUniversalSegmentPromptStream(
-      sb.id,
-      {
-        duration: durationSec,
-        draft_universal_segment_text: draft,
-        field_overrides: buildUniversalSegmentFieldOverrides(sb),
-        ...(force ? { force_without_reference_images: true } : {}),
-      },
-      (delta) => {
-        live += delta
-        sbUniversalSegmentText.value = { ...sbUniversalSegmentText.value, [sb.id]: live }
-      }
-    )
-    const text = (data?.universal_segment_text ?? '').toString().trim()
-    if (!text) {
-      ElMessage.warning('未收到完整润色结果，请重试')
-      return
-    }
-    sbUniversalSegmentText.value = { ...sbUniversalSegmentText.value, [sb.id]: text }
-    const list = store.currentEpisode?.storyboards
-    if (Array.isArray(list)) {
-      const row = list.find((x) => Number(x.id) === Number(sb.id))
-      if (row) row.universal_segment_text = text
-    }
-    ElMessage.success(force ? '全能片段已强制润色并保存（无图模式）' : '全能片段提示词已润色并保存')
-  } catch (e) {
-    ElMessage.error(e.message || '润色失败，请检查文本模型配置')
-  } finally {
-    generatingUniversalSegmentIds.delete(sb.id)
-  }
-}
-
-/**
- * 分镜脚本生成完成后：按镜序逐个流式润色全能片段（服务端已落库）。
- * @param {{ checkPause?: () => Promise<void>, onShotProgress?: (cur:number,total:number,sb:object)=>void, onShotError?: (sb:object,msg:string)=>void }} opts
- */
-async function polishUniversalSegmentsAfterGeneration(opts = {}) {
-  const checkPause = typeof opts.checkPause === 'function' ? opts.checkPause : async () => {}
-  const onShotProgress = typeof opts.onShotProgress === 'function' ? opts.onShotProgress : null
-  const onShotError = typeof opts.onShotError === 'function' ? opts.onShotError : null
-
-  if (!storyboardUniversalOmni.value) return { polished: 0, skipped: true }
-
-  const rawList = store.currentEpisode?.storyboards || []
-  const list = rawList.slice().sort((a, b) => (Number(a.storyboard_number) || 0) - (Number(b.storyboard_number) || 0))
-  const targets = list.filter((sb) => sb?.id && isSbUniversalMode(sb.id) && sbUniversalSegmentTrimmed(sb))
-
-  if (!targets.length) return { polished: 0, skipped: true }
-
-  universalOmniPolishRunning.value = true
-  universalOmniPolishAbort.value = false
-  universalOmniPolishProgress.value = { current: 0, total: targets.length, label: '' }
-  let polished = 0
-  try {
-    for (let i = 0; i < targets.length; i++) {
-      if (universalOmniPolishAbort.value) break
-      await checkPause()
-      const sb = targets[i]
-      const cur = i + 1
-      const label = '#' + (sb.storyboard_number ?? cur) + (sb.title ? ' ' + String(sb.title).slice(0, 20) : '')
-      universalOmniPolishProgress.value = { current: cur, total: targets.length, label }
-      if (onShotProgress) onShotProgress(cur, targets.length, sb)
-
-      const draft = sbUniversalSegmentTrimmed(sb)
-      if (!draft) continue
-
-      generatingUniversalSegmentIds.add(sb.id)
-      let live = ''
-      try {
-        const durationSec = universalSegmentDurationSecForSb(sb)
-        const data = await storyboardsAPI.polishUniversalSegmentPromptStream(
-          sb.id,
-          {
-            duration: durationSec,
-            draft_universal_segment_text: draft,
-            field_overrides: buildUniversalSegmentFieldOverrides(sb),
-            force_without_reference_images: true,
-          },
-          (delta) => {
-            live += delta
-            sbUniversalSegmentText.value = { ...sbUniversalSegmentText.value, [sb.id]: live }
-          }
-        )
-        const text = (data?.universal_segment_text ?? '').toString().trim()
-        if (text) {
-          polished += 1
-          sbUniversalSegmentText.value = { ...sbUniversalSegmentText.value, [sb.id]: text }
-          const storyList = store.currentEpisode?.storyboards
-          if (Array.isArray(storyList)) {
-            const row = storyList.find((x) => Number(x.id) === Number(sb.id))
-            if (row) row.universal_segment_text = text
-          }
-        }
-      } catch (e) {
-        const msg = e?.message || String(e)
-        if (onShotError) onShotError(sb, msg)
-        else ElMessage.warning(`分镜 #${sb.storyboard_number ?? sb.id} 全能润色失败：${msg}`)
-      } finally {
-        generatingUniversalSegmentIds.delete(sb.id)
-      }
-      await pipelineRest()
-    }
-
-    // ── 润色完成后重算质量报告 ──────────────────────────────────────────────
-    //
-    // 为什么必须重算：生成任务结束时那份报告校验的是**润色之前**的文本，而本函数紧接着
-    // 逐条重写了 universal_segment_text（实测 21 条约 80 秒）。不重算的话，用户看到的
-    // 「提示词格式 全部合规」对最终文本并不成立 —— 报告与结论会错位一整个润色周期。
-    if (polished > 0) {
-      await refreshQualityReportAfterPolish({ previous: qualityReport.value })
-    }
-  } finally {
-    universalOmniPolishRunning.value = false
-    universalOmniPolishProgress.value = { current: 0, total: 0, label: '' }
-  }
-  return { polished, skipped: false }
-}
-
-/**
- * 润色完成后重算并刷新质量报告（后端 /episodes/:id/storyboards/quality-report）。
- *
- * 失败不打扰用户（只 console.warn）：报告是辅助信息，不该因为一次自检失败弹错。
- * 但如果结论**变差**了（例如润色把某条骨架写坏），要明确提示 —— 这正是重算的意义。
- */
-async function refreshQualityReportAfterPolish(opts = {}) {
-  const epId = currentEpisodeId.value
-  if (!epId) return
-  try {
-    const data = await storyboardsAPI.episodeQualityReport(epId, { beats: true, stage: 'after_polish' })
-    const report = data?.quality_report
-    if (!report) return
-    const prev = opts.previous
-    qualityReport.value = report
-    const worse = (!prev || prev.verdict === 'ok') && report.verdict !== 'ok'
-    if (worse) {
-      ElMessage.warning(`润色后复核发现新问题：${report.headline}`)
-      qualityReportVisible.value = true
-    } else {
-      ElMessage.success('质量报告已更新（含润色后复核）')
-    }
-  } catch (e) {
-    console.warn('[FilmCreate] 润色后质量报告刷新失败:', e?.message)
-  }
-}
-
-/** 「重新自检」：手动触发一次报告重算（与润色后复核走同一接口） */
-async function onRecheckQuality() {
-  const epId = currentEpisodeId.value
-  if (!epId) return
-  qualityReportRechecking.value = true
-  try {
-    const data = await storyboardsAPI.episodeQualityReport(epId, { beats: true, stage: 'manual' })
-    if (data?.quality_report) {
-      qualityReport.value = data.quality_report
-      ElMessage.success('已重新自检')
-    } else {
-      ElMessage.warning('自检未返回结果')
-    }
-  } catch (e) {
-    ElMessage.error(e?.message || '自检失败')
-  } finally {
-    qualityReportRechecking.value = false
   }
 }
 
@@ -6986,23 +6428,6 @@ function formatVideoPromptForEdit(text) {
     .replace(/^\s+|\s+$/g, '')
 }
 
-async function onPolishSbPrompt() {
-  const sb = sbPromptTarget.value
-  if (!sb?.id) return
-  sbPromptPolishing.value = true
-  try {
-    const res = await storyboardsAPI.polishPrompt(sb.id)
-    if (res?.polished_prompt) {
-      sbPromptPolishedText.value = res.polished_prompt
-      ElMessage.success('通用优化提示词已生成')
-    }
-  } catch (e) {
-    ElMessage.error(e.message || '生成失败，请检查文本模型配置')
-  } finally {
-    sbPromptPolishing.value = false
-  }
-}
-
 async function onSaveSbPromptDialog() {
   const sb = sbPromptTarget.value
   if (!sb?.id) return
@@ -7076,7 +6501,6 @@ async function onSaveSbVideoFields(sb) {
       lighting_style: sbLighting.value[sb.id] || null,
       depth_of_field: sbDof.value[sb.id] || null,
       shot_type: (sbShotType.value[sb.id] || '').toString().trim() || null,
-      layout_description: (sbLayoutDescription.value[sb.id] || '').toString().trim() || null,
       creation_mode: sbCreationMode.value[sb.id] === 'universal' ? 'universal' : 'classic',
       universal_segment_text: (sbUniversalSegmentText.value[sb.id] || '').toString().trim() || null,
     })
@@ -7119,49 +6543,6 @@ function onVideoParamsDialogClosed() {
   sbUniversalSegmentText.value = { ...sbUniversalSegmentText.value, [sb.id]: (row.universal_segment_text ?? '').toString() }
 }
 
-function countDialogueLinesInSb(sb) {
-  const raw = ((sbDialogue.value[sb.id] ?? sb.dialogue) || '').toString().trim()
-  if (!raw) return 0
-  const matches = raw.match(/[\u4e00-\u9fa5A-Za-z0-9·]{1,16}[：:]/g)
-  return matches?.length || (raw ? 1 : 0)
-}
-
-function canSplitSbByAudio(sb) {
-  if (!sb?.id) return false
-  const dialogueCount = countDialogueLinesInSb(sb)
-  const hasNarration = !!((sbNarration.value[sb.id] ?? sb.narration) || '').toString().trim()
-  return dialogueCount + (hasNarration ? 1 : 0) >= 2
-}
-
-async function onSplitSbByAudio(sb) {
-  if (!sb?.id) return
-  try {
-    await ElMessageBox.confirm(
-      '将把本镜按「每句对白一条 + 旁白单独一条」拆成多个分镜，原镜变为第一条。已生成的视频不会保留。是否继续？',
-      '按对白拆镜',
-      { type: 'warning', confirmButtonText: '拆镜', cancelButtonText: '取消' }
-    )
-  } catch {
-    return
-  }
-  splitByAudioLoading.value = true
-  try {
-    if (showVideoParamsDialog.value && videoParamsTarget.value?.id === sb.id) {
-      await onSaveSbVideoFields(sb)
-    }
-    const res = await storyboardsAPI.splitByAudio(sb.id)
-    const n = res?.storyboard_ids?.length ?? 0
-    const summary = res?.plans_summary || ''
-    showVideoParamsDialog.value = false
-    await loadDrama()
-    ElMessage.success(summary ? `已拆成 ${n} 条：${summary}` : `已拆成 ${n} 条分镜`)
-  } catch (e) {
-    ElMessage.error(e.message || '拆镜失败')
-  } finally {
-    splitByAudioLoading.value = false
-  }
-}
-
 async function onSaveVideoParams() {
   const sb = videoParamsTarget.value
   if (!sb?.id) return
@@ -7187,35 +6568,6 @@ async function onBatchInferParams() {
     ElMessage.error(e.message || '推断失败')
   } finally {
     inferringParams.value = false
-  }
-}
-
-/** 一键用 AI 重新生成/优化本分镜的布局描述（自动参考上下分镜保证前后连贯） */
-async function onRegenerateLayoutDescription(sb) {
-  if (sb && typeof sb === 'object' && sb.__v_isRef) sb = sb.value
-  if (!sb?.id) return
-  regeneratingLayoutSbIds.add(sb.id)
-  try {
-    const res = await storyboardsAPI.regenerateLayoutDescription(sb.id)
-    const newText = res?.layout_description || res?.data?.layout_description
-    if (newText) {
-      // 直接用本次 AI 返回的结果更新本地编辑状态（响应里已包含新文本）
-      sbLayoutDescription.value = { ...sbLayoutDescription.value, [sb.id]: newText }
-
-      // 轻量刷新分镜列表（只更新 store 里的原始 storyboards，不触发 syncStoryboardStateFromEpisode，
-      // 避免覆盖我们刚刚写入的 sbLayoutDescription 等本地字段）
-      try { await refreshStoryboardsOnly() } catch (_) {}
-
-      ElMessage.success('布局描述已由 AI 重新优化并保存（已参考上下分镜连贯性）')
-      // 注意：不再调用 loadDrama()，因为它会全量重建所有 sbXxx 映射，可能用服务端旧数据覆盖本次结果。
-      // 等后端 rowToStoryboard 补全 layout_description 字段后，关闭再打开对话框即可看到持久化值。
-    } else {
-      ElMessage.warning('AI 未返回有效的布局描述')
-    }
-  } catch (e) {
-    ElMessage.error(e.message || '重新生成布局描述失败')
-  } finally {
-    regeneratingLayoutSbIds.delete(sb.id)
   }
 }
 
@@ -7486,49 +6838,6 @@ async function refreshStoryboardsOnly() {
   return refreshStoryboardsForEpisode(currentEpisodeId.value)
 }
 
-/**
- * 处理分镜生成返回的「剧本台词覆盖率」自检结果（后端 utils/dialogueCoverage 产出）。
- *
- * 为什么必须在界面上提示：剧本里的引号台词是**必须出现在成片里**的内容，而丢失是静默的。
- * 实测两集：「三打白骨精」21 句丢 10 句、「真假美猴王」10 句丢 1 句 —— 丢掉的句子在
- * dialogue、universal_segment_text、video_prompt 里全都没有，等于整个剧情点不存在。
- * 三打白骨精丢的正是「你连杀三人，佛门慈悲何在？」「你这泼猴，连伤两命！」这类台词，
- * 把「唐僧为什么最后要赶走悟空」的因果链挖空了，而此前没有任何提示。
- *
- * 成因是容量：**分镜能承载的台词数 ≈ 1 句/镜**，镜数不够时模型合并叙事节拍并优先保
- * 画面动作、牺牲台词。修法是加大「分镜数」重新生成（该输入框会覆盖自动估算）。
- */
-function applyDialogueCoverageWarning(taskResultRaw) {
-  // 任务结果是 JSON 字符串（见 utils/taskResult），不解析就读不到字段 —— 之前这里静默失效
-  const taskResult = parseTaskResult(taskResultRaw)
-  const cov = taskResult?.dialogue_coverage
-  const missing = Array.isArray(cov?.missing) ? cov.missing : []
-  sbDialogueMissing.value = missing.map((m) => (m && m.line) || '').filter(Boolean)
-  sbDialogueMissingDismissed.value = false
-  if (sbDialogueMissing.value.length) {
-    ElMessage.warning(
-      `有 ${sbDialogueMissing.value.length} 句剧本台词没进分镜，建议加大「分镜数」重新生成`
-    )
-  }
-}
-
-/**
- * 展示后端汇总的「生成质量报告」（utils/storyboardQualityReport）。
- *
- * 背景：这轮之前，所有自检结果（台词覆盖、提示词格式修正）只落在后端日志里 ——
- * 用户要自己去翻 /tmp/lmd-backend.log 才知道这版能不能出片。报告把
- * 镜数/时长、台词覆盖、格式自检、逐镜台词清单汇总成一份可读结论（可出片 / 建议重跑）。
- *
- * 报告**不包含**剧情点（叙事节拍）覆盖判定：剧本叙述部分没有确定性边界，关键词自动判
- * 会把「一棒…身形溃散，化作一道黑烟…消融殆尽」误判成「没打死六耳猕猴」，误报比不报更糟。
- */
-function applyQualityReport(taskResultRaw) {
-  const taskResult = parseTaskResult(taskResultRaw)
-  const report = taskResult?.quality_report
-  if (!report || typeof report !== 'object') return
-  qualityReport.value = report
-  qualityReportVisible.value = true
-}
 
 async function onGenerateStoryboard() {
   trackFilmCreateAction('generate_storyboard_click')
@@ -7557,21 +6866,11 @@ async function onGenerateStoryboard() {
         sbTruncatedWarning.value = true
         sbTruncatedDismissed.value = false
       }
-      applyDialogueCoverageWarning(pollRes?.result)
-      applyQualityReport(pollRes?.result)
     }
     await loadDrama()
     // 生成完成后静默补全空缺的摄影参数（只填未填字段，不覆盖 AI 已填的）
     storyboardsAPI.batchInferParams(epId, false).catch(() => {})
-    const polishRes = await polishUniversalSegmentsAfterGeneration({})
-    const polishedN = polishRes?.polished ?? 0
-    ElMessage.success(
-      storyboardUniversalOmni.value
-        ? polishedN > 0
-          ? `全能分镜生成完成，已自动润色 ${polishedN} 条片段`
-          : '全能分镜生成完成'
-        : '分镜生成完成'
-    )
+    ElMessage.success(storyboardUniversalOmni.value ? '全能分镜生成完成' : '分镜生成完成')
     trackFilmCreateAction('generate_storyboard_complete', {
       extra: { storyboard_count: (store.storyboards || []).length },
     })
@@ -7679,7 +6978,7 @@ async function startBatchImageGeneration() {
           let prompt = sb.polished_prompt || sb.image_prompt || sb.description || ''
           let frameTypeForCreate = gridMode.value !== 'single' ? gridMode.value : undefined
           if (useFirstLast) {
-            // 首尾帧模式下，批量生成分镜图也必须走专业首帧提示词（含 layout_description 空间合同、专用 system prompt 等）
+            // 首尾帧模式下，批量生成分镜图也必须走专业首帧提示词（专用 system prompt 等）
             prompt = await ensureProfessionalFramePrompt(sb, 'first')
             frameTypeForCreate = 'storyboard_first'
           }
@@ -8266,8 +7565,6 @@ async function runOneClickPipeline(textOnly = false) {
             sbTruncatedWarning.value = true
             sbTruncatedDismissed.value = false
           }
-          applyDialogueCoverageWarning(result?.result)
-          applyQualityReport(result?.result)
         }
         await loadDrama()
         await pipelineRest()
@@ -8283,22 +7580,8 @@ async function runOneClickPipeline(textOnly = false) {
       setPipelineStep(4, `已有 ${boards.length} 个分镜，跳过生成`)
     }
 
-    const generatedSbThisPipeline = !hadBoardsBeforeStep4
-    if (generatedSbThisPipeline && storyboardUniversalOmni.value) {
-      await checkPause()
-      await polishUniversalSegmentsAfterGeneration({
-        checkPause,
-        onShotProgress: (cur, total, sb) =>
-          setPipelineStep(
-            4,
-            `润色全能分镜(${cur}/${total}) #${sb.storyboard_number ?? cur} ${(sb.title || '').slice(0, 16)}`
-          ),
-        onShotError: (sb, msg) =>
-          addPipelineError('润色全能分镜', `镜#${sb.storyboard_number ?? sb.id}: ${msg}`),
-      })
-      await loadDrama()
-      await loadStoryboardMedia()
-    }
+    await loadDrama()
+    await loadStoryboardMedia()
 
     if (textOnly) {
       pipelineCurrentStep.value = '文本框架已就绪（未生成图片与视频）'
@@ -8773,8 +8056,6 @@ async function runRepairPipeline() {
           const result = await pollTaskWithPause(taskId, () => loadDrama())
           if (result?.paused) { await waitForResume(); return }
           if (result?.error) { addPipelineError('分镜生成', result.error); return }
-          applyDialogueCoverageWarning(result?.result)
-          applyQualityReport(result?.result)
         }
         await loadDrama()
         await pipelineRest()
@@ -8784,18 +8065,7 @@ async function runRepairPipeline() {
       }
       boards = store.storyboards || []
     }
-    if (!hadBoardsBeforeRepairSb && storyboardUniversalOmni.value) {
-      await checkPause()
-      await polishUniversalSegmentsAfterGeneration({
-        checkPause,
-        onShotProgress: (cur, total, sb) => {
-          pipelineCurrentStep.value = `润色全能分镜(${cur}/${total}) #${sb.storyboard_number ?? cur} ${(sb.title || '').slice(0, 16)}`
-        },
-        onShotError: (sb, msg) =>
-          addPipelineError('润色全能分镜', `镜#${sb.storyboard_number ?? sb.id}: ${msg}`),
-      })
-      await loadDrama()
-    }
+    await loadDrama()
     // 先拉取分镜图片/视频列表，再批量生成分镜图（并发）
     await loadStoryboardMedia()
     const boardsWithoutImg = boards.filter((sb) => !hasSbImage(sb))
@@ -10885,6 +10155,8 @@ html.light .sb-universal-tooltip strong {
   font-size: 13px;
   line-height: 1.55;
 }
+.vp-advanced-collapse { border-top: none; margin-bottom: 4px; }
+.vp-advanced-title { font-size: 12px; color: #6b7280; }
 .vp-mode-hint {
   font-size: 12px;
   color: #909399;
@@ -11060,53 +10332,7 @@ html.light .sb-ctrl-mode-btn.el-button:hover {
   position: relative;
 }
 /* 图片右上角「@AI」快捷按钮：把该分镜注入 AI 导演助手 */
-.sb-aidir-btn {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  z-index: 5;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 3px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
-  color: #fff;
-  background: rgba(75, 123, 255, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 999px;
-  cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-  transition: background 0.15s, transform 0.1s;
-  user-select: none;
-}
-.sb-aidir-btn:hover { background: rgba(75, 123, 255, 1); transform: translateY(-1px); }
-.sb-aidir-btn:active { transform: scale(0.96); }
 /* 角色/道具/场景主覆盖图 右上角 @AI 引用按钮 */
-.aidir-asset-btn {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  z-index: 5;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 3px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
-  color: #fff;
-  background: rgba(75, 123, 255, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 999px;
-  cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-  transition: background 0.15s, transform 0.1s;
-  user-select: none;
-}
-.aidir-asset-btn:hover { background: rgba(75, 123, 255, 1); transform: translateY(-1px); }
-.aidir-asset-btn:active { transform: scale(0.96); }
 /* 主图下方提示词预览 */
 .sb-main-img-prompt {
   width: 100%;

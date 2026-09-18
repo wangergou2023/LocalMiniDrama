@@ -43,13 +43,14 @@ describe('分镜续写提示词', () => {
     if (mentions === 1) assert.match(prompt, /禁止\*\*已废弃的灵境\/SoulLens/);
   });
 
-  it('续写的全能格式要求与首轮同一套（Ref2VA 官方六段结构）', () => {
+  it('续写的全能格式要求与首轮同一套（Ref2VA 精简格式）', () => {
     assert.match(prompt, /universal_segment_text/);
-    assert.match(prompt, /subject_definitions/);
-    assert.match(prompt, /retention_analysis/);
-    assert.match(prompt, /fully_preserved/);
+    assert.match(prompt, /精简格式/);
     assert.match(prompt, /\[Shot N\] At MM:SS\.mmm/);
     assert.match(prompt, /禁止成片复刻其分格或并列布局/);
+    // 六段元数据已废弃：只允许作为「不要写」出现
+    assert.match(prompt, /\*\*不要\*\* subject_definitions/);
+    assert.doesNotMatch(prompt, /fully_preserved/);
   });
 
   it('写明还需多少个分镜（65 镜必须靠续写凑齐，不能只补几个就收尾）', () => {

@@ -3,13 +3,12 @@
  *
  * 原实现只认 `…道：“台词”` 的引号形式。而新剧本（1200-1600 字那版提示词之后）把对白写成
  *   唐僧：悟空，天色将晚，你去化些斋饭来。
- * 独立成行、不带引号 —— 于是 extractScriptDialogue 返回 []，台词覆盖自检**静默失效**：
- * drama4 的 29 句台词被报成 total 0，自检「通过」，实际一句都没查。
- * 这正是当年「21 句只保住 13 句」那类静默丢台词的场景，自检必须看得见。
+ * 独立成行、不带引号 —— 于是 extractScriptDialogue 返回 []，「必须逐字保留的台词清单」
+ * 变成空清单，台词被静默丢掉（21 句只保住 13 句就是这么来的）。
  */
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { extractScriptDialogue, checkDialogueCoverage, checkDialogueOverreach } = require('../src/utils/dialogueCoverage');
+const { extractScriptDialogue } = require('../src/utils/dialogueCoverage');
 
 describe('剧本台词提取', () => {
   it('无引号的独立台词行也能抽出来', () => {
@@ -57,23 +56,6 @@ describe('剧本台词提取', () => {
   });
 });
 
-describe('台词覆盖：无引号剧本也能算出覆盖率', () => {
-  const script = '唐僧：悟空，天色将晚，你去化些斋饭来。\n假悟空：师父，斋饭化来了。';
-  it('分镜里写了台词 → 覆盖', () => {
-    const rows = [{ dialogue: '唐僧：悟空，天色将晚，你去化些斋饭来。' }, { dialogue: '假悟空：师父，斋饭化来了。' }];
-    const c = checkDialogueCoverage(script, rows);
-    assert.equal(c.total, 2);
-    assert.equal(c.covered, 2);
-  });
-  it('分镜里只写了概括（没写原话）→ 报缺失，不再静默通过', () => {
-    const rows = [{ action: '悟空满脸委屈地辩解。', dialogue: '' }, { dialogue: '假悟空：师父，斋饭化来了。' }];
-    const c = checkDialogueCoverage(script, rows);
-    assert.equal(c.total, 2);
-    assert.equal(c.covered, 1);
-    assert.equal(c.missing.length, 1);
-  });
-});
-
 /**
  * 剧本台词抽取的三处真实缺陷（都在 drama7 ep21 上实测出来）：
  *  ① 引号只认 “”/" ，不认剧本常用的「」→ 必保台词被静默抽成空数组，覆盖率自检形同虚设
@@ -100,17 +82,4 @@ describe('剧本台词抽取的真实缺陷回归', () => {
   assert.equal(/士兵们闯入/.test(lines[0].line), false, '旁白句不得进台词');
 });
 
-  it('checkDialogueOverreach 抓出「台词字段夹带旁白」', () => {
-  const scriptLines = [{ speaker: '国王', line: '全国收缴所有纺锤，当众焚毁。' }];
-  const storyboards = [
-    { id: 754, storyboard_number: 7, dialogue: '国王："全国收缴所有纺锤，当众焚毁。士兵们闯入每一户人家，把纺锤扔进广场火堆，火焰冲天。"' },
-    { id: 755, storyboard_number: 8, dialogue: '国王："全国收缴所有纺锤，当众焚毁。"' },
-    { id: 756, storyboard_number: 9, dialogue: '' },
-  ];
-  const ov = checkDialogueOverreach(scriptLines, storyboards);
-  assert.equal(ov.length, 1, JSON.stringify(ov));
-  assert.equal(ov[0].storyboard_id, 754);
-  assert.match(ov[0].extra, /士兵们闯入/);
-  assert.ok(ov[0].extra_chars >= 8);
-});
 });

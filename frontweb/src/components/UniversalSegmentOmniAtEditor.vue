@@ -5,7 +5,7 @@
       class="omni-at-editor"
       contenteditable="true"
       spellcheck="false"
-      data-placeholder="输入 @ 选择素材；编辑区显示 @场景名 / @角色名，保存与提交仍为 @图片N"
+      data-placeholder="输入 @ 选择素材；编辑区显示素材名，保存与提交为 H3 原生标签 <Picture N> / <Subject N>"
       @input="onInput"
       @blur="onBlur"
       @keydown="onKeydown"
@@ -45,7 +45,7 @@
       </div>
     </teleport>
     <div class="omni-at-footer">
-      <el-tooltip content="复制为 @图片N 格式（与提交视频一致）" placement="top">
+      <el-tooltip content="复制为 <Picture N> 格式（与提交视频一致）" placement="top">
         <el-button type="default" text size="small" class="omni-at-copy-btn" @click="onCopyCanonical">
           <el-icon><DocumentCopy /></el-icon>
           复制提示词
@@ -97,11 +97,11 @@ function slotByIndex(index) {
 
 function canonicalAt(index) {
   const n = Number(index)
-  if (!Number.isFinite(n) || n < 1) return '@图片1'
-  return `@图片${n}`
+  if (!Number.isFinite(n) || n < 1) return '<Picture 1>'
+  return `<Picture ${n}>`
 }
 
-/** 编辑区展示用 @token；与存库/提交的 @图片N 一一对应 */
+/** 编辑区展示用「素材名」chip；与存库/提交的 <Picture N> 一一对应 */
 function makeDisplayAtToken(index) {
   const n = Number(index)
   const slot = slotByIndex(n)
@@ -126,7 +126,8 @@ function applyPlainTextToEditor(el, text) {
     el.appendChild(document.createTextNode(''))
     return
   }
-  const re = /@图片(\d+)/g
+  // 兼容历史文本里的 @图片N，写回时统一成 <Picture N>
+  const re = /<Picture\s+(\d+)>|@图片(\d+)/g
   let last = 0
   let m
   while ((m = re.exec(raw)) !== null) {
@@ -134,7 +135,7 @@ function applyPlainTextToEditor(el, text) {
     const span = document.createElement('span')
     span.className = CHIP_CLASS
     span.contentEditable = 'false'
-    span.dataset.n = m[1]
+    span.dataset.n = m[1] || m[2]
     const disp = makeDisplayAtToken(m[1])
     span.textContent = disp
     span.setAttribute('role', 'button')
@@ -148,7 +149,7 @@ function applyPlainTextToEditor(el, text) {
   if (last < raw.length) el.appendChild(document.createTextNode(raw.slice(last)))
 }
 
-/** 规范串：仅含 @图片N，供 v-model / 存库 / 提交视频 / 复制 */
+/** 规范串：仅含 <Picture N>（H3 原生标签），供 v-model / 存库 / 提交视频 / 复制 */
 function serializeEditor(el) {
   if (!el) return ''
   let out = ''
@@ -290,7 +291,7 @@ function maybeOpenAtMenu() {
   const off = getCaretCanonicalOffset(el)
   if (off < 1 || s[off - 1] !== '@') return
   const before = s.slice(0, off)
-  if (/@图片\d+$/.test(before)) return
+  if (/(?:@图片|<Picture\s*)\d*>?$/.test(before)) return
   if (before.endsWith('@@')) return
   insertAtOffset = off
   menuMode = 'insert'
@@ -383,13 +384,14 @@ function onPickSlot(index) {
     closeMenu()
     return
   }
-  const newS = s.slice(0, at - 1) + `@图片${index}` + s.slice(at)
+  const token = canonicalAt(index)
+  const newS = s.slice(0, at - 1) + token + s.slice(at)
   applyPlainTextToEditor(el, newS)
   const next = serializeEditor(el)
   skipNextModelWatch = true
   emit('update:modelValue', next)
   nextTick(() => {
-    const pos = at - 1 + (`@图片${index}`).length
+    const pos = at - 1 + token.length
     setCaretCanonicalOffset(el, pos)
     el.focus()
   })
@@ -446,7 +448,7 @@ async function onCopyCanonical() {
   const text = serializeEditor(el)
   try {
     await navigator.clipboard.writeText(text)
-    ElMessage.success('已复制（@图片N 格式，与提交一致）')
+    ElMessage.success('已复制（<Picture N> 格式，与提交一致）')
   } catch (_) {
     try {
       const ta = document.createElement('textarea')
@@ -457,7 +459,7 @@ async function onCopyCanonical() {
       ta.select()
       document.execCommand('copy')
       document.body.removeChild(ta)
-      ElMessage.success('已复制（@图片N 格式）')
+      ElMessage.success('已复制（<Picture N> 格式）')
     } catch (e2) {
       ElMessage.error(e2?.message || '复制失败')
     }

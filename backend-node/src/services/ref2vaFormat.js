@@ -38,6 +38,10 @@ const REF2VA_SECTIONS = [
   'non_diegetic_music',
 ];
 
+/** 精简格式（本机折中版）段列表：不要 subject_definitions / summary / retention_analysis 三段元数据，
+ *  也不再用 <Subject N> —— 参考图直接用 <Picture N> 指，编号 = 提交顺序。 */
+const LEAN_SECTIONS = ['detailed_description', 'overall_soundscape', 'non_diegetic_music'];
+
 /** 可见内容的保留关系标记（固定英文值） */
 const VISIBLE_MARKERS = ['fully_preserved', 'partially_preserved', 'attribute_transfer', 'weak_reference'];
 /** 音频的保留关系标记（固定英文值） */
@@ -58,7 +62,7 @@ const RETENTION_LINE_RE = new RegExp(
  * 把 ust 拆成六段。
  * @returns {{ok:boolean, sections:Object<string,string>, order:string[], missing:string[], extraHead:string[]}}
  */
-function parseRef2vaSections(text) {
+function parseRef2vaSections(text, expectedSections = REF2VA_SECTIONS) {
   const src = String(text || '').replace(/\r\n?/g, '\n');
   const lines = src.split('\n');
   const sections = {};
@@ -84,9 +88,9 @@ function parseRef2vaSections(text) {
     }
   }
   for (const k of Object.keys(sections)) sections[k] = sections[k].trim();
-  const missing = REF2VA_SECTIONS.filter((s) => !(s in sections));
+  const missing = expectedSections.filter((s) => !(s in sections));
   // 顺序必须是官方顺序的子序列（允许省略，但出现了的必须按序）
-  const expected = REF2VA_SECTIONS.filter((s) => order.includes(s));
+  const expected = expectedSections.filter((s) => order.includes(s));
   const orderOk = expected.join('|') === order.join('|');
   return { ok: missing.length === 0 && orderOk && extraHead.length === 0, sections, order, missing, extraHead, orderOk };
 }
@@ -108,9 +112,27 @@ function collectLabels(text) {
  *          minWords?:number, maxWords?:number}} [opts]
  * @returns {{ok:boolean, problems:string[], sections:Object, shots:Array}}
  */
+/**
+ * 是否是精简格式（本机折中版）：没有 subject_definitions，只有 detailed_description + 声音两段。
+ * 校验与修复必须用同一套判据 —— 之前 repairRef2va 没有这个分流，
+ * 于是**规范要求的精简格式反而一律被判 fatal**（缺 subject_definitions），
+ * 模型写的正文连同 <Picture N> 参考图映射行全被丢掉、换成零槽位兜底模板：
+ * 表现就是「重新生成分镜后片段描述里没有角色」。
+ */
+function isLeanRef2va(text) {
+  const src = String(text || '');
+  return !/subject_definitions\s*[:：]/i.test(src) && /detailed_description\s*[:：]/i.test(src);
+}
+
 function validateRef2va(text, opts = {}) {
+  const src = String(text || '');
   const problems = [];
-  const parsed = parseRef2vaSections(text);
+
+  // 精简格式（本机折中版）：没有 subject_definitions，只有 detailed_description + 声音两段。
+  // 走独立校验，不再要求 <Subject N> / retention_analysis。
+  if (isLeanRef2va(src)) return validateLeanRef2va(src, opts, problems);
+
+  const parsed = parseRef2vaSections(src);
   if (parsed.extraHead.length) problems.push(`段名之前有多余内容：${parsed.extraHead[0].slice(0, 40)}`);
   if (parsed.missing.length) problems.push(`缺少段：${parsed.missing.join(', ')}`);
   if (!parsed.orderOk) problems.push(`段顺序不符（应为 ${REF2VA_SECTIONS.join(' → ')}）`);
@@ -156,8 +178,18 @@ function validateRef2va(text, opts = {}) {
     if (!raLabels.has(l.raw)) problems.push(`<Subject ${l.n}> 缺少 retention_analysis 行`);
   }
 
-  // detailed_description：风格句在 [Shot 1] 之前；[Shot 1] 无时间戳；后续带时间戳（§5.1/§5.2）
-  const dd = s.detailed_description || '';
+  const { shots, words } = checkShotsAndTimeline(s.detailed_description || '', opts, problems);
+  checkCommonSyntax(src, opts, problems);
+
+  return { ok: problems.length === 0, problems, sections: s, shots, words, format: 'six_section' };
+}
+
+/**
+ * 镜头与时间戳检查（两种格式共用）。
+ * @returns {{shots:Array, words:number}}
+ */
+function checkShotsAndTimeline(ddRaw, opts, problems) {
+  const dd = String(ddRaw || '');
   if (!dd.trim()) problems.push('detailed_description 为空');
   const shots = [];
   SHOT_RE.lastIndex = 0;
@@ -167,9 +199,6 @@ function validateRef2va(text, opts = {}) {
   else {
     if (shots[0].n !== 1) problems.push('第一个镜头必须是 [Shot 1]');
     if (shots[0].at) problems.push('[Shot 1] 不应带时间戳');
-    if (shots[0].index > 0 && dd.slice(0, shots[0].index).replace(/^[\s\S]*?\n/, '').trim().length === 0) {
-      // 允许只写一段风格句，这里不做强制
-    }
     for (let i = 1; i < shots.length; i++) {
       if (shots[i].n !== shots[i - 1].n + 1) problems.push(`镜头编号不连续：[Shot ${shots[i - 1].n}] → [Shot ${shots[i].n}]`);
       if (!shots[i].at) problems.push(`[Shot ${shots[i].n}] 缺少 At MM:SS.mmm, 时间戳`);
@@ -185,18 +214,18 @@ function validateRef2va(text, opts = {}) {
     }
   }
   if (opts.maxShots && shots.length > opts.maxShots) problems.push(`镜头数 ${shots.length} > 上限 ${opts.maxShots}`);
-
-  // 字数（英文词；中文按空白/标点近似切分也能反映量级）
-  const words = String(dd).split(/[\s,.;:!?，。；：！？、]+/).filter((w) => w.length > 1).length;
+  const words = dd.split(/[\s,.;:!?，。；：！？、]+/).filter((w) => w.length > 1).length;
   if (opts.minWords && words < opts.minWords) problems.push(`detailed_description 偏短（${words} < ${opts.minWords}）`);
   if (opts.maxWords && words > opts.maxWords) problems.push(`detailed_description 偏长（${words} > ${opts.maxWords}）`);
+  return { shots, words };
+}
 
-  // <d> 配平
+/** <d> 配平 / 标签越界 / 废弃语法（两种格式共用） */
+function checkCommonSyntax(text, opts, problems) {
   const open = (String(text).match(/<d>/g) || []).length;
   const close = (String(text).match(/<\/d>/g) || []).length;
   if (open !== close) problems.push(`<d> 与 </d> 不配平（${open}/${close}）`);
 
-  // 标签越界（引用了不存在的 <Picture N> / <Audio j>）
   const maxPic = Number(opts.availablePictures);
   const maxAud = Number(opts.availableAudios);
   if (Number.isFinite(maxPic) && maxPic >= 0) {
@@ -210,12 +239,102 @@ function validateRef2va(text, opts = {}) {
     }
   }
 
-  // 已废弃格式的指纹
-  if (/@图片\s*\d/.test(text)) problems.push('仍在使用废弃的 @图片N（应为 <Picture N> / <Subject N>）');
+  // H3 只认 <Picture N> / <Subject N>。@图片N（含「（@图片N）」人类标注）一律不接受：
+  // 后端 toPictureTags 会把 @图片N 再转一次，正文里就出现 <Picture 1>（<Picture 1>） 重复参考标签。
+  if (/@图片\s*\d/.test(text)) problems.push('仍在使用废弃的 @图片N（应为 <Picture N>，正文里也不要写「（@图片N）」标注）');
   if (/@人物\s*\d/.test(text)) problems.push('使用了禁止的 @人物N');
   if (/\[禁BGM\]|\[禁字幕\]/.test(text)) problems.push('含灵境格式标记');
+}
 
-  return { ok: problems.length === 0, problems, sections: s, shots, words };
+/**
+ * 精简格式（本机折中版）校验。
+ * 只要三段：detailed_description → overall_soundscape → non_diegetic_music；
+ * 段名前可以写 `<Picture N>：…` 参考映射行；不再需要 <Subject N> 与 retention_analysis。
+ */
+function validateLeanRef2va(text, opts, problems) {
+  const parsed = parseRef2vaSections(text, LEAN_SECTIONS);
+  if (parsed.missing.length) problems.push(`缺少段：${parsed.missing.join(', ')}`);
+  if (!parsed.orderOk) problems.push(`段顺序不符（应为 ${LEAN_SECTIONS.join(' → ')}）`);
+  // 段名前允许写参考映射与约束：映射行、环境参考约束（提到 <Picture N>），
+  // 以及参考音频的音色绑定行（规范允许，且**只有** <Audio j> 时也必须允许 ——
+  // 兜底模板在没有任何画外解说音频时只有这一行，判它多余会让自己的兜底不合规）：
+  //   <Picture 1>：场景「吴家客厅」——沿用…
+  //   环境、光影与陈设定性参考 <Picture 1>。若为宫格/拼图，仅取统一空间…
+  //   <Audio 1> is the voice-timbre reference for the character “唐僧” (S1).
+  const badHead = parsed.extraHead.filter((l) => !/<Picture\s+\d+>/.test(l) && !/<Audio\s+\d+>/i.test(l));
+  if (badHead.length) problems.push(`段名之前有多余内容：${badHead[0].slice(0, 40)}`);
+
+  const s2 = parsed.sections;
+  const { shots, words } = checkShotsAndTimeline(s2.detailed_description || '', opts, problems);
+  checkCommonSyntax(text, opts, problems);
+  for (const k of ['overall_soundscape', 'non_diegetic_music']) {
+    if (!(s2[k] || '').trim()) problems.push(`${k} 为空`);
+  }
+  return { ok: problems.length === 0, problems, sections: s2, shots, words, format: 'lean' };
+}
+
+/**
+ * 精简格式的**机械修复**：段名前的参考图映射行（`<Picture N>：<kind>「名字」——…`）原样保留，
+ * 只补缺失的声音两段、并把 [Shot N] 归一到从 1 开始。
+ *
+ * 正文（detailed_description）缺失 → fatal（没法凭空造镜头），与六段格式同一判据。
+ *
+ * @returns {{fatal:boolean, text:string, changes:string[]}}
+ */
+function repairLeanRef2va(text, opts = {}) {
+  const raw = String(text || '');
+  const changes = [];
+  const head = [];
+  const sec = { detailed_description: [], overall_soundscape: [], non_diegetic_music: [] };
+  let cur = null;
+  for (const line of raw.split('\n')) {
+    const m = line.match(/^\s*(detailed_description|overall_soundscape|non_diegetic_music)\s*[:：]\s*/i);
+    if (m) {
+      cur = m[1].toLowerCase();
+      const rest = line.slice(m[0].length).trim();
+      if (rest) sec[cur].push(rest);
+      continue;
+    }
+    if (cur) sec[cur].push(line);
+    else head.push(line);            // 段名前：参考图映射行 + 环境参考约束
+  }
+
+  const ddRaw = sec.detailed_description.join('\n').trim();
+  if (!ddRaw) return { fatal: true, text: raw, changes: ['缺少 detailed_description，无法机械修复'] };
+
+  // [Shot N] 重编号（同六段格式：每条 ust 都是独立一次生成，首拍永远是 [Shot 1]）
+  let dd = ddRaw;
+  {
+    SHOT_RE.lastIndex = 0;
+    const nums = [];
+    let m2;
+    while ((m2 = SHOT_RE.exec(dd))) nums.push(Number(m2[1]));
+    if (nums.length > 0 && nums[0] !== 1) {
+      const map = new Map();
+      nums.forEach((n, i) => { if (!map.has(n)) map.set(n, i + 1); });
+      dd = dd.replace(/\[Shot\s+(\d+)\]/g, (full, d) => (map.get(Number(d)) ? `[Shot ${map.get(Number(d))}]` : full));
+      changes.push(`[Shot N] 重编号为 1..${map.size}（原首拍为 ${nums[0]}）`);
+    }
+  }
+
+  const ss = sec.overall_soundscape.join('\n').trim()
+    || String(opts.soundscapeFallback || '').trim()
+    || '环境声与动作音效自然延续。';
+  const nm = sec.non_diegetic_music.join('\n').trim() || '无（不使用背景音乐）。';
+  if (!sec.overall_soundscape.join('\n').trim()) changes.push('补 overall_soundscape');
+  if (!sec.non_diegetic_music.join('\n').trim()) changes.push('补 non_diegetic_music');
+
+  const headText = head.join('\n').replace(/\s+$/, '');
+  const out = [
+    headText,
+    'detailed_description:',
+    dd,
+    'overall_soundscape:',
+    ss,
+    'non_diegetic_music:',
+    nm,
+  ].filter((x, i) => !(i === 0 && !x)).join('\n');
+  return { fatal: false, text: out, changes };
 }
 
 /**
@@ -231,50 +350,32 @@ function buildRef2vaFallback(sb, d, slots, opts = {}) {
   const styleHint = String(opts.styleHint || '').trim();
   const dur = Math.max(1, Number(d.durationSec) || 8);
   const lines = [];
-  const subj = [];
-  let n = 0;
   const sceneSlot = (slots || []).find((s) => s.kind === '场景');
   const charSlots = (slots || []).filter((s) => s.kind === '角色');
   const propSlots = (slots || []).filter((s) => s.kind === '道具');
   const numOf = (slot) => (slot ? slot.index : 0);
 
-  if (sceneSlot) {
-    n += 1;
-    subj.push(`<Subject ${n}> 是 <Picture ${numOf(sceneSlot)}> 中的「${sceneSlot.name}」——沿用其空间结构、光线与氛围。`);
-  }
-  for (const c of charSlots) {
-    n += 1;
-    subj.push(`<Subject ${n}> 是 <Picture ${numOf(c)}> 中的角色「${c.name}」——其外貌、发型与服装来自该图。`);
-  }
-  for (const p of propSlots) {
-    n += 1;
-    subj.push(`<Subject ${n}> 是 <Picture ${numOf(p)}> 中的道具「${p.name}」——其外形来自该图。`);
-  }
-  for (const a of opts.audioSlots || []) {
-    const target = charSlots.find((c) => c.name === a.name);
-    const sid = a.speakerId ? ` (${a.speakerId})` : '';
-    if (target) {
-      const idx = (sceneSlot ? 1 : 0) + charSlots.indexOf(target) + 1;
-      subj.push(`<Audio ${a.index}> is the voice-timbre reference for <Subject ${idx}>${sid}.`);
-    } else {
-      subj.push(`<Audio ${a.index}> is the voice-timbre reference${sid}.`);
-    }
-  }
-
   const loc = [sb?.location, sb?.time].filter(Boolean).join('，') || '本镜空间';
   const act = String(d.action || '').trim() || '人物在场景内完成本镜戏核动作';
 
-  lines.push('subject_definitions:');
-  lines.push(...(subj.length ? subj : ['<Subject 1> 为本镜场景的空间与光线来源。']));
-  lines.push('summary:');
-  lines.push(`${loc}；${act.slice(0, 120)}。`);
-  lines.push('retention_analysis:');
-  for (let i = 1; i <= n; i++) {
-    lines.push(`<Subject ${i}> (appears in [Shot 1]): fully_preserved - 沿用参考素材定义的角色/空间特征。`);
-  }
+  // 与规范同格式：**精简格式**（段名前 <Picture N> 映射行 + 三段落）。
+  // 以前这里产出的是旧六段格式（subject_definitions / summary / retention_analysis + <Subject N>），
+  // 而规范早已明令禁止 <Subject N> 与那三段元数据 —— 兜底格式与正产不一致，
+  // 兜底本身就成了脏数据源（本项目已经吃过一次这个教训，见文件顶部注释）。
+  const mapLine = [];
+  if (sceneSlot) mapLine.push(`<Picture ${numOf(sceneSlot)}>：场景「${sceneSlot.name}」——沿用其空间结构、光线与氛围。`);
+  for (const c of charSlots) mapLine.push(`<Picture ${numOf(c)}>：角色「${c.name}」——其外貌、发型与服装来自该图。`);
+  for (const p of propSlots) mapLine.push(`<Picture ${numOf(p)}>：道具「${p.name}」——其外形来自该图。`);
   for (const a of opts.audioSlots || []) {
-    lines.push(`<Audio ${a.index}>: reference - 仅参考其音色与语气，不复述原音频内容。`);
+    const target = charSlots.find((c) => c.name === a.name);
+    const sid = a.speakerId ? ` (${a.speakerId})` : '';
+    mapLine.push(
+      target
+        ? `<Audio ${a.index}> is the voice-timbre reference for the character “${target.name}”${sid}.`
+        : `<Audio ${a.index}> is the voice-timbre reference for the off-screen narrator${sid}.`
+    );
   }
+  lines.push(...mapLine);
   lines.push('detailed_description:');
   if (styleHint) lines.push(styleHint);
   lines.push(`[Shot 1] ${act}`);
@@ -300,6 +401,7 @@ function buildRef2vaFallback(sb, d, slots, opts = {}) {
  */
 function repairRef2va(text, opts = {}) {
   const raw = String(text || '');
+  if (isLeanRef2va(raw)) return repairLeanRef2va(raw, opts);
   const changes = [];
   const parsed = parseRef2vaSections(raw);
   const s = parsed.sections;
@@ -385,6 +487,7 @@ module.exports = {
   parseRef2vaSections,
   validateRef2va,
   collectLabels,
+  isLeanRef2va,
   buildRef2vaFallback,
   repairRef2va,
 };

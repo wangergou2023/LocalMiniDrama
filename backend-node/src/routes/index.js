@@ -22,8 +22,6 @@ const audioRoutes = require('./audio');
 const promptOverridesRoutes = require('./promptOverrides');
 const sceneModelMapRoutes = require('./sceneModelMap');
 const workflowRoutes = require('./workflows');
-const agentService = require('../services/agentService');
-const agentRoutes = require('./agents');
 
 function setupRouter(cfg, db, log) {
   const r = express.Router();
@@ -49,7 +47,6 @@ function setupRouter(cfg, db, log) {
   const videoMerges = videoMergeRoutes(db, log);
   const assets = assetRoutes(db, log);
   const audio = audioRoutes(db, log, cfg);
-  const agents = agentRoutes(db, cfg, log);
   const promptOverrides = promptOverridesRoutes.routes(db, log);
 
   // ---------- dramas ----------
@@ -226,8 +223,6 @@ function setupRouter(cfg, db, log) {
   r.post('/episodes/:episode_id/props/extract', prop.extractProps);
   r.post('/episodes/:episode_id/characters/extract', stub.episodeCharactersExtract);
   r.get('/episodes/:episode_id/storyboards', storyboards.episodeStoryboardsGet);
-  // 生成质量报告（按需重算：润色完成后刷新 / 手动重新自检）
-  r.get('/episodes/:episode_id/storyboards/quality-report', storyboards.episodeQualityReport);
   r.post('/episodes/:episode_id/finalize', drama.finalizeEpisode);
   r.get('/episodes/:episode_id/download', drama.downloadEpisodeVideo);
 
@@ -260,14 +255,6 @@ function setupRouter(cfg, db, log) {
   r.get('/images/:id', images.get);
   r.delete('/images/:id', images.delete);
 
-  // ---------- AI 导演助手 ----------
-  r.post('/agent/chat', (req, res) => agentService.chat(db, log, cfg, req, res));
-  r.post('/agent/qc', (req, res) => agentService.qc(db, log, cfg, req, res));
-  // ---- Agent 三层：只读审查 / 可写优化（建议→确认）/ 调度 ----
-  r.get('/agents', agents.list);
-  r.get('/agents/:agentId/tools', agents.tools);
-  r.post('/agents/:agentId/run', agents.run);
-  r.post('/agents/apply', agents.apply);
 
   // ---------- videos ----------
   r.get('/videos', videos.list);
@@ -306,16 +293,11 @@ function setupRouter(cfg, db, log) {
   r.get('/storyboards/:id/frame-prompts', storyboards.framePromptsGet);
   r.put('/storyboards/:id/frame-prompts/:frame_type', storyboards.framePromptSave);
   r.post('/storyboards/:id/link-tail-frame', tailFrameLink.linkTailFrame);
-  r.post('/storyboards/:id/polish-prompt', storyboards.polishPrompt);
-  r.post('/storyboards/:id/universal-segment-polish-stream', storyboards.polishUniversalSegmentStream);
-  r.post('/storyboards/:id/classic-video-prompt-polish-stream', storyboards.polishClassicVideoPromptStream);
   r.post('/storyboards/:id/universal-segment-prompt-stream', storyboards.generateUniversalSegmentStream);
   r.post('/storyboards/:id/universal-segment-prompt', storyboards.generateUniversalSegmentPrompt);
   r.post('/storyboards/batch-infer-params', storyboards.batchInferParams);
   r.post('/storyboards/:id/upscale', storyboards.upscale);
-  r.post('/storyboards/:id/regenerate-layout-description', storyboards.regenerateLayoutDescription);
   r.post('/storyboards/:id/rebuild-video-prompt', storyboards.rebuildVideoPrompt);
-  r.post('/storyboards/:id/split-by-audio', storyboards.splitByAudio);
 
   // ---------- audio ----------
   r.post('/audio/extract', audio.extract);

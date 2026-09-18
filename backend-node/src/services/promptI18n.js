@@ -306,122 +306,48 @@ function getStoryboardSystemPrompt(cfg) {
 /**
  * 全能片段描述统一格式说明（分镜批量生成 / 生成全能提示词 / 润色 共用）
  */
-function getUniversalOmniMultiBeatFormatSpec(cfg) {
-  const { DEFAULT_LINE3 } = require('./universalOmniMultiBeatFormat');
-  // 项目画风是否是**单色**（水墨/黑白/灰度）—— 决定 §5 正文能不能写颜色词。
+/** 片段描述规范里**按项目画风动态生成**的那条（不可编辑，走 locked_suffix 概念） */
+function universalFormatStyleRule(cfg) {
   const _styleText = String(
     (cfg && cfg.style && (cfg.style.default_style_en || cfg.style.default_style || cfg.style.default_style_zh)) || ''
   );
   const monochromeStyle = /monochrome|ink[\s-]?wash|sumi-?e|grayscale|black and white|水墨|单色|黑白/i.test(_styleText);
-  if (isEnglish(cfg)) {
-    return `
-[universal_segment_text — Ref2VA full-reference rewrite, OFFICIAL SIX-SECTION FORMAT]
-FORBIDDEN: SoulLens/SEEDANCE single-line rows; @图片N or @人物N tokens.
+  return monochromeStyle
+    ? '- **单色项目硬规则（本片画风是单色）**：正文**禁止任何颜色形容词与色调词** —— 不写 warm / cool / golden / amber / green / red / blue / vivid / rich colors，也不写「暖调 / 冷调 / 绿色 / 金色 / 彩色」。服装、道具、环境一律改用**墨色浓淡与明暗**描述：deep ink wash / pale ink / dark silhouette / high contrast / mid-tone wash；材质用 paper texture / dry brush / wet ink 这类词。颜色只由风格块决定。'
+    : '- **色彩基调以风格块为准**：正文不要写与项目画风冲突的色调词。';
+}
 
-Write the six sections **in this exact order**, section names kept in English:
-subject_definitions → summary → retention_analysis → detailed_description → overall_soundscape → non_diegetic_music
-
-subject_definitions: one line per tracked referenced item.
-  Reusable visible content (character / scene / prop) is a <Subject N>, and the picture it comes from is
-  cited INSIDE that definition:
-    <Subject 1> is the environment "荒山野岭山道" in <Picture 1> — keep its spatial structure, light and mood.
-    <Subject 2> is the character "唐僧" in <Picture 2> — appearance, hairstyle and costume come from that image.
-  <Picture N> gets its OWN entry ONLY when that image itself serves as a shot's first frame / keyframe /
-  last frame / composition anchor. An image used merely to define a character, scene, costume or style must
-  NOT get a standalone <Picture N> entry.
-  Reference audio: <Audio 1> is the voice-timbre reference for <Subject 2> (S1).
-  Off-screen narration with no on-screen subject: <Audio 1> is the voice-timbre reference for the off-screen narrator (S1).
-summary: one paragraph narrating the subjects, the shot flow and each reference asset's role, using ONLY the
-  labels already defined above (never introduce a new label here).
-retention_analysis: one line per defined label, with these FIXED English markers:
-    <Subject 2> (appears in [Shot 1], [Shot 3]): fully_preserved - which characteristics are kept.
-  visible content markers: fully_preserved / partially_preserved / attribute_transfer / weak_reference
-  audio markers:           fully_copy / partially_copy / reference / weak_reference
-  Never write (S1)-style speaker IDs in this section.
-detailed_description: start with one or two English sentences establishing the style, then narrate shot by shot:
-${monochromeStyle ? `  HARD RULE (this project is monochrome): never write colour adjectives or palette words anywhere in
-  summary / retention_analysis / detailed_description — no warm, cool, golden, amber, green, red, blue, vivid,
-  rich colours. Describe costume, props and environment with INK VALUES and light only: deep ink wash, pale ink,
-  dark silhouette, high contrast, mid-tone wash, dry brush, paper texture. Colour comes from the style block alone.` : `  Palette: follow the style block; never introduce a conflicting colour mood.`}
-    [Shot 1] …                      (the opening shot carries NO timestamp)
-    [Shot 2] At 00:03.200, the camera cuts to …   (every later shot carries its cut timestamp)
-  Camera movement is written as natural English inside the sentence (type, amplitude, speed).
-  A speaking subject is written <Subject 2> (S1) says, <d>[Chinese] verbatim line</d>.
-  Dialogue crossing a cut uses <scenetrans> on both sides; speech cut off by the end uses <cutoff>.
-  INTRA-SHOT CUTS (H3 native multi-shot) — HARD RULES:
-  A single clip MAY contain 2-4 cuts inside it, marked with the model's own notation:
-  [Shot 1] … / [Shot 2] At 00:03.200, the camera cuts to … / [Shot 3] At 00:05.600, …
-  Use them ONLY when this shot's ACTION is a fight / chase / combo / rapid action burst whose beats one
-  unbroken camera move cannot cover — then push the establishing beat into the first 1-2 seconds of [Shot 1]
-  and give the remaining time to the clash. Every other shot stays single-shot.
-  Each universal_segment_text is ONE independent generation, so the first beat is ALWAYS [Shot 1] —
-  never number it with the storyboard index (storyboard 2 also starts at [Shot 1], not [Shot 2]).
-  [Shot 1] carries NO timestamp; every later shot carries "At MM:SS.mmm,"; timestamps strictly increase and
-  stay below the clip duration; numbering starts at 1 and is consecutive; at most 4 shots.
-  Never express a cut with wording like "cut to shot 2" — only the notation above creates a cut.
-  Never write 分镜2：-style lines (one universal_segment_text = one generation call).
-  Target 200-350 English words for a 5-10 s single clip (cover composition, subject, environment, action,
-  camera, sound and dialogue); dialogue-dense clips prioritise the complete spoken timeline.
-  NO INTRA-SHOT CUTS IN DIALOGUE SHOTS (hard rule): a shot containing dialogue stays a single continuous take —
-  never use [Shot 2]+ there, because a cut tears one spoken line in half and breaks lip-sync (observed: a 44-character
-  line split across two beats with <scenetrans>). Put any camera move BEFORE the line and lock the camera while it is
-  spoken. Cross-beat dialogue is allowed only when a single line's required seconds exceed the 15 s clip ceiling, and
-  then BOTH sides must carry <scenetrans>.
-  NO ON-SCREEN TEXT (hard rule): the finished frame must contain NO lettering at all — no subtitles, floating
-  dialogue text, shop signs, banners, notices, letter contents, watermarks or logos, and no garbled or pseudo
-  glyphs (H3 has been observed painting the Chinese line as a slab of garbled characters over the flames for
-  over a second). Dialogue is carried by mouth shapes plus audio only. Sole exception: when the script explicitly
-  requires visible text (an edict, a letter), keep it short and legible (e.g. a notice board reading "WANTED").
-  CAMERA HOLDS DURING DIALOGUE (hard rule): while a speaker's line is being delivered the camera stays
-  LOCKED — no cut, no push/pull, no orbit, no crane (a faint natural handheld is fine). Camera motion belongs
-  before or after the line; moving during speech smears the lip sync. Only the current speaker may show
-  mouth/throat articulation; other characters must not read as speaking, and the line must match that
-  character's mouth shapes.
-overall_soundscape: ambience and physical sounds across the whole clip (shot-synced events stay in
-  detailed_description). If a reference audio layer supplies ambience, state its copy/reference relation here.
-non_diegetic_music: audience-only score; this project uses NO background music — write "none".
-
-LANGUAGE: write the prose in Chinese for the in-app text (it is translated to English for the video model),
-but keep ALL structural tokens in English verbatim: section names, <Subject N>/<Picture N>/<Audio j>,
-the retention markers, [Shot N] At MM:SS.mmm, <d>…</d>, <scenetrans>, <cutoff>.
-PRE-OUTPUT SELF-CHECK (rewrite the shot if any item fails — never emit substandard content):
-1. CAST COMPLETE: every character appearing in this clip maps to a <Subject N> slot; never invent a character
-   that is absent, and never drop one listed in the storyboard fields.
-2. SCENE CONTINUITY: time of day, location and lighting continue seamlessly from the previous clip (unless the
-   script explicitly cuts); key prop positions/states carry over from the previous clip's ending.
-3. ACTION CONTINUITY: this clip's opening action continues the previous clip's ending state (use NEIGHBOR blocks).
-4. DIALOGUE: verbatim text inside <d>…</d>, correct speaker number, no mouth articulation for non-speakers.
-5. PROHIBITED CONTENT: rewrite blood/gore/nudity/political-sensitive wording with neutral terms, keeping the plot logic.
-
-Reference tokens: <Picture 1> = scene/environment; <Picture 2>+ = characters in characters[] order; then props.
-The environment constraint (keep verbatim as its own note inside subject_definitions or summary):
-${DEFAULT_LINE3}`;
-  }
+/**
+ * 片段描述规范正文（**可编辑**：提示词设置页的「片段描述规范」覆盖这一段）。
+ * 画风相关那条由 universalFormatStyleRule 在运行时追加，不在这里。
+ */
+function buildUniversalFormatSpecBody() {
+  const { DEFAULT_LINE3 } = require('./universalOmniMultiBeatFormat');
   return `
-【universal_segment_text —— Ref2VA 全参考重写，**官方六段结构**】
+【universal_segment_text —— Ref2VA 精简格式（本机折中版）】
 **禁止**已废弃的灵境/SoulLens 单行格式（「主体：」「叙事动态：」等段标、行末 [禁BGM][禁字幕]）；
-**禁止** @图片N、@人物N —— 参考资产一律写字面量标签 <Picture N> / <Subject N> / <Audio j>。
+**禁止** @图片N、@人物N、@姓名 指图，也**禁止 <Subject N>** —— 参考资产一律写字面量标签 <Picture N>：
+H3 视频节点只认 <Picture N> / <Video k> / <Audio j> 这套 token；写成 @图片N 只会被当成普通文字，
+指不到任何参考图。界面上的「哪张图」由应用按 <Picture N> 编号自己显示，
+所以正文里**不要**写「（@图片N）」这类人类标注，也不要写 @素材名。
 
-必须**按下列六段顺序**书写，段名原样保留英文（每段名后跟英文冒号）：
+必须**按下列精简格式**书写（本机折中版：一镜一次生成，**不要** subject_definitions / summary /
+retention_analysis 三段元数据，**不要**再用 <Subject N> —— 参考图直接由 <Picture N> 指，编号 = 参考图提交顺序）：
 
-**subject_definitions:**（每个被追踪的参考内容一行）
-- 角色/场景/道具这类**可复用可见内容**一律建 <Subject N>，并把它的**图片来源写在定义里**：
-    <Subject 1> 是 <Picture 1> 中的「荒山野岭山道」——沿用其空间结构、光线与氛围。
-    <Subject 2> 是 <Picture 2> 中的角色「唐僧」——外貌、发型与服装来自该图。
-    <Subject 3> 是 <Picture 3> 中的角色「悟空」——外貌、发型与服装来自该图。
-- **<Picture N> 只在「该图本身充当某个镜头的首帧/关键帧/尾帧/构图锚」时才单独列条目**；
-  只用来定义角色、场景、服装或风格的图，**不要**为它单列 <Picture N>，写进对应 <Subject N> 定义即可。
-- 参考音频写成：<Audio 1> is the voice-timbre reference for <Subject 2> (S1).
-- **画外解说 / 旁白没有对应画面主体时**（宣传片、纪录片式解说），写成：<Audio 1> is the voice-timbre reference for the off-screen narrator (S1). —— 这种情况绑说话人标签即可，不要硬塞一个 <Subject N>。
+**段名前：参考图映射行（每张图一行，编号必须与提交顺序一致）**
+    <Picture 1>：场景「荒山野岭山道」——沿用其空间结构、光线与氛围。
+    <Picture 2>：角色「唐僧」——外貌、发型与服装来自该图。
+    <Picture 3>：道具「九齿钉耙」——外形与材质来自该图。
+- 编号规则：**<Picture 1> = 场景**；**<Picture 2> 起 = 角色**（按 characters[] 顺序）；其后是道具。
+- 正文里**不要再出现 <Subject N>**：要指人或物时直接写名字（「唐僧」「九齿钉耙」），或写 <Picture N>。
+- 紧接着映射行，写一条环境参考约束（本节末尾那条，逐字照抄）。
+- **参考音频**：只有本次请求确实提供了参考音频（请求里会写明音色参考 / 对白 TTS）时，才写
+  「<Audio 1> is the voice-timbre reference for the off-screen narrator (S1).」（画外解说）或
+  「<Audio 1> is the voice-timbre reference for the character \u201c唐僧\u201d (S1).」；
+  **没有任何参考音频时，一律不要出现 <Audio j>** —— 悬空的 <Audio j> 会让模型去续一段并不存在的音色，
+  实测台词前后会多念一截听不懂的话。这种情况只描述人声本身即可，例如「人声只有一句画外解说」。
 
-**summary:**（一段话）
-用上面**已定义好的标签**叙述主体、镜头走向与各参考素材的作用。**不得引入新标签**。
-
-**retention_analysis:**（每个已定义标签一行，标记必须用**固定英文值**，原样照抄）
-    <Subject 2> (appears in [Shot 1], [Shot 3]): fully_preserved - 说明保留了哪些特征。
-- 可见内容标记：fully_preserved / partially_preserved / attribute_transfer / weak_reference
-- 音频标记：fully_copy / partially_copy / reference / weak_reference
-- **本节不要写 (S1) 这类说话人编号。**
+**三个段，顺序固定，段名原样保留英文 + 英文冒号：**
 
 **detailed_description:**（正文）
 - **先写 1-2 句英文**交代本片画风、光线与色彩基调，然后逐镜头叙述：
@@ -429,15 +355,10 @@ ${DEFAULT_LINE3}`;
     —— 单色水墨项目不得写「warm green forest hues」「rich colors」这类彩色基调；
     光线照写（方向/明暗/光斑），**色彩基调只由风格块决定**。
     （实测：风格句里写了「warm green forest hues」，成片就是彩色森林，水墨参考图的空间与墨色全丢。）
-${monochromeStyle ? `- **单色项目硬规则（本片画风是单色）**：§2/§3/§5 正文**禁止任何颜色形容词与色调词** ——
-    不写 warm / cool / golden / amber / green / red / blue / vivid / rich colors，也不写「暖调 / 冷调 / 绿色 / 金色 / 彩色」。
-    服装、道具、环境一律改用**墨色浓淡与明暗**描述：deep ink wash / pale ink / dark silhouette / high contrast / mid-tone wash；
-    材质用 paper texture / dry brush / wet ink 这类词。颜色只由 §5.1 的风格块决定。
-    （实测：正文里残留 Warm / green / red，成片就一直是彩色森林，风格块压不住整段散文。）` : `- **色彩基调以风格块为准**：正文不要写与项目画风冲突的色调词。`}
     [Shot 1] …                                   ← 首镜**不带**时间戳
     [Shot 2] At 00:03.200, the camera cuts to …   ← 后续每镜**必须带**剪辑时间戳
 - 运镜写成自然的英文句子（类型、幅度、速度）。
-- 说话人必须写成：<Subject 2> (S1) says, <d>[Chinese] 台词原文</d>
+- 说话人写成：角色名 (S1) says, <d>[Chinese] 台词原文</d>（例如「唐僧 (S1) says, …」）
 - 同一句台词跨切镜：两侧都写 <scenetrans>；被片尾截断用 <cutoff>。
 - **镜内剪辑点（H3 原生多镜头）—— 硬性规则**：一次生成内**允许 2-4 个镜头**，用模型自己的记号表达：
     [Shot 1] … / [Shot 2] At 00:03.200, the camera cuts to … / [Shot 3] At 00:05.600, …
@@ -481,6 +402,8 @@ ${monochromeStyle ? `- **单色项目硬规则（本片画风是单色）**：§
   **并把运镜全部压在该时间点之前**（例如 "the camera pushes in during the first three seconds, then holds locked for the rest of the shot as he says …"）；
   ③ 禁止在台词时间窗内出现任何镜头运动词。
   校验口径：本集所有镜的 duration 之和应 ≥ 该集剧本按 4.2 字/秒朗读所需的秒数；明显偏短说明剧情被压缩了（宁可加镜，不要省略）。
+- **时间推进一律用中文写**（前两秒 / 第三秒起 / 第四秒末 / 最后两秒），**不要**写成 in the first two seconds / from the third second onward 这类英文短语；
+  只有结构记号（段名、[Shot N] At MM:SS.mmm、<Picture N>、<d>…</d>）保留英文。
 - **镜内时间推进（"第几秒"）必须写出来**：单镜（无剪辑点）也要交代这一镜随时间的演化 —— 起幅 → 过程 → 落幅（可用 in the first two seconds / from the third second onward 这类相对时间短语）。
   **变化的主体可以是画面内容而不是镜头**：人物动作、光线推移、烟雾/旗帜飘动、风起云散都算；**固定机位同样合格**（写 in the first two seconds the frame holds … 即可），不要为了凑"时间推进"去动镜头。
   例（需要动镜时）：「[Shot 1] A medium shot on the witch … In the first two seconds the camera holds; from the third second onward it begins a slow 180° orbit around the cradle, tightening into a close-up of the spindle by the end.」
@@ -495,9 +418,9 @@ ${monochromeStyle ? `- **单色项目硬规则（本片画风是单色）**：§
 本项目**不使用背景音乐**，写「无（不使用背景音乐）。」
 
 **语言**：库内正文用中文（界面可读，交给视频模型前会英译）；但下列**结构记号一律英文原样**：
-段名、<Subject N>/<Picture N>/<Audio j>、retention 的固定标记、[Shot N] At MM:SS.mmm、<d>…</d>、<scenetrans>、<cutoff>。
+段名、<Picture N>/<Audio j>、[Shot N] At MM:SS.mmm、<d>…</d>、<scenetrans>、<cutoff>。
 **输出前必检（不满足就重写这一镜 —— 不要输出不合格内容）**：
-1. **人物齐全**：本镜出现的角色必须都能对上 <Subject N> 槽位；**没出现的角色绝不写入**，分镜字段里列出的角色也不要漏；
+1. **人物齐全**：本镜出现的角色都要能对上参考图里的角色；**没出现的角色绝不写入**，分镜字段里列出的角色也不要漏；
 2. **场景连贯**：时间（晨/午/夜）、地点、光线与上一镜无缝衔接（除非剧本明确切换）；关键道具的位置与状态延续上一镜结尾；
 3. **动作承接**：本镜起始动作必须承接上一镜的结束状态（有 NEIGHBOR 上下文时以它为准）；
 4. **台词合规**：台词原文逐字保留、包在 <d>…</d> 里，说话人编号正确，非说话人不写口型；
@@ -505,8 +428,14 @@ ${monochromeStyle ? `- **单色项目硬规则（本片画风是单色）**：§
 
 参考槽位：<Picture 1> = 场景/环境；<Picture 2> 起 = 角色（按 characters[] 顺序）；其后是道具。
 
-**环境参考约束**（作为一条独立说明写在 subject_definitions 或 summary 里，逐字照抄）：
+**环境参考约束**（写在段名前的参考图映射行之后，逐字照抄）：
 ${DEFAULT_LINE3}`;
+}
+
+/** 运行时入口：提示词设置页的覆盖值优先，尾部统一追加上按画风生成的规则 */
+function getUniversalOmniMultiBeatFormatSpec(cfg) {
+  const body = _overrideCache['universal_multi_beat_format'] || buildUniversalFormatSpecBody();
+  return body + '\n' + universalFormatStyleRule(cfg);
 }
 
 /**
@@ -522,17 +451,19 @@ ${DEFAULT_LINE3}`;
  * 所以再在最权威的位置（用户提示词结尾）用独立段落、最高优先级措辞说一遍。
  */
 function getStoryboardUniversalOmniUserReminder(cfg) {
-  const { EPISODE_CHARS_MIN } = {};
   if (isEnglish(cfg)) {
     return `
 
 [HIGHEST PRIORITY — TWO MORE REQUIRED FIELDS PER SHOT]
 Every shot object MUST ALSO contain BOTH of these, in addition to all fields listed above:
 1. "creation_mode": the exact string "universal".
-2. "universal_segment_text": a **multi-line** string written exactly per the universal-segment block spec
-   (line 1 style sentence / line 2 生成一个由以下 1 个分镜组成的视频。/ line 3 the reference+environment
-   constraint copied verbatim / line 4 分镜1： T秒: …).
-A shot without "universal_segment_text" can only fall back to a generic template — that is a hard error.
+2. "universal_segment_text": a **multi-line** string in the LEAN format described in the system prompt —
+   first the reference mapping lines, one per image (e.g. <Picture 2>：角色「name」——外貌、发型与服装来自该图。),
+   then exactly three sections: detailed_description: → overall_soundscape: → non_diegetic_music:.
+   The retired four-line block format (line 1 style sentence / line 2 生成一个由以下 1 个分镜组成的视频. /
+   line 3 constraint / line 4 分镜1： …) is FORBIDDEN, as are subject_definitions / summary /
+   retention_analysis and <Subject N>.
+A shot without a compliant "universal_segment_text" can only fall back to a generic template — that is a hard error.
 Do NOT omit it, and do NOT summarise it.`;
   }
   return `
@@ -540,9 +471,12 @@ Do NOT omit it, and do NOT summarise it.`;
 【最高优先级 —— 每个镜头还必须额外包含这两个字段】
 除了上面【输出格式】里列出的全部字段，**每个镜头对象都必须同时包含**：
 1. "creation_mode"：固定字符串 "universal"。
-2. "universal_segment_text"：**多行字符串**，严格按全能片段块格式书写
-   （第1行风格句 / 第2行「生成一个由以下 1 个分镜组成的视频。」/ 第3行照抄给定的环境与参考图约束 / 第4行「分镜1： T秒: …」）。
-缺少 universal_segment_text 的镜头只能退化成通用模板文，**这是严重错误**，不要省略、也不要只写摘要。`;
+2. "universal_segment_text"：**多行字符串**，按系统提示词里的**精简格式**书写：
+   先写参考图映射行（每张图一行，如「<Picture 2>：角色「韩悠兰」——外貌、发型与服装来自该图。」），
+   再依次写三段：detailed_description: → overall_soundscape: → non_diegetic_music:。
+   **禁止** subject_definitions / summary / retention_analysis 三段元数据，**禁止** <Subject N>；
+   **禁止**已废弃的四行块格式（「生成一个由以下 1 个分镜组成的视频。」那套）。
+   缺少 universal_segment_text、或写成上述旧格式的镜头只能退化成通用模板文，**这是严重错误**。`;
 }
 
 function getStoryboardUniversalOmniModeSuffix(cfg) {
@@ -661,7 +595,7 @@ function formatUserPrompt(cfg, key, ...args) {
  * 为什么：这份 JSON 清单才是模型实际照着填的那份（系统提示词只是「可填哪些」的说明）。
  * 清单里漏写的字段，模型就不返回 —— 而且**不报错、静默为空**。实测：
  *   · `emotion_intensity` 从来没进过库（三个项目 0/99）
- *   · `layout_description`（系统提示词里写明「必填、最高优先级空间合同」）在 drama2 那批 0/21
+ *   · （历史）`layout_description`（旧系统提示词曾要求「必填、最高优先级空间合同」）在 drama2 那批 0/21
  *   · drama4 新批次连 `lighting_style` / `depth_of_field` 也一起丢了（0/65），而 ep1/ep2 那两批
  *     模型「顺手」返回过 —— 也就是说这属于**抽签**：全靠模型自觉，提示词一长就全丢。
  * 本项目已经为「同一件事写两份、其中一份过期」吃过多次亏，字段清单同理：以系统提示词的字段表为准，
@@ -702,9 +636,9 @@ function getStoryboardUserPromptSuffix(cfg, shotDuration, opts = {}) {
 
 **Audio rule**: bgm_prompt MUST be an empty string or "No BGM". Do not design background music per shot. Put only diegetic ambience, foley, and voice/timbre details in sound_effect, so audio remains consistent across clips.
 
-**Output**: JSON with "storyboards" array. Each item: shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, lighting_style, depth_of_field, action, dialogue, narration, result, atmosphere, emotion, emotion_intensity, duration, bgm_prompt, sound_effect, characters (array of IDs), props (array of prop IDs), is_primary, layout_description (blocking + character positions; highest-priority spatial contract)${uniExtra}. Return ONLY valid JSON, no markdown.`;
+**Output**: JSON with "storyboards" array. Each item: shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, lighting_style, depth_of_field, action, dialogue, narration, result, atmosphere, emotion, emotion_intensity, duration, bgm_prompt, sound_effect, characters (array of IDs), props (array of prop IDs), is_primary${uniExtra}. Return ONLY valid JSON, no markdown.`;
   }
-  const _sbUserLocked = `\n\n【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary, **layout_description（画面布局与人物站位描述，必填，最高优先级空间合同）**。**必须只返回纯JSON，不要markdown。**`;
+  const _sbUserLocked = `\n\n【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary。**必须只返回纯JSON，不要markdown。**`;
   const _sbUserOverride = _overrideCache['storyboard_user_suffix'];
   if (_sbUserOverride) {
     return '\n\n' + _sbUserOverride + _sbUserLocked;
@@ -726,23 +660,12 @@ function getStoryboardUserPromptSuffix(cfg, shotDuration, opts = {}) {
 9. **声音设计**：bgm_prompt 必须填空字符串""或"无背景音乐/禁BGM"；**不要为单个片段设计背景音乐**。sound_effect 只写现场环境声、动作音效、对白/旁白音色（如低沉、沙哑、颤抖、冷静、急促等）和口型同步要求
 10. **观众情绪**：[情绪类型]（[强度：↑↑↑/↑↑/↑/→/↓]）
 
-**【最高优先级空间合同 - layout_description（必填，最高优先级铁律）】**
-这是本分镜的**核心空间锚点 + 真实物体尺度 + 运镜呼吸空间**铁律，用于首帧/尾帧图片生成时在保持一致性的同时，为运镜留出必要空间（尤其是 Seedance 1.5 Pro 等依赖首尾帧的模型）：
-
-- 必须明确写出**主要角色在画面中的核心站位**（画面左/中/右三分、朝向、与关键道具的基本空间关系）。这是硬性锁定。
-- **必须同时写出所有主要道具的真实物理尺度与相对比例**（仅描述本分镜/剧本中实际出现的道具，尺度须符合其所属时代与场景；例如古代场景写案几高度、书卷尺寸、铜器体量等，现代场景写对应家具与小物件真实尺寸；所有道具均为次要环境元素）。严禁任何会导致AI把道具做大、立起或当成主导元素的描述；**严禁写入与时代背景不符的道具**（古代/古装分镜不得出现智能手机、遥控器、现代茶几等现代物品）。
-- 必须写明**整体构图方式和基本机位距离感**（中景、三分法等）。
-- **必须为 declared movement（运镜方式）预留电影化演化空间**：明确说明首尾帧在核心站位和真实尺度保持一致的前提下，允许根据 movement 进行自然的取景微调（例如：缓推时尾帧可比首帧稍紧；手持时允许轻微取景晃动与不完美平衡；横摇/跟拍时允许画面左右自然的进入/退出变化）。目标是让首尾帧既像“同一场同一空间的连续镜头”，又能真正支持运镜产生动态视频，而不是变成几乎定格的画面。
-- **严禁写入会导致比例失真或完全锁死运镜的表述**（即使剧本里有相关描述也禁止）："道具作为视觉焦点/占画面主导"、"手持晃动带来纪实感"、"完全相同的构图平衡"等。
-- 好示例（古代场景，带运镜空间）："主角坐画面左中榻上，是绝对视觉焦点；右下前景木质案几高约75cm，书卷平放于案面为正常尺寸，铜灯与茶具均为次要环境小物件，绝不可夸大；中景，三分法构图，核心平衡稳定。若 movement 为缓推，尾帧允许人物在画面中占比自然增加、背景稍被压缩；若为手持，允许轻微取景不完美偏移。"
-- **执行原则**：首帧按此锚点生成初始画面；尾帧必须保持核心站位、角色与道具的真实尺度与基本空间关系，仅根据 movement 和 result 进行自然的取景演化。违背核心锁定 = 失败；完全没有运镜演化空间也属于不合格结果。
-
 **dialogue字段说明**：角色名："台词内容"。无对话时填空字符串""。
 **scene_id**：从上方场景列表中选择最匹配的背景ID，如无合适背景则填null。
 **duration时长**：${durationInstruction}。
 **声音一致性**：所有镜头默认无BGM；若有对白/旁白，sound_effect 必须补充音色与情绪强度，并与动作节奏、环境声保持一致。
 
-【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, lighting_style, depth_of_field, action, dialogue, narration, result, atmosphere, emotion, emotion_intensity, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary, layout_description（画面布局与人物站位，最高优先级空间合同）${uniExtra}。**必须只返回纯JSON，不要markdown。**`;
+【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, lighting_style, depth_of_field, action, dialogue, narration, result, atmosphere, emotion, emotion_intensity, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary${uniExtra}。**必须只返回纯JSON，不要markdown。**`;
 }
 
 /**
@@ -751,12 +674,12 @@ function getStoryboardUserPromptSuffix(cfg, shotDuration, opts = {}) {
 function getRealisticPhysicalScaleContract(isEn) {
   if (isEn) {
     return `【HIGHEST PRIORITY REALISTIC PHYSICAL SCALE & PROPORTION CONTRACT — ERA-AWARE, ABSOLUTE OVERRIDE】
-Every visible object in the scene MUST be rendered at 100% correct real-world physical dimensions for its era/setting, with correct relative proportions and accurate photographic perspective. This rule has HIGHER PRIORITY than any conflicting instruction in the layout_description / spatial anchor above.
+Every visible object in the scene MUST be rendered at 100% correct real-world physical dimensions for its era/setting, with correct relative proportions and accurate photographic perspective. This rule has HIGHER PRIORITY than any conflicting instruction in the shot prose above.
 CRITICAL RULES:
 - **Era fidelity (MANDATORY)**: Props MUST match the story's time period and location. In ancient/historical/costume drama scenes, NEVER include smartphones, remote controls, modern coffee tables, A4 books, or any anachronistic modern items. Only describe props that actually belong in this shot according to the script and scene context.
 - **Scale only for props actually present**: For each major prop visible in the frame, state realistic size relative to the human figure and environment (e.g. ancient: writing desk ~70–85 cm, scroll ~25–35 cm; modern: side table ~38–52 cm, small handheld device lying flat at true size). Never invent props not in the shot.
 - **Secondary props**: The human character is the ONLY primary visual subject. All props are strictly secondary environmental elements — never oversized, never upright as dominant elements, never breaking perspective.
-- If layout_description contains scale-distorting phrases, IGNORE those implications and follow era-appropriate realistic scale and "secondary prop" rules above.
+- If any shot prose implies a distorted scale, IGNORE it and follow era-appropriate realistic scale and "secondary prop" rules above.
 This contract applies to BOTH first frame and last frame with zero exception.
 Violation (anachronistic props, oversized objects, broken perspective, props as dominant elements) = critical generation failure.`;
   }
@@ -1329,6 +1252,8 @@ function splitStoryboardUserSuffix(cfg) {
 
 function getDefaultPromptBody(key) {
   switch (key) {
+    case 'universal_multi_beat_format':
+      return buildUniversalFormatSpecBody();
     case 'story_expansion_system':
       // 从**同一处**生成（见 buildStoryExpansionBody 注释）：这里原先手抄了一份正文，
       // 与真正在用的提示词长期不一致，而它会在提示词设置页作为 placeholder 显示给用户。
@@ -1376,6 +1301,9 @@ function getDefaultPromptBody(key) {
  */
 function getLockedSuffix(key) {
   switch (key) {
+    case 'universal_multi_beat_format':
+      // 画风相关硬规则由运行时按项目画风生成，不随覆盖值改变
+      return '\n\n（以下由运行时按项目画风自动追加，不可编辑）\n' + universalFormatStyleRule({});
     case 'story_expansion_system':
     case 'promo_video_system':
       return null;
@@ -1723,100 +1651,54 @@ CONTEXT_PREV / CONTEXT_NEXT: 上下文（仅用于情绪参考）
 /**
  * 全能模式（可灵 Omni-Video、火山即梦 Seedance 2.0 多图参考等）：模板 + 仅用 @图片1/@图片2…（与参考图顺序一致，不用 @姓名）
  */
+/**
+ * 全能模式（可灵 Omni-Video、火山即梦 Seedance 2.0 多图参考、MiniMax H3 Ref2VA）：
+ * 一镜一次生成，正文用中文散文，只写精简三段 + 段名前的 <Picture N> 映射行。
+ * 只有这一套（中文），不再维护英文分支。
+ */
 function getUniversalOmniSegmentPrompt(cfg = {}) {
   // 必须把项目 cfg 传进来：§5「禁止颜色词」这条硬规则是按画风条件生成的（单色项目才生效）
-  const specZh = getUniversalOmniMultiBeatFormatSpec(cfg);
-  return `You write the **universal_segment_text** for ONE clip of a multi-reference (Ref2VA) video prompt in Chinese prose, following the OFFICIAL SIX-SECTION full-reference format.
+  const spec = getUniversalOmniMultiBeatFormatSpec(cfg);
+  return `你为「一镜一次生成」的多参考视频写 universal_segment_text，正文用中文散文，按下述精简格式。
 
-The USER message contains: storyboard fields, IMAGE_SLOT_MAP, AUDIO_SLOT_MAP, TOTAL_CLIP_SECONDS, STYLE_ZH, DIALOGUE_VERBATIM (when there is dialogue), optional SCENE_REFERENCE_LAYOUT and neighbour context.
+用户消息里有：分镜字段、IMAGE_SLOT_MAP、AUDIO_SLOT_MAP、TOTAL_CLIP_SECONDS、STYLE_ZH、DIALOGUE_VERBATIM（有台词时）、
+可选的 SCENE_REFERENCE_LAYOUT 与邻镜上下文（CONTEXT_PREV / CONTEXT_NEXT）。
 
-FORBIDDEN: the deprecated SoulLens single-line style (主体:/叙事动态:/[禁BGM]); the old four-line block format
-(画面风格和类型 / 生成一个由以下 N 个分镜组成的视频。 / 分镜1： T秒:); @图片N or @人物N tokens.
+**禁止**：已废弃的灵境单行格式（主体:/叙事动态:/[禁BGM]）；旧的四行块格式（画面风格和类型 / 生成一个由以下 N 个分镜组成的视频。/ 分镜1： T秒:）；
+@图片N、@人物N 这类指图写法；**<Subject N>**（本机不再使用这套抽象层）。
 
-${specZh}
+${spec}
 
-HARD REQUIREMENTS FOR THIS CLIP
-- ALL SIX sections must be present, in this order, with their English names: subject_definitions, summary,
-  retention_analysis, detailed_description, overall_soundscape, non_diegetic_music.
-- Labels come from IMAGE_SLOT_MAP / AUDIO_SLOT_MAP. Every character/scene/prop that appears becomes a
-  <Subject N> whose picture source is cited in its own definition. Characters that appear in this shot MUST
-  be cited as <Subject N> in detailed_description at their first clear appearance — never leave a character
-  as a bare name, or it loses its reference binding.
-- <Picture N> gets its own entry ONLY when the image itself is used as a first frame / keyframe / last frame /
-  composition anchor. Do not create standalone <Picture N> entries for images that only define appearance.
-- Reference audio must be written as: <Audio 1> is the voice-timbre reference for <Subject 2> (S1).
-- When a line is delivered by an off-screen narrator (promo films, documentary-style VO) and has no on-screen subject,
-  write: <Audio 1> is the voice-timbre reference for the off-screen narrator (S1). — bind the speaker tag, do not invent a <Subject N>.
-  When only timbre is referenced, never carry the reference audio's original words into the clip.
-- retention_analysis: one line per defined label, using the FIXED English markers
-  (fully_preserved / partially_preserved / attribute_transfer / weak_reference; audio: fully_copy /
-  partially_copy / reference / weak_reference). No speaker IDs in this section.
-- detailed_description: 1-2 English sentences of style first, then shot by shot. [Shot 1] has NO timestamp;
-  every later shot is written "[Shot N] At MM:SS.mmm, the camera cuts to …". Timestamps must increase and
-  stay below TOTAL_CLIP_SECONDS. Use intra-shot cuts ONLY for a fight / chase / combo burst whose beats one
-  unbroken camera move cannot cover — and then the定场 goes into [Shot 1]'s first 1-2 seconds.
-- Camera movement goes into the prose as natural English (push / pan / orbit / tracking …, with amplitude
-  and speed). Do not write a movement label on its own.
-- Dialogue: write the speaker as <Subject N> (Sx) says, <d>[Chinese] verbatim line</d>. The quoted words must
-  be copied character-for-character from DIALOGUE_VERBATIM / the dialogue field; never summarise them.
-  A line that crosses an internal cut uses <scenetrans> on both sides; speech cut off by the end uses <cutoff>.
-  Silent shots: state the absence of speech in natural prose — do not invent dialogue.
-- Target 200-350 English words for a 5-10 s clip; cover composition, subject, environment, action, camera,
-  sound and dialogue. A dialogue-dense clip prioritises fitting the whole spoken timeline.
-- overall_soundscape: ambience and physical sounds across the whole clip (shot-synced events stay in
-  detailed_description). non_diegetic_music: this project uses NO background music — write 无（不使用背景音乐）。
+本镜硬性要求
+- **格式**：只写三段 detailed_description → overall_soundscape → non_diegetic_music（段名英文 + 英文冒号），
+  段名前写参考图映射行（每张图一行）与环境参考约束句。**不要** subject_definitions / summary / retention_analysis。
+- **参考图编号**：<Picture 1> = 场景；<Picture 2> 起 = 角色（按 characters[] 顺序）；其后是道具。
+  只能用 IMAGE_SLOT_MAP 里真实存在的编号，**不得引用没有图对应的编号**。
+- **正文里不要出现 <Subject N>**：要指人或物就直接写名字（「唐僧」「九齿钉耙」）或写 <Picture N>。
+- **参考音频**：只有本次确实提供了参考音频时，才写「<Audio 1> is the voice-timbre reference for … (S1).」；
+  没有参考音频时**一律不要出现 <Audio j>** —— 悬空标签会让模型去续一段不存在的音色，实测台词前后会多念一截听不懂的话。
+- **detailed_description**：先 1-2 句项目风格句（原样复述风格块），再逐镜头叙述。**[Shot 1] 不带时间戳**，
+  后续每拍写成「[Shot N] At MM:SS.mmm, …」，时间戳递增且小于 TOTAL_CLIP_SECONDS。镜内剪辑点只在
+  打斗 / 追击 / 连招这类一个不中断运镜演不完的动作爆发时使用，并把定场压进 [Shot 1] 的前 1-2 秒。
+- **台词**：写成「角色名 (S1) says, <d>[Chinese] 台词原文</d>」，台词逐字来自 DIALOGUE_VERBATIM / 对白字段，
+  不得改写、概括或漏句；跨镜内剪辑的台词两侧都写 <scenetrans>，被片尾截断写 <cutoff>；无台词的镜用陈述句
+  说明「本镜无人开口」，不得凭空编台词。
+- **篇幅**：5-10 秒的镜约 200-350 字，覆盖构图、主体、环境、动作、运镜、音效与台词；台词多的镜以**把话说完**为先。
+- **overall_soundscape**：整段环境声与物理音效（与画面同步的音效留在 detailed_description）。
+- **non_diegetic_music**：本项目不使用背景音乐，写「无（不使用背景音乐）。」
 
-REFERENCE TOKENS
-- Only the tokens from IMAGE_SLOT_MAP may be used, written as <Picture N> (Arabic digits).
-- <Picture 1> is normally the scene/environment; characters start at <Picture 2> in characters[] order; props follow.
-- SCENE_REFERENCE_LAYOUT: the scene reference may be a multi-panel collage — extract only the unified space,
-  light and atmosphere; never reproduce its panels or a split-screen layout in the delivered clip.
+参考记号
+- 只能用 IMAGE_SLOT_MAP 给出的 <Picture N>（阿拉伯数字）。
+- SCENE_REFERENCE_LAYOUT：场景参考可能是多宫格 / 多视角拼图 —— 只取其中统一的空间、光线与氛围语义，
+  成片禁止复刻其分格或并列布局。
 
-STATE CONSISTENCY (HARD)
-- The clip's ENDING state must agree with this shot's ACTION / RESULT fields.
-- Never write 空无一人 / 不见人影 about someone the RESULT keeps on screen.
-- A state that already happened earlier and merely persists now uses STATIC wording (横卧 / 静置 / 已散 / 已倒 /
-  昏迷不醒); never motion wording (倒下 / 倒地), or the video model re-enacts it.
+状态一致性（硬性）
+- 本镜**落幅状态**必须与 ACTION / RESULT 字段一致。
+- 不要把 RESULT 里仍留在画面中的人写成「空无一人」「不见人影」。
+- 早先发生、此刻只是延续的状态用静态措辞（横卧 / 静置 / 已散 / 已倒 / 昏迷不醒），不要用动作措辞（倒下 / 倒地），
+  否则视频模型会把动作重演一次。
 
-If CURRENT_UNIVERSAL_SEGMENT is provided, rewrite it into this format while keeping the same facts, the same
-total seconds and the same reference labels.`;
-}
-
-/**
- * 全能片段「润色」模式：在 getUniversalOmniSegmentPrompt 的硬性格式与参考图规则之上，强化短剧叙事与上下文一致。
- */
-function getUniversalOmniPolishPrompt(cfg = {}) {
-  return `${getUniversalOmniSegmentPrompt(cfg)}
-
-ADDITIONAL_POLISH_MODE (short drama enhancement — the six-section format above is still mandatory):
-
-**POLISH 硬约束（比"信息密度"优先级更高，违反即不合格）**：
-1. **台词的唯一来源是 STORYBOARD FIELDS 的 DIALOGUE 字段**。FULL_EPISODE_SCRIPT 里紧跟「某某下令：」「某某说道：」
-   之后的**叙述/动作描述**（例如「士兵们闯入每一户人家，把纺锤扔进广场火堆，火焰冲天。」）**不是台词**，
-   不得写进 <d>…</d>，也不得让角色念出来 —— 那些内容交给画面与动作表现。
-   （实测：润色时从剧本重推台词，把旁白塞进 <d>，成片里国王念了一整段旁白。）
-2. **语言统一**：§5 正文一律中文（只有 §5.1 的项目风格块保持英文原样）。不得出现整句英文的正文片段。
-3. **对白镜单拍 + 禁文字**：含台词的镜一律单镜一镜到底（不用 [Shot 2]+、不用 <scenetrans>，除非单句台词超过 15 秒上限）；
-   画面内不得出现任何文字、字幕、招牌、浮字或乱码字形。
-
-- You receive FULL_EPISODE_SCRIPT plus NEIGHBOR blocks and structured fields. Use them for **continuity** and
-  **information completeness** only; do NOT invent plot absent from SCRIPT + STORYBOARD FIELDS + the current draft.
-- **Structure is untouchable**: keep the six section names in order and keep every structural token verbatim —
-  <Subject N>, <Picture N>, <Audio j>, the retention markers (fully_preserved / reference / …),
-  "[Shot N] At MM:SS.mmm,", <d>…</d>, <scenetrans>, <cutoff>. Never renumber a label, never drop a section,
-  never move a cut timestamp. Dropping a label loses that reference binding.
-- **Information parity**: every script-relevant fact must survive; if the draft is an old four-line block,
-  REWRITE it into the six sections while keeping the same facts and total seconds.
-- **Re-polish / anti-stagnation**: the user may click polish repeatedly. Each response must be substantially
-  rephrased Chinese prose (except structural tokens and quoted dialogue) — vary verbs, clause order and camera
-  wording, but keep the same facts, the same labels and the same seconds.
-- **Dialogue**: when DIALOGUE_VERBATIM is present, every listed line must remain verbatim inside <d>[Chinese] …</d>
-  after polish; rephrase motion/camera prose freely but never the quoted words.
-- **Neighbours**: align entry/exit with NEIGHBOR_*; do not retell the previous shot.
-- **Neighbor truth priority**: the neighbour's ACTION / RESULT are authoritative for the state the previous shot
-  ended in; its universal_segment_text is only wording. If they disagree, follow ACTION / RESULT.
-- **State consistency (HARD)**: the clip's ending state must agree with this shot's ACTION / RESULT, and its
-  opening state must agree with the previous shot's ACTION / RESULT. Persisting states use static wording.`;
+若给了 CURRENT_UNIVERSAL_SEGMENT，就在保持同样事实、总秒数与参考图编号的前提下改写成这个格式。`;
 }
 
 function getContinuitySnapshotPrompt() {
@@ -1854,41 +1736,6 @@ PROMPT: <the completed image generation prompt>
 ASSETS: <character names present in this shot>`;
 }
 
-/**
- * 为单个分镜重新生成/优化 layout_description（空间布局与人物站位合同）
- * 专为首尾帧一致性 + 上下分镜连贯性设计
- */
-function getRegenerateLayoutDescriptionPrompt(cfg) {
-  const isEn = isEnglish(cfg);
-  if (isEn) {
-    return `You are a professional film continuity supervisor and storyboard spatial designer.
-
-Your task: Regenerate or optimize a precise, concise "layout_description" (spatial layout anchor / 画面布局锚点) for the CURRENT shot.
-
-Core Requirements (HIGHEST PRIORITY):
-1. Output ONLY the new layout_description text (1-2 short sentences, max ~120 characters). No explanations, no JSON, no labels.
-2. Be extremely specific about screen positions: left/center/right third of frame, relative distances between characters, facing directions, relation to props/environment, overall composition (rule of thirds / center / frame etc.), and camera distance feel.
-3. **Realistic physical scale awareness (MANDATORY)**: Explicitly state realistic sizes and proportions of major props that actually appear in the shot, matching the story's era/setting (e.g. ancient: writing desk ~75cm, scroll at normal size; modern: side table ~45cm). Never write phrases that would cause scale errors or anachronistic modern props in period settings.
-4. **Cinematic breathing room for movement (MANDATORY)**: Reserve natural evolution space for the shot's declared camera_movement (push/pull/pan/handheld etc.). State that first/last frames must keep core character placement and realistic prop scales, but allow natural framing adjustments that result from the movement (e.g. slight tighter framing on push-in, slight handheld drift, natural entry/exit on pan). Goal: enable real dynamic video instead of near-static locked shots.
-5. **Cross-shot continuity (CRITICAL)**: The new layout MUST form a natural, believable spatial continuation from PREV_LAYOUT (if provided) and must logically lead into NEXT_LAYOUT (if provided). Avoid sudden unexplained left-right flips or major repositioning of characters between adjacent shots unless the ACTION/RESULT of the current shot explicitly requires it.
-6. The description must be directly usable as the highest-priority contract for first-frame and last-frame image generation (for models like Seedance 1.5 Pro), and must embed both realistic scale anchors AND movement breathing room to prevent prop drift and motion suppression in AI image/video generation.
-
-Style: Professional, film-precise, actionable for AI image generators. Use Chinese if the project is Chinese, otherwise English.`;
-  }
-  return `你是一位专业的电影连戏监督与分镜空间设计师。
-
-任务：为**当前分镜**重新生成或优化一个精确、简洁的「layout_description」（空间布局锚点 / 画面布局与人物站位合同）。
-
-核心要求（最高优先级）：
-1. **只输出新的 layout_description 文本**（1-2 句短句，总字数建议控制在 120 字以内）。不要任何解释、不要 JSON、不要前缀后缀。
-2. 必须极度具体描述画面站位：画面左/中/右三分、人物间相对距离、朝向、与道具/环境的关系、整体构图方式（三分法/中心/框架等）、机位距离感。
-3. **真实物体尺度意识（强制）**：必须明确写出主要道具的真实物理尺度与相对比例，且**必须符合剧本时代背景**（仅写本分镜实际出现的道具；古代场景示例：“木质案几位于右下前景，高度约75cm，书卷平放为正常尺寸，铜灯与茶具均为次要环境小物件，绝不夸大”）。严禁写出任何会导致比例失真的表述，**严禁写入与时代不符的现代道具**。
-4. **运镜呼吸空间（强制）**：必须为本分镜的 movement（推/拉/摇/跟/手持等）预留自然演化空间。说明首尾帧在核心站位和真实尺度一致的前提下，允许根据 movement 进行取景微调（缓推可稍紧、手持可轻微晃动偏移、横摇可有自然进入/退出）。目标是让首尾帧支持真正动态的视频，而不是几乎定格。
-5. **跨镜连贯性（铁律）**：新布局必须与「上一分镜的布局描述」形成自然延续，同时能引向下一分镜。除非 action/result 明确要求，否则严禁突然左右互换或大幅跳跃。
-6. 该描述将作为首帧/尾帧生成的最高优先级合同（尤其适配 Seedance 等模型），必须同时包含真实尺度锚点 + 运镜演化空间，防止AI生图时道具比例漂移或运镜被锁死。
-
-语气：专业、电影化、精确、可直接喂给图像 AI 使用。必须用中文输出。`;
-}
 
 /**
  * 角色视觉锚点提取：从 appearance 文本中提炼 6层结构化锚点 JSON
@@ -2022,7 +1869,6 @@ module.exports = {
   getSceneGenerateSingleImagePrompt,
   getImagePolishPrompt,
   getUniversalOmniSegmentPrompt,
-  getUniversalOmniPolishPrompt,
   getContinuitySnapshotPrompt,
   getIdentityAnchorsPrompt,
   getPropPolishPrompt,
@@ -2031,6 +1877,5 @@ module.exports = {
   clearOverrideInMemory,
   getDefaultPromptBody,
   getLockedSuffix,
-  getRegenerateLayoutDescriptionPrompt,
   getRealisticPhysicalScaleContract,
 };

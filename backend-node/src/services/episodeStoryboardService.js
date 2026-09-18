@@ -7,11 +7,8 @@ const safeJson = require('../utils/safeJson');
 const { safeParseAIJSON, extractJsonCandidate, repairTruncatedJsonArray, extractFirstArray } = safeJson;
 const loadConfig = require('../config').loadConfig;
 const angleService = require('./angleService');
-const { checkDialogueCoverage, extractScriptDialogue } = require('../utils/dialogueCoverage');
-const { summarizeUniversalSegmentFormat } = require('./universalOmniMultiBeatFormat');
+const { extractScriptDialogue } = require('../utils/dialogueCoverage');
 const ref2va = require('./ref2vaFormat');
-const { buildStoryboardQualityReport } = require('../utils/storyboardQualityReport');
-const { checkBeatCoverage } = require('../utils/beatCoverageCheck');
 
 /**
  * 分镜专用 generateText 包装：
@@ -657,7 +654,7 @@ function normalizeEmotionIntensity(v) {
   return null;
 }
 
-function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
+function deriveStoryboardFieldsFromAi(db, sb, style, videoRatio, opts = {}) {
   const universalOmni = !!opts.universalOmni;
   const angleValFn = (x) => x.angle ?? x.camera_angle ?? null;
   const shotNumber = normalizeStoryboardShotNumber(sb);
@@ -738,7 +735,13 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
       try {
         const { buildSlotsForStoryboard } = require('../utils/segmentRefBinding');
         fbSlots = buildSlotsForStoryboard(db, sb, { propIds: propIds });
-      } catch (_) {}
+      } catch (e) {
+        // 以前这里是 catch (_) {}：一个 ReferenceError（db 不在作用域）被吞掉，兜底模板从此永远零槽位，
+        // 表现为「重新生成分镜后片段描述里没有角色/道具」。这类静默失败一律留痕。
+        if (log && typeof log.warn === 'function') {
+          log.warn('[分镜] 兜底模板构建参考图槽位失败（将产出无 <Picture N> 的兜底文）', { error: e.message });
+        }
+      }
       universalSegmentText = ref2va.buildRef2vaFallback(
         sb,
         { durationSec, action, dialogue, narration, result, atmosphere: sb.atmosphere, movement, shotType },
@@ -884,7 +887,7 @@ function insertOneStoryboard(db, episodeIdNum, sb, style, videoRatio, now, deriv
   const effOpts = deriveOpts.characterAnchors
     ? deriveOpts
     : { ...deriveOpts, characterAnchors: loadCharacterAnchors(db, episodeIdNum) };
-  const d = deriveStoryboardFieldsFromAi(sb, style, videoRatio, effOpts);
+  const d = deriveStoryboardFieldsFromAi(db, sb, style, videoRatio, effOpts);
   // 流式增量保存这条路也必须修正参考图绑定，否则只在最终合并路径修 → 漏掉一整批
   repairRefBindingForRecord(db, sb, d, log, episodeIdNum);
   const shotNumber = d.shotNumber;
@@ -1067,7 +1070,7 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
         'SELECT * FROM storyboards WHERE episode_id = ? AND storyboard_number = ? AND deleted_at IS NULL'
       ).get(episodeIdNum, shotNumber);
       if (existing) {
-        const d = deriveStoryboardFieldsFromAi(sb, style, videoRatio, deriveOptsEff);
+        const d = deriveStoryboardFieldsFromAi(db, sb, style, videoRatio, deriveOptsEff);
         repairRefBindingForRecord(db, sb, d, log, episodeIdNum);
         if (d.universalSegmentFormatProblems?.length) fmtProblems.push({ id: existing.id, title: d.title, fatal: !!d.universalSegmentFatal, reasons: d.universalSegmentFormatProblems });
         updateStoryboardRowFromDerived(db, existing.id, episodeIdNum, d, sb, now);
@@ -1127,7 +1130,10 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
       }
     }
 
-    const d = deriveStoryboardFieldsFromAi(sb, style, videoRatio, deriveOptsEff);
+    const d = deriveStoryboardFieldsFromAi(db, sb, style, videoRatio, deriveOptsEff);
+    // 直接 INSERT 这条路以前不修参考图绑定（只有流式更新那条路修），于是模型漏写
+    // <Picture N> 映射行时这一批就永远拿不到角色/道具参考图 —— 表现即「片段描述里少了角色」。
+    repairRefBindingForRecord(db, sb, d, log, episodeIdNum);
     if (d.universalSegmentFormatProblems?.length) fmtProblems.push({ id: null, title: d.title, fatal: !!d.universalSegmentFatal, reasons: d.universalSegmentFormatProblems });
 
     try {
@@ -1206,21 +1212,12 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
   }
   log.info('Storyboards saved', { episode_id: episodeId, count: saved.length });
 
-  // 全能分镜格式自检。两种情况必须分开报：
+  // 全能分镜骨架修复的记录。两种情况必须分开报：
   //   · 骨架错但正文立得住 → 只把骨架几行换掉，模型写的第 4 行长句保留（常见，危害小）
   //   · 正文根本不成块（灵境单行 / 多子分镜 / 混入 @人物N）→ 整条换成块格式模板兜底
   //     （危害大，出片质量明显低于模型正常产出，必须让人重跑）
-  // 汇总随任务结果返回，供界面「生成质量报告」展示 —— 此前只进后端日志，
-  // 用户要翻 /tmp/lmd-backend.log 才知道这版能不能用。
   const fmtRepaired = fmtProblems.filter((x) => !x.fatal);
   const fmtFatal = fmtProblems.filter((x) => x.fatal);
-  const formatReport = {
-    checked: saved.filter((r) => r.creation_mode === 'universal').length,
-    repaired: fmtRepaired.length,
-    fatal: fmtFatal.length,
-    repaired_sample: fmtRepaired.slice(0, 5),
-    fatal_sample: fmtFatal.slice(0, 5),
-  };
 
   if (fmtRepaired.length > 0) {
     log.warn('[分镜] 部分分镜的全能提示词骨架不合规，已就地修复（正文保留）', {
@@ -1238,7 +1235,7 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
       sample: fmtFatal.slice(0, 3),
     });
   }
-  return { saved, formatReport };
+  return { saved };
 }
 
 /**
@@ -1313,7 +1310,7 @@ ${lastCtx}
 ${originalUserPrompt}`;
 }
 
-async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, model, style, userPrompt, systemPrompt, includeNarration, universalOmni, targetClipDurationSec = null, requestedCount = null, requestedDuration = null) {
+async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, model, style, userPrompt, systemPrompt, includeNarration, universalOmni, targetClipDurationSec = null, requestedCount = null) {
   // 增量保存状态放在 try 外，catch 里可用于部分恢复
   const episodeIdNum = Number(episodeId);
   const streamSavedNums = new Set();
@@ -1388,10 +1385,8 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
           log.warn('Parse failed but partial storyboards already saved incrementally, treating as truncated success', {
             task_id: taskId, recovered_count: partialBoards.length, parse_error: e.message,
           });
-          // 部分恢复也必须带自检 —— 否则「生成其实成功了」的结果里会一片空白
-          const partialChecks = await runStoryboardSelfChecks(db, log, episodeIdNum, {
-            requestedCount, requestedDuration, styleZh: deriveOpts?.styleZh || '',
-          });
+          // 异常分支同样要判尾帧衔接（否则这条路径上的分镜永远拿不到承接判定）
+          await runAdjacentContinuity(db, log, episodeIdNum);
           taskService.updateTaskResult(db, taskId, {
             storyboards: partialBoards,
             total: partialBoards.length,
@@ -1399,10 +1394,6 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
             duration_minutes: Math.ceil((totalDuration + 59) / 60),
             truncated: true,
             error_message: `AI输出含JSON格式缺陷（${e.message}），已恢复 ${partialBoards.length} 个分镜`,
-            dialogue_coverage: partialChecks.dialogueCoverage,
-            universal_segment_format: partialChecks.formatReport,
-            beat_coverage: partialChecks.beatCoverage,
-            quality_report: partialChecks.qualityReport,
           });
           return;
         }
@@ -1520,7 +1511,7 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
     taskService.updateTaskStatus(db, taskId, 'processing', 70, '正在保存分镜头...');
 
     // 传入 streamSavedNums：已增量保存的项目直接从 DB 读取，跳过重复 INSERT
-    const { saved, formatReport: saveFormatReport } = saveStoryboards(db, log, episodeId, storyboards, cfg, style, streamSavedNums, deriveOpts);
+    const { saved } = saveStoryboards(db, log, episodeId, storyboards, cfg, style, streamSavedNums, deriveOpts);
 
     // ── 分镜角色补全（字符串匹配，无 AI，极快）──────────────────────────────────
     taskService.updateTaskStatus(db, taskId, 'processing', 75, '正在校验分镜角色关联...');
@@ -1534,18 +1525,8 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
       log.info('[分镜] 角色补全完成', { episode_id: episodeId, total_added: totalCharAdded });
     }
 
-    // ── 生成后自检 + 质量报告（正常路径与「部分恢复」路径共用）────────────────────
-    // 抽成 runStoryboardSelfChecks 的原因：分镜 JSON 解析失败/连接中断时会走「部分恢复」
-    // 分支，那条分支以前直接写一份不含任何自检的结果 —— 实测就出现过「生成实际成功、却因
-    // 一处变量作用域错误被降级成部分恢复，所有自检字段全部消失」的情况。自检不能因为
-    // 走了哪条分支就消失。
-    const selfChecks = await runStoryboardSelfChecks(db, log, episodeIdNum, {
-      requestedCount,
-      requestedDuration,
-      styleZh: deriveOpts?.styleZh || '',
-      saveRepaired: saveFormatReport ? saveFormatReport.repaired : 0,
-      saveFatal: saveFormatReport ? saveFormatReport.fatal : 0,
-    });
+    // ── 相邻镜连续性判定（尾帧衔接的依据）──────────────────────────────────────
+    await runAdjacentContinuity(db, log, episodeIdNum);
 
     taskService.updateTaskStatus(db, taskId, 'processing', 94, '正在更新剧集时长...');
 
@@ -1559,14 +1540,6 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
       total_duration: totalDuration,
       duration_minutes: durationMinutes,
       truncated: parseMeta.truncated || false,
-      // 剧本台词覆盖率：前端可据此提示「有 N 句台词没进分镜」
-      dialogue_coverage: selfChecks.dialogueCoverage,
-      // 全能提示词格式自检（骨架修正/无法修复各几条 + 落库后仍不合规几条）
-      universal_segment_format: selfChecks.formatReport,
-      // 剧情点（叙事节拍）覆盖：LLM 语义判定
-      beat_coverage: selfChecks.beatCoverage,
-      // 汇总报告：镜数/时长/台词覆盖/格式自检/节拍覆盖 + 一句话结论，供界面「生成质量报告」展示
-      quality_report: selfChecks.qualityReport,
     };
     taskService.updateTaskResult(db, taskId, resultData);
     log.info('Storyboard generation completed', { task_id: taskId, episode_id: episodeId });
@@ -1582,10 +1555,8 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
           log.warn('Partial storyboards recovered after error, treating as truncated success', {
             task_id: taskId, recovered_count: partialBoards.length, error: err.message,
           });
-          // 同理：走异常分支也不能让自检消失（实测这里曾把一次成功生成降级成空白结果）
-          const errChecks = await runStoryboardSelfChecks(db, log, episodeIdNum, {
-            requestedCount, requestedDuration, styleZh: deriveOpts?.styleZh || '',
-          });
+          // 异常分支同样要判尾帧衔接（否则这条路径上的分镜永远拿不到承接判定）
+          await runAdjacentContinuity(db, log, episodeIdNum);
           taskService.updateTaskResult(db, taskId, {
             storyboards: partialBoards,
             total: partialBoards.length,
@@ -1593,10 +1564,6 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
             duration_minutes: Math.ceil((totalDuration + 59) / 60),
             truncated: true,
             error_message: `连接中断（${err.message}），已恢复 ${partialBoards.length} 个分镜`,
-            dialogue_coverage: errChecks.dialogueCoverage,
-            universal_segment_format: errChecks.formatReport,
-            beat_coverage: errChecks.beatCoverage,
-            quality_report: errChecks.qualityReport,
           });
           return;
         }
@@ -1608,272 +1575,24 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
 }
 
 /**
- * 生成后的自检 + 质量报告（正常路径与「部分恢复」路径共用）。
+ * 相邻镜连续性判定（半自动尾帧衔接）。
  *
- * 抽出来的理由：分镜 JSON 解析失败 / 连接中断时会走「部分恢复」分支，那条分支以前直接
- * 写一份**不含任何自检字段**的结果。实测就踩过：一次生成实际成功了，却因为一处变量作用域
- * 错误（引用了内层函数里不存在的 scriptContent/storyboardCount）被外层 catch 降级成
- * 「部分恢复」，结果里既没有 quality_report 也没有台词覆盖 —— 而日志只显示「连接中断」。
- * 自检不能因为走了哪条分支就消失。
+ * 判「本镜是不是上一镜同一镜头的延续」，结果写 storyboards.link_prev_tail，
+ * 渲染时（videoClient）据此自动把上一镜末帧接成本镜首帧。
  *
- * 本函数**绝不抛异常**：任何一步失败都记 warn 并返回 null 字段，不影响出片。
+ * 必须在**分镜落库之后**跑（要对成对的库存行判定），而这里是所有生成路径
+ * （正常 / 部分恢复 / 异常恢复）唯一的共同收口；漏在别的分支就等于那条路径上没有尾帧衔接。
+ * 已判定的对内部会跳过，重复调用不会重判、也不会冲掉人工翻转。
  *
- * @param {object} db
- * @param {object} log
- * @param {number} episodeIdNum
- * @param {{requestedCount?:number|null, requestedDuration?:number|null, styleZh?:string,
- *          saveRepaired?:number, saveFatal?:number, stage?:string, skipBeats?:boolean}} [opts]
- *   stage: 'generation' 生成任务结束时 | 'after_polish' 前端润色完成后的复核 | 'manual' 手动重新自检
- *   skipBeats: 跳过剧情点那次 LLM 调用（只做确定性的台词/格式复核）
+ * 本函数**绝不抛异常**：失败只记 warn，不影响出片。
  */
-async function runStoryboardSelfChecks(db, log, episodeIdNum, opts = {}) {
-  const requestedCount = opts.requestedCount != null ? Number(opts.requestedCount) : null;
-  const requestedDuration = opts.requestedDuration != null ? Number(opts.requestedDuration) : null;
-
-  let storyboards = [];
-  try {
-    storyboards = getStoryboardsForEpisode(db, episodeIdNum);
-  } catch (e) {
-    log.warn('[分镜] 自检读取分镜失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
-    return { dialogueCoverage: null, beatCoverage: null, formatReport: null, qualityReport: null };
-  }
-
-  let scriptContent = '';
-  try {
-    const epRow = db.prepare('SELECT script_content FROM episodes WHERE id = ? AND deleted_at IS NULL').get(episodeIdNum);
-    scriptContent = (epRow && epRow.script_content) || '';
-  } catch (_) { /* 取不到剧本就只能跳过台词/节拍检查 */ }
-
-  // 1) 台词覆盖 —— 确定性字符串比对
-  let dialogueCoverage = null;
-  try {
-    let knownSpeakers = [];
-    try {
-      knownSpeakers = db.prepare(
-        `SELECT name FROM characters WHERE drama_id = (SELECT drama_id FROM episodes WHERE id = ?) AND deleted_at IS NULL`
-      ).all(episodeIdNum).map((r) => r.name).filter(Boolean);
-    } catch (_) { /* 取不到角色名不影响覆盖率 */ }
-    dialogueCoverage = checkDialogueCoverage(scriptContent, storyboards, { knownSpeakers });
-    // 台词越界：分镜 dialogue 里夹带了叙述句（实测 sb754 国王把旁白念了出来）
-    try {
-      const { extractScriptDialogue, checkDialogueOverreach } = require('../utils/dialogueCoverage');
-      const scriptLines = extractScriptDialogue(scriptContent, { knownSpeakers });
-      const overreach = checkDialogueOverreach(scriptLines, storyboards);
-      if (dialogueCoverage) dialogueCoverage.overreach = overreach;
-      if (overreach.length) {
-        log.warn('[分镜] 有分镜的台词字段夹带了旁白/叙述（角色会把旁白念出来）', {
-          episode_id: episodeIdNum,
-          count: overreach.length,
-          sample: overreach.slice(0, 3).map((x) => ({ shot: x.shot_number, extra: x.extra.slice(0, 40) })),
-        });
-      }
-    } catch (_) { /* 越界检查失败不影响其它自检 */ }
-    if (dialogueCoverage && dialogueCoverage.missing.length > 0) {
-      log.warn('[分镜] 剧本台词未全部覆盖 —— 以下台词在全部分镜里都找不到，必要时请增加分镜数重新生成', {
-        episode_id: episodeIdNum,
-        total: dialogueCoverage.total,
-        covered: dialogueCoverage.covered,
-        missing_count: dialogueCoverage.missing.length,
-        missing: dialogueCoverage.missing.map((m) => m.line),
-      });
-    } else if (dialogueCoverage) {
-      log.info('[分镜] 剧本台词覆盖率自检通过', { episode_id: episodeIdNum, total: dialogueCoverage.total });
-    }
-  } catch (e) {
-    log.warn('[分镜] 台词覆盖率自检失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
-  }
-
-  // 2) 剧情点（叙事节拍）覆盖 —— LLM 语义判定。为什么不能用规则见 utils/beatCoverageCheck
-  let beatCoverage = null;
-  try {
-    if (opts.skipBeats) {
-      // 明确跳过：报告里 beat_total 会是 0，界面显示「未检查」而不是伪造一个结论
-    } else {
-    beatCoverage = await checkBeatCoverage(db, log, scriptContent, storyboards);
-    if (beatCoverage && beatCoverage.missing.length > 0) {
-      log.warn('[分镜] 剧情点未全部覆盖 —— 语义判定认为以下剧本节拍没有落到任何分镜（请人工确认，必要时补镜）', {
-        episode_id: episodeIdNum,
-        total: beatCoverage.total,
-        covered: beatCoverage.covered,
-        missing: beatCoverage.missing.map((m) => m.beat),
-      });
-    } else if (beatCoverage) {
-      log.info('[分镜] 剧情点覆盖检查通过', { episode_id: episodeIdNum, total: beatCoverage.total });
-    }
-    }
-  } catch (e) {
-    log.warn('[分镜] 剧情点覆盖检查失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
-  }
-
-  // 3) 格式：以**库里实际存下来的文本**为准做只读复核（任何路径都能算，包括部分恢复）
-  let formatReport = null;
-  try {
-    const stored = summarizeUniversalSegmentFormat(storyboards, { styleZh: opts.styleZh || '', scriptContent });
-    formatReport = {
-      checked: stored.checked,
-      noncompliant: stored.noncompliant,
-      noncompliant_sample: stored.samples,
-      // 镜内剪辑点（H3 原生多镜头）与打斗节奏。这几个 key 必须**逐个列出** ——
-      // summarizeUniversalSegmentFormat 的返回值不会自动透传，漏一个在界面上就是 0。
-      // 初版就漏了 fight_* 四个，于是页面把 12 个打斗镜显示成「无打斗镜」、报告里
-      // 「有多少打斗镜定场过长」也永远是 0（真问题会被静默吞掉）。
-      multi_shot: stored.multi_shot,
-      cut_total: stored.cut_total,
-      // 运镜缺失：movement 字段没被写进 ust → 成片会是固定机位（见 universalOmniMultiBeatFormat.MOVEMENT_KEYWORDS）
-      movement_missing: stored.movement_missing || 0,
-      movement_missing_sample: stored.movement_missing_sample || [],
-      timeline_missing: stored.timeline_missing || 0,
-      timeline_missing_sample: stored.timeline_missing_sample || [],
-      // 剧情完整性：分镜总时长 vs 剧本朗读时长（见「字字动画」的分镜规范：宁可加镜，不要省略剧情）
-      duration_coverage: stored.duration_coverage || null,
-      fight_total: stored.fight_total,
-      fight_cut: stored.fight_cut,
-      fight_split_sequence: stored.fight_split_sequence,
-      fight_single_beat: stored.fight_single_beat,
-      fights_without_cuts: stored.fights_without_cuts,
-      fights_without_cuts_sample: stored.fights_without_cuts_samples,
-      cuts_without_fight: stored.cuts_without_fight,
-      cuts_without_fight_sample: stored.cuts_without_fight_samples,
-      // 入库时被自动修复/换成兜底的数量由 saveStoryboards 侧提供；部分恢复路径拿不到，记 0
-      repaired: Number(opts.saveRepaired) || 0,
-      fatal: Number(opts.saveFatal) || 0,
-    };
-    if (stored.noncompliant > 0) {
-      log.warn('[分镜] 落库后仍有分镜的全能提示词不合规（格式自检没兜住）', {
-        episode_id: episodeIdNum,
-        noncompliant: stored.noncompliant,
-        checked: stored.checked,
-        sample: stored.samples,
-      });
-    }
-    if (stored.duration_coverage && stored.duration_coverage.ratio != null && stored.duration_coverage.ratio < 0.9) {
-      log.warn('[分镜] 分镜总时长明显短于剧本朗读时长 —— 可能压缩了剧情（宁可加镜或加长单镜，不要省略）', {
-        episode_id: episodeIdNum,
-        script_seconds: stored.duration_coverage.script_seconds,
-        shots_seconds: stored.duration_coverage.shots_seconds,
-        ratio: stored.duration_coverage.ratio,
-        short_by_seconds: stored.duration_coverage.short_by,
-      });
-    }
-    if (stored.timeline_missing > 0) {
-      log.warn('[分镜] 有长镜（≥8秒）没写镜内时间推进（第几秒 / 起幅→落幅）—— 模型拿不到"什么时候该动镜头"的信息', {
-        episode_id: episodeIdNum,
-        count: stored.timeline_missing,
-        sample: stored.timeline_missing_sample,
-      });
-    }
-    if (stored.movement_missing > 0) {
-      log.warn('[分镜] 有分镜的 movement 字段没写进全能提示词 —— 视频模型拿不到运镜信息，成片会是固定机位', {
-        episode_id: episodeIdNum,
-        count: stored.movement_missing,
-        sample: stored.movement_missing_sample,
-      });
-    }
-    if (stored.fights_without_cuts > 0) {
-      log.warn('[分镜] 有打斗镜把大部分时长花在定场（交锋只在最后一瞬）——见 checkFightPacing', {
-        episode_id: episodeIdNum,
-        count: stored.fights_without_cuts,
-        sample: stored.fights_without_cuts_samples,
-      });
-    }
-    if (stored.fight_total > 0) {
-      log.info('[分镜] 打斗镜构成', {
-        episode_id: episodeIdNum,
-        fight_total: stored.fight_total,
-        cut: stored.fight_cut,
-        split_sequence: stored.fight_split_sequence,
-        single_beat: stored.fight_single_beat,
-      });
-    }
-  } catch (e) {
-    log.warn('[分镜] 提示词格式复核失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
-  }
-
-  // 3.5) 参考图绑定：槽位存在、正文提到角色却没引用 → 该角色拿不到参考图，身份一致性丢失
-  //（用户实测：镜1 四人只引了唐僧；镜3 把 @图片4=金箍棒 写成「八戒」）
-  try {
-    const { buildSlotsForStoryboard, checkSegmentRefBinding } = require('../utils/segmentRefBinding');
-    let knownNames = [];
-    try {
-      const dramaRow = db.prepare('SELECT drama_id FROM episodes WHERE id = ?').get(episodeIdNum);
-      const did = dramaRow && dramaRow.drama_id;
-      if (did) {
-        knownNames = db.prepare(
-          `SELECT name FROM characters WHERE drama_id = ? AND deleted_at IS NULL
-           UNION SELECT name FROM props WHERE drama_id = ? AND deleted_at IS NULL`
-        ).all(did, did).map((r) => r.name);
-      }
-    } catch (_) {}
-    const samples = [];
-    let checked = 0;
-    for (const r of storyboards) {
-      if (r.creation_mode !== 'universal') continue;
-      const slots = buildSlotsForStoryboard(db, r);
-      if (!slots.length) continue;
-      checked++;
-      const c = checkSegmentRefBinding(r.universal_segment_text, slots, { knownNames });
-      const n = c.missing.length + c.unknown.length + c.mismatched.length;
-      if (n) {
-        samples.push({
-          id: r.id ?? null, title: r.title || '', storyboard_number: r.storyboard_number ?? null,
-          missing: c.missing.map((x) => `${x.tag}=${x.name}`),
-          mismatched: c.mismatched.map((x) => `${x.tag} 后随「${x.written}」`),
-        });
-      }
-    }
-    if (formatReport) {
-      formatReport.ref_binding_checked = checked;
-      formatReport.ref_binding_bad = samples.length;
-      formatReport.ref_binding_sample = samples.slice(0, 5);
-    }
-    if (samples.length) {
-      log.warn('[分镜] 有分镜的参考图绑定不全（提到的角色/道具没被 @图片N 引用，或引用了不对的槽位）', {
-        episode_id: episodeIdNum, bad: samples.length, checked, sample: samples.slice(0, 3),
-      });
-    }
-  } catch (e) {
-    log.warn('[分镜] 参考图绑定自检失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
-  }
-
-  // 3.7) 相邻镜连续性判定（半自动尾帧衔接）：判「本镜是不是上一镜同一镜头的延续」，
-  // 结果写 storyboards.link_prev_tail，渲染时据此自动把上一镜末帧接成本镜首帧。
-  //
-  // 放在自检里的原因：它必须在**分镜落库之后**跑（要对成对的库存行判定），
-  // 而这里是所有生成路径（正常/部分恢复/异常恢复）唯一的共同收口；
-  // 漏在别的分支就等于那条路径上没有尾帧衔接。
-  // 已判定的对内部会跳过，所以「润色后复核」「手动重算」重复调到也不会重判、更不会冲掉人工翻转
-  // （全部都判过时这一次调用不花模型 token）。
+async function runAdjacentContinuity(db, log, episodeIdNum) {
   try {
     const { classifyEpisodeContinuity } = require('./adjacentContinuityService');
-    const continuity = await classifyEpisodeContinuity(db, log, episodeIdNum);
-    // 判定结果要立刻反映到这份报告上：storyboards 是函数开头读的快照，不合并的话
-    // 界面上的 tail_link_* 统计永远落后一次（和新生成的分镜对不上）。
-    if (continuity && continuity.verdicts && continuity.verdicts.size) {
-      for (const r of storyboards) {
-        if (continuity.verdicts.has(r.id)) r.link_prev_tail = continuity.verdicts.get(r.id);
-      }
-    }
+    await classifyEpisodeContinuity(db, log, episodeIdNum);
   } catch (e) {
     log.warn('[尾帧衔接] 相邻连续性判定失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
   }
-
-  // 4) 汇总报告
-  let qualityReport = null;
-  try {
-    qualityReport = buildStoryboardQualityReport({
-      storyboards,
-      coverage: dialogueCoverage,
-      beatCoverage,
-      formatReport,
-      requestedCount,
-      requestedDuration,
-      stage: opts.stage || 'generation',
-    });
-  } catch (e) {
-    log.warn('[分镜] 质量报告生成失败（不影响出片）', { episode_id: episodeIdNum, error: e.message });
-  }
-
-  return { dialogueCoverage, beatCoverage, formatReport, qualityReport };
 }
 
 /**
@@ -2198,8 +1917,7 @@ ${items}
       wantNarration,
       wantUniversalOmni,
       clipSec,
-      effectiveStoryboardCount,
-      videoDuration
+      effectiveStoryboardCount
     );
   });
 
@@ -2289,213 +2007,6 @@ function rebuildVideoPromptForStoryboard(db, log, storyboardId) {
   return storyboardService.getStoryboardById(db, sbId);
 }
 
-function copyStoryboardAssetLinks(db, fromSbId, toSbId) {
-  const from = Number(fromSbId);
-  const to = Number(toSbId);
-  const now = new Date().toISOString();
-  try {
-    const chars = db.prepare('SELECT character_id FROM storyboard_characters WHERE storyboard_id = ?').all(from);
-    const insC = db.prepare(
-      'INSERT OR IGNORE INTO storyboard_characters (storyboard_id, character_id, created_at) VALUES (?, ?, ?)'
-    );
-    for (const c of chars) insC.run(to, c.character_id, now);
-  } catch (_) {}
-  try {
-    const props = db.prepare('SELECT prop_id FROM storyboard_props WHERE storyboard_id = ?').all(from);
-    const insP = db.prepare('INSERT OR IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
-    for (const p of props) insP.run(to, p.prop_id);
-  } catch (_) {}
-}
-
-function durationForSplitSegment(type, text) {
-  const w = charSpeechWeight(text);
-  if (type === 'narration') return Math.min(12, Math.max(6, Math.round(w + 2)));
-  return Math.min(10, Math.max(5, Math.round(w)));
-}
-
-function buildSplitPlansFromStoryboard(row) {
-  const dialogueEntries = parseDialogueToEntries(row.dialogue);
-  const narrationText = row.narration != null ? String(row.narration).trim() : '';
-  const segmentCount = dialogueEntries.length + (narrationText ? 1 : 0);
-  if (segmentCount < 2) {
-    throw new Error('当前分镜仅有一段对白或旁白，无需拆镜');
-  }
-  if (dialogueEntries.length === 0 && narrationText) {
-    throw new Error('仅有旁白无法按对白拆镜');
-  }
-
-  const allSpeakers = dialogueEntries.map((d) => d.speaker).filter(Boolean);
-  const plans = [];
-
-  for (const { speaker, text } of dialogueEntries) {
-    const who = speaker || '角色';
-    const others = allSpeakers.filter((n) => n && n !== who);
-    const closed = others.length ? others.join('、') : '对方';
-    const isReporter = /记者/.test(who) || who === '小雅';
-    plans.push({
-      type: 'dialogue',
-      speaker: who,
-      dialogue: `${who}：${text}`,
-      narration: null,
-      title: `${(row.title || '分镜').trim()}·${who}对白`,
-      duration: durationForSplitSegment('dialogue', text),
-      action: isReporter
-        ? `采访场景，${who}面向对方发问，仅${who}开口说话，${closed}闭口聆听无口型。`
-        : `镜头聚焦${who}，仅${who}开口对口型说话，${closed}全程闭口无口型。`,
-      result: isReporter ? `${closed}保持静默聆听。` : `${who}完成台词，情绪鲜明。`,
-      shot_type: isReporter ? row.shot_type || '中景' : '近景',
-      movement: isReporter ? row.movement || '固定' : '推镜',
-    });
-  }
-
-  if (narrationText) {
-    const focus =
-      inferPrimaryOnScreenCharacter(
-        { action: row.action, result: row.result, title: row.title, dialogue: row.dialogue },
-        allSpeakers
-      ) || allSpeakers[allSpeakers.length - 1] || '角色';
-    plans.push({
-      type: 'narration',
-      speaker: null,
-      dialogue: null,
-      narration: narrationText,
-      title: `${(row.title || '分镜').trim()}·画外旁白`,
-      duration: durationForSplitSegment('narration', narrationText),
-      action: `${focus}在画面中保持静止，双唇闭合，无口型，听画外纪录片旁白。`,
-      result: `${focus}表情维持强硬自信，无唇动。`,
-      shot_type: '近景',
-      movement: row.movement || '固定',
-    });
-  }
-
-  return plans;
-}
-
-function persistSplitStoryboardRow(db, episodeId, storyboardNumber, baseRow, plan, now) {
-  const info = db.prepare(
-    `INSERT INTO storyboards (
-      episode_id, scene_id, storyboard_number, title, description, layout_description,
-      location, time, duration, dialogue, narration, action, result, atmosphere,
-      image_prompt, characters, shot_type, angle, angle_h, angle_v, angle_s,
-      movement, lighting_style, depth_of_field, segment_index, segment_title,
-      creation_mode, universal_segment_text, status, created_at, updated_at,
-      emotion, emotion_intensity
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`
-  ).run(
-    episodeId,
-    baseRow.scene_id ?? null,
-    storyboardNumber,
-    plan.title,
-    baseRow.description ?? null,
-    baseRow.layout_description ?? null,
-    baseRow.location ?? null,
-    baseRow.time ?? null,
-    plan.duration,
-    plan.dialogue,
-    plan.narration,
-    plan.action,
-    plan.result,
-    baseRow.atmosphere ?? null,
-    baseRow.image_prompt ?? null,
-    baseRow.characters ?? null,
-    plan.shot_type ?? baseRow.shot_type ?? null,
-    baseRow.angle ?? null,
-    baseRow.angle_h ?? null,
-    baseRow.angle_v ?? null,
-    baseRow.angle_s ?? null,
-    plan.movement ?? baseRow.movement ?? null,
-    baseRow.lighting_style ?? null,
-    baseRow.depth_of_field ?? null,
-    baseRow.segment_index ?? null,
-    baseRow.segment_title ?? null,
-    baseRow.creation_mode === 'universal' ? 'universal' : 'classic',
-    null,
-    now,
-    now,
-    baseRow.emotion ?? null,
-    baseRow.emotion_intensity ?? null
-  );
-  return info.lastInsertRowid;
-}
-
-function updateStoryboardAsSplitSegment(db, sbId, baseRow, plan, now) {
-  db.prepare(
-    `UPDATE storyboards SET
-      title = ?, duration = ?, dialogue = ?, narration = ?, action = ?, result = ?,
-      shot_type = ?, movement = ?, universal_segment_text = NULL,
-      video_prompt = NULL, video_url = NULL, audio_local_path = NULL,
-      narration_audio_local_path = NULL, status = 'pending', updated_at = ?
-     WHERE id = ? AND deleted_at IS NULL`
-  ).run(
-    plan.title,
-    plan.duration,
-    plan.dialogue,
-    plan.narration,
-    plan.action,
-    plan.result,
-    plan.shot_type ?? baseRow.shot_type ?? null,
-    plan.movement ?? baseRow.movement ?? null,
-    now,
-    sbId
-  );
-}
-
-/**
- * 按对白/旁白拆成多条分镜（每条仅一人说话或仅旁白），解决多角色同镜串音。
- * @returns {{ source_id, storyboard_ids, created_count, plans_summary }}
- */
-function splitStoryboardByAudio(db, log, storyboardId) {
-  const sbId = Number(storyboardId);
-  if (!Number.isFinite(sbId) || sbId <= 0) throw new Error('无效的分镜 id');
-
-  const row = db
-    .prepare('SELECT * FROM storyboards WHERE id = ? AND deleted_at IS NULL')
-    .get(sbId);
-  if (!row) throw new Error('分镜不存在');
-
-  const plans = buildSplitPlansFromStoryboard(row);
-  const extraCount = plans.length - 1;
-  const now = new Date().toISOString();
-  const episodeId = row.episode_id;
-  const baseNumber = Number(row.storyboard_number) || 0;
-
-  if (extraCount > 0) {
-    db.prepare(
-      `UPDATE storyboards SET storyboard_number = storyboard_number + ?, updated_at = ?
-       WHERE episode_id = ? AND storyboard_number > ? AND deleted_at IS NULL`
-    ).run(extraCount, now, episodeId, baseNumber);
-  }
-
-  const storyboardIds = [];
-  updateStoryboardAsSplitSegment(db, sbId, row, plans[0], now);
-  storyboardIds.push(sbId);
-
-  for (let i = 1; i < plans.length; i++) {
-    const newNum = baseNumber + i;
-    const newId = persistSplitStoryboardRow(db, episodeId, newNum, row, plans[i], now);
-    copyStoryboardAssetLinks(db, sbId, newId);
-    storyboardIds.push(newId);
-  }
-
-  for (const id of storyboardIds) {
-    rebuildVideoPromptForStoryboard(db, log, id);
-  }
-
-  const summary = plans.map((p) => `${p.duration}s ${p.title}`).join('；');
-  if (log?.info) {
-    log.info('[分镜] 按对白拆镜完成', { source_id: sbId, storyboard_ids: storyboardIds, plans: summary });
-  }
-
-  const storyboardService = require('./storyboardService');
-  return {
-    source_id: sbId,
-    storyboard_ids: storyboardIds,
-    created_count: extraCount,
-    plans_summary: summary,
-    storyboards: storyboardIds.map((id) => storyboardService.getStoryboardById(db, id)),
-  };
-}
-
 module.exports = {
   normalizeStoryboardShotNumber,
   dedupeStoryboardRowsByNumber,
@@ -2504,11 +2015,8 @@ module.exports = {
   /** 与分镜入库时一致的「视频提示词」拼装（供经典模式润色等复用） */
   composeStoryboardVideoPrompt: generateVideoPrompt,
   rebuildVideoPromptForStoryboard,
-  splitStoryboardByAudio,
-  /** 供测试在数据库副本上验证入库行为（返回 { saved, formatReport }） */
+  /** 供测试在数据库副本上验证入库行为（返回 { saved }） */
   saveStoryboards,
-  /** 按需重算自检 + 质量报告（「重新自检」按钮 / 润色完成后的复核都走它） */
-  runStoryboardSelfChecks,
   /** 续写提示词（供测试验证「续写的格式要求 == 首轮」——镜数多时续写是必然发生的） */
   buildContinuationPrompt,
   /** 首帧图提示词的机械拼装（供测试：静帧提示词里不得出现运镜/运动） */

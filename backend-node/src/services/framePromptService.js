@@ -88,7 +88,6 @@ function loadStoryboard(db, storyboardId) {
         movement: row.movement,
         lighting_style: row.lighting_style,
         depth_of_field: row.depth_of_field,
-        layout_description: row.layout_description || null,   // 画面布局与人物站位合同（首尾帧强制一致核心）
       }
     : null;
 }
@@ -274,50 +273,6 @@ function buildStoryboardContext(cfg, sb, scene, characterNames) {
     parts.push(`【画风·最高优先级】${styleZh}`);
   } else if (styleEn) {
     parts.push(`【画风·最高优先级】${styleEn}`);
-  }
-
-  // 【最高优先级空间合同 + 尺度绝对覆盖】layout_description + 时代自适应尺度铁律
-  if (sb.layout_description && String(sb.layout_description).trim()) {
-    const ld = String(sb.layout_description).trim();
-    if (isEn) {
-      parts.unshift(`【SPATIAL LAYOUT CONTRACT — HIGHEST PRIORITY + CINEMATIC BREATHING ROOM FOR MOVEMENT】
-${ld}
-
-【HARD LOCK (must stay 100% consistent)】
-- Main character(s) basic screen placement (left/center/right third, facing direction, spatial relationship to key props).
-- Realistic physical scale and relative proportions of all major props (only props actually present in the shot; sizes must match the story's era/setting; nothing exaggerated or distorted).
-- Overall visual weight balance (character remains the clear focal point; all props stay secondary environmental elements).
-
-【ALLOWED + ENCOURAGED CINEMATIC EVOLUTION (5-15s videos — support declared movement with meaningful change)】
-- The last frame MUST show visible, cumulative framing evolution driven by the declared camera_movement over the full clip duration (typically 5-15 seconds). Evolution should be noticeable, not just tiny micro-adjustments.
-- Examples (larger duration → larger allowed change):
-  - Slow push-in over 8-12s+: last frame noticeably tighter on the character (higher screen occupancy), background more compressed.
-  - Handheld / tracking: natural framing drift, slight imperfect composition shifts, and movement-induced offsets are desirable and expected.
-  - Pan / orbit / follow: clear natural entry/exit of elements on sides or minor camera drift.
-- Hard lock remains: core character placement (no L/R swap), realistic physical sizes of all props, basic spatial relationships, and perspective must stay consistent.
-- Goal: First and last frames must read as the same continuous physical scene and take, but with enough visual progression that the 5-15s video generated from them actually feels dynamic and realizes the declared movement, instead of looking nearly static or locked-off.
-
-Violating hard lock = failure. Insufficient evolution that suppresses the movement = also bad result.`);
-    } else {
-      parts.unshift(`【空间布局合同 — 最高优先级铁律 + 运镜呼吸空间（必须严格遵守核心，但允许电影化微调）】
-${ld}
-
-【核心锁定（必须100%一致）】
-- 主要角色在画面中的基本站位（画面左/中/右三分、朝向、与主要道具的相对空间关系）。
-- 所有主要道具的真实物理尺寸与相对比例（仅写本分镜实际出现的道具，尺度须符合剧本时代背景，所有物件不得夸大或失真；古代场景严禁出现智能手机、遥控器等现代物品）。
-- 整体画面重心与基本平衡感（主角仍是视觉焦点，所有道具均为次要环境元素）。
-
-【允许且推荐的电影化演化（5-15秒视频，强烈支持 declared movement）】
-- 尾帧必须根据本分镜的 movement 和视频时长（通常5-15秒）进行有意义的取景演化，而非微调。
-- 示例（时长越长，演化幅度可越大）：
-  - 缓推（slow push-in）5-10秒+：尾帧人物画面占比应明显大于首帧，背景明显更被压缩，取景更紧。
-  - 手持跟拍：允许自然的取景晃动、轻微不完美偏移、以及随运动产生的构图漂移。
-  - 横摇/环绕/跟拍：画面可有清晰的左右进入/退出变化或机位自然漂移。
-- 硬锁：主要角色核心站位不左右互换、主要道具真实尺寸与基本相对位置不变、所有物体保持真实物理尺度与透视。
-- 目标：首尾帧之间要有足够视觉差异，让基于它们的5-15秒视频真正“动”起来，充分实现声明的运镜效果，而不是几乎定格。
-
-违背硬锁 = 生成失败；演化幅度过小导致运镜失效也属于不理想结果。`);
-    }
   }
 
   if (sb.description) {
@@ -657,83 +612,5 @@ module.exports = {
   getFramePrompts: (db, storyboardId) => storyboardService.getFramePrompts(db, storyboardId),
   generateSingleFrameExported: generateSingleFrame,
   expandAngleDescription,
-  regenerateLayoutDescription,
 };
 
-/**
- * 一键重新生成/优化单个分镜的 layout_description（空间布局合同）
- * 自动参考上下分镜，保证前后连贯性
- * @returns {string} 新的 layout_description 文本
- */
-async function regenerateLayoutDescription(db, log, storyboardId) {
-  const sid = Number(storyboardId);
-  const sb = db.prepare('SELECT * FROM storyboards WHERE id = ? AND deleted_at IS NULL').get(sid);
-  if (!sb) throw new Error('分镜不存在');
-
-  // 取前后分镜（用于连贯性）
-  let prevSb = null, nextSb = null;
-  if (sb.episode_id != null && sb.storyboard_number != null) {
-    prevSb = db.prepare(`
-      SELECT storyboard_number, action, result, layout_description
-      FROM storyboards
-      WHERE episode_id = ? AND storyboard_number < ? AND deleted_at IS NULL
-      ORDER BY storyboard_number DESC LIMIT 1
-    `).get(sb.episode_id, sb.storyboard_number);
-
-    nextSb = db.prepare(`
-      SELECT storyboard_number, action, result, layout_description
-      FROM storyboards
-      WHERE episode_id = ? AND storyboard_number > ? AND deleted_at IS NULL
-      ORDER BY storyboard_number ASC LIMIT 1
-    `).get(sb.episode_id, sb.storyboard_number);
-  }
-
-  // 角色信息（用于站位描述）
-  const characterNames = loadStoryboardCharacterNames(db, sid);
-
-  const cfg = require('../config').loadConfig();
-  const systemPrompt = promptI18n.getRegenerateLayoutDescriptionPrompt(cfg);
-
-  const userLines = [
-    `CURRENT_SHOT #${sb.storyboard_number || sid}`,
-    sb.action ? `ACTION: ${sb.action}` : null,
-    sb.result ? `RESULT: ${sb.result}` : null,
-    sb.dialogue ? `DIALOGUE: ${sb.dialogue}` : null,
-    sb.shot_type ? `SHOT_TYPE: ${sb.shot_type}` : null,
-    characterNames.length ? `CHARACTERS: ${characterNames.join('；')}` : null,
-    prevSb ? `PREV_SHOT #${prevSb.storyboard_number} LAYOUT: ${prevSb.layout_description || '(none)'}` : 'PREV_SHOT: (first shot)',
-    nextSb ? `NEXT_SHOT #${nextSb.storyboard_number} LAYOUT: ${nextSb.layout_description || '(none)'}` : 'NEXT_SHOT: (last shot)',
-    '请严格按照系统提示要求，只输出优化后的 layout_description 文本。',
-  ].filter(Boolean);
-
-  const userPrompt = userLines.join('\n');
-
-  log.info('[布局重生成] 开始', { storyboard_id: sid, has_prev: !!prevSb, has_next: !!nextSb });
-
-  const raw = await aiClient.generateText(db, log, 'text', userPrompt, systemPrompt, {
-    max_tokens: 300,
-    temperature: 0.35,
-  });
-
-  let newLayout = (raw || '').trim()
-    .replace(/^```[a-z]*\s*/i, '')
-    .replace(/\s*```$/, '')
-    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
-    .trim();
-
-  // 极简清洗：去掉明显的前缀
-  newLayout = newLayout.replace(/^(布局描述|layout_description|空间布局|画面布局)[:：]\s*/i, '').trim();
-
-  if (!newLayout || newLayout.length < 8) {
-    throw new Error('AI 返回的布局描述过短或无效');
-  }
-
-  // 写回数据库
-  const now = new Date().toISOString();
-  db.prepare('UPDATE storyboards SET layout_description = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL')
-    .run(newLayout, now, sid);
-
-  log.info('[布局重生成] 完成', { storyboard_id: sid, new_layout_preview: newLayout.slice(0, 80) });
-
-  return newLayout;
-}

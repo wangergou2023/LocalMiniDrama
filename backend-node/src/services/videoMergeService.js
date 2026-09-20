@@ -125,6 +125,156 @@ async function resolveVideoToLocalPath(videoUrl, baseUrl, storageRoot, tempDir, 
   }
 }
 
+/**
+ * 用 ffprobe 读取一条视频的编码规格（失败返回 null，调用方按“不动它”处理）。
+ * 合并用的是 `ffmpeg -f concat -c copy`，要求所有输入同编码/同分辨率/同音频参数；
+ * 任何一段不一致都会导致**那一段只有声音、画面被丢弃**（播放器卡在上一帧）。
+ */
+function probeVideoProfile(filePath, log) {
+  try {
+    const { spawnSync } = require('child_process');
+    const args = [
+      '-v', 'error',
+      '-show_entries', 'stream=codec_type,codec_name,width,height,r_frame_rate,pix_fmt,sample_rate,channels',
+      '-of', 'json',
+      filePath,
+    ];
+    const r = spawnSync(getFfprobePath(), args, { encoding: 'utf8', maxBuffer: 2 * 1024 * 1024 });
+    if (r.status !== 0) return null;
+    const j = JSON.parse(r.stdout || '{}');
+    const streams = Array.isArray(j.streams) ? j.streams : [];
+    const v = streams.find((s) => s.codec_type === 'video');
+    const a = streams.find((s) => s.codec_type === 'audio');
+    if (!v) return null;
+    return {
+      codec: String(v.codec_name || '').toLowerCase(),
+      width: Number(v.width) || 0,
+      height: Number(v.height) || 0,
+      fps: normalizeFps(v.r_frame_rate),
+      pixFmt: String(v.pix_fmt || '').toLowerCase(),
+      audioCodec: a ? String(a.codec_name || '').toLowerCase() : '',
+      audioRate: a ? Number(a.sample_rate) || 0 : 0,
+      audioChannels: a ? Number(a.channels) || 0 : 0,
+    };
+  } catch (e) {
+    if (log && log.warn) log.warn('Video merge: probe 失败', { file: path.basename(String(filePath)), error: e.message });
+    return null;
+  }
+}
+
+/** "24/1" → 24；解析不了返回 0 */
+function normalizeFps(value) {
+  const s = String(value || '').trim();
+  const m = s.match(/^(\d+)\s*\/\s*(\d+)$/);
+  if (m) {
+    const n = Number(m[1]);
+    const d = Number(m[2]);
+    if (n > 0 && d > 0) return Math.round((n / d) * 1000) / 1000;
+    return 0;
+  }
+  const n = Number(s);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * 选「多数派规格」作为合并目标：维度+帧率取出现次数最多的组合；
+ * 编码统一用 h264（兼容性最好，最终成片编码器也是它）。
+ * 探测失败（null）的条目不计入。
+ */
+function pickMajorityProfile(profiles) {
+  const valid = (profiles || []).filter((p) => p && p.width > 0 && p.height > 0);
+  if (valid.length === 0) return null;
+  const counter = new Map();
+  for (const p of valid) {
+    const key = `${p.width}x${p.height}@${p.fps}`;
+    const cur = counter.get(key) || { count: 0, sample: p };
+    cur.count += 1;
+    counter.set(key, cur);
+  }
+  let best = null;
+  for (const v of counter.values()) if (!best || v.count > best.count) best = v;
+  return {
+    codec: 'h264',
+    width: best.sample.width,
+    height: best.sample.height,
+    fps: best.sample.fps || 24,
+  };
+}
+
+/** 该段是否需要归一化（探测失败时返回 false —— 不动它，保持原行为） */
+function needsNormalization(profile, target) {
+  if (!profile || !target) return false;
+  if (profile.codec !== target.codec) return true;
+  if (profile.width !== target.width || profile.height !== target.height) return true;
+  if (normalizeFps(profile.fps) !== normalizeFps(target.fps)) return true;
+  if (profile.pixFmt !== 'yuv420p') return true;
+  if (profile.audioCodec !== 'aac') return true;
+  if (profile.audioRate !== 48000) return true;
+  if (profile.audioChannels !== 2) return true;
+  return false;
+}
+
+/** 归一化 ffmpeg 参数：等比缩放 + 补边到目标尺寸、统一帧率/像素格式/音频参数 */
+function buildNormalizeArgs(src, out, target, hasAudio) {
+  const fps = normalizeFps(target.fps) || 24;
+  const vf = `scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
+    `pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps}`;
+  const args = ['-y', '-i', src];
+  if (!hasAudio) args.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000');
+  args.push(
+    '-vf', vf,
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-ar', '48000', '-ac', '2', '-b:a', '192k',
+    '-shortest', '-movflags', '+faststart',
+    out
+  );
+  return args;
+}
+
+/**
+ * 合并前把不一致的输入归一化到同一规格。
+ * @returns {{paths: string[], normalized: object[], profile: object|null, tmpDir: string|null}}
+ */
+function prepareUniformInputs(localPaths, log) {
+  const list = Array.isArray(localPaths) ? localPaths : [];
+  const profiles = list.map((p) => probeVideoProfile(p, log));
+  const target = pickMajorityProfile(profiles);
+  if (!target) return { paths: list, normalized: [], profile: null, tmpDir: null };
+  const needIdx = list.map((p, i) => i).filter((i) => needsNormalization(profiles[i], target));
+  if (needIdx.length === 0) return { paths: list, normalized: [], profile: target, tmpDir: null };
+
+  const tmpDir = path.join(require('os').tmpdir(), `lmd_merge_norm_${Date.now()}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const paths = list.slice();
+  const normalized = [];
+  const ffmpegBin = getFfmpegPath();
+  const { spawnSync } = require('child_process');
+  for (const i of needIdx) {
+    const out = path.join(tmpDir, `norm_${i}.mp4`);
+    const prof = profiles[i];
+    const r = spawnSync(ffmpegBin, buildNormalizeArgs(list[i], out, target, !!prof.audioCodec), {
+      encoding: 'utf8',
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    if (r.status === 0 && fs.existsSync(out)) {
+      paths[i] = out;
+      normalized.push({
+        index: i,
+        file: path.basename(list[i]),
+        from: `${prof.codec} ${prof.width}x${prof.height}@${normalizeFps(prof.fps)}`,
+        to: `h264 ${target.width}x${target.height}@${normalizeFps(target.fps)}`,
+      });
+    } else {
+      if (log && log.warn) {
+        log.warn('Video merge: 归一化失败，该段可能丢画面', {
+          index: i, file: path.basename(list[i]), error: String(r.stderr || '').slice(-300),
+        });
+      }
+    }
+  }
+  return { paths, normalized, profile: target, tmpDir };
+}
+
 /** 使用 ffmpeg concat 合并多个视频文件 */
 function runFfmpegConcat(localPaths, outputPath, log) {
   const ffmpegBin = getFfmpegPath();
@@ -231,7 +381,20 @@ async function processVideoMerge(db, log, mergeId, baseUrl) {
     if (!fs.existsSync(mergedDir)) fs.mkdirSync(mergedDir, { recursive: true });
     const outputFileName = `merged_${Date.now()}.mp4`;
     const outputPath = path.join(mergedDir, outputFileName);
-    const ok = runFfmpegConcat(localPaths, outputPath, log);
+    // 先统一规格：-c copy 拼接要求所有输入同编码/同分辨率/同音频参数，
+    // 否则那一段会「只有声音没画面」（播放器卡在上一帧）。
+    const prepared = prepareUniformInputs(localPaths, log);
+    if (prepared.normalized.length) {
+      log.info('Video merge: 已把不一致的输入归一化到多数派规格', {
+        merge_id: mergeId,
+        target: prepared.profile,
+        items: prepared.normalized,
+      });
+    }
+    const ok = runFfmpegConcat(prepared.paths, outputPath, log);
+    if (prepared.tmpDir) {
+      try { fs.rmSync(prepared.tmpDir, { recursive: true, force: true }); } catch (_) {}
+    }
     if (ok && fs.existsSync(outputPath)) {
       mergedRelativePath = sub
         ? path.join(sub, 'videos', 'merged', outputFileName).replace(/\\/g, '/')
@@ -288,6 +451,14 @@ async function processVideoMerge(db, log, mergeId, baseUrl) {
 }
 
 module.exports = {
+  // 纯逻辑（供单测）：合并前判断哪些输入需要归一化
+  normalizeFps,
+  pickMajorityProfile,
+  needsNormalization,
+  buildNormalizeArgs,
+  prepareUniformInputs,
+  runFfmpegConcat,
+  probeVideoProfile,
   list,
   getById,
   create,

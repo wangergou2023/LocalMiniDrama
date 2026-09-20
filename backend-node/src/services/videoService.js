@@ -10,7 +10,13 @@ function resolveRemoteVideoUrl(videoUrl, fallbackError) {
 }
 
 /** 将 video_generations 标为失败；若无 error_msg 列则只更新 status/updated_at */
-function setVideoGenFailed(db, videoGenId, errorMsg, now) {
+function setVideoGenFailed(db, videoGenId, errorMsg, now, opts) {
+  // 用户主动取消后：保留「用户取消」这个原因，不让随后轮询失败的文案把它覆盖掉
+  // （取消写入本身用 force 绕过守卫，否则会被自己刚设的标记拦住）
+  if (cancelledVideoGens.has(Number(videoGenId)) && !(opts && opts.force)) {
+    db.prepare('UPDATE video_generations SET updated_at = ? WHERE id = ?').run(now, videoGenId);
+    return;
+  }
   try {
     db.prepare('UPDATE video_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?').run(
       'failed', (errorMsg || '').slice(0, 500), now, videoGenId
@@ -217,6 +223,8 @@ function maybeNormalizeVideoAfterDownload(storagePath, localPath, row, videoGenI
 
 /** 防止同一 videoGenId 重复发起 poll（含重启恢复） */
 const activeVideoPolls = new Set();
+/** 用户已取消的视频生成（进程内）：防止取消后仍在跑的轮询把失败文案盖到「用户取消」上 */
+const cancelledVideoGens = new Set();
 
 function resolveStoragePath(cfg) {
   return path.isAbsolute(cfg.storage?.local_path)
@@ -293,6 +301,10 @@ async function pollProviderTaskAndFinalize(db, log, videoGenId, row, rowForAspec
   if (polledVideo.ok) {
     await finalizeSuccessfulVideo(db, log, videoGenId, row, rowForAspect, polledVideo.video_url, 'after poll');
   } else {
+    if (cancelledVideoGens.has(Number(videoGenId))) {
+      log.info('视频任务已被用户取消，忽略本次轮询失败信息', { id: videoGenId });
+      return;
+    }
     setVideoGenFailed(db, videoGenId, polledVideo.error, now);
     if (row.task_id) taskService.updateTaskError(db, row.task_id, polledVideo.error);
     log.error('Video generation failed (after poll)', { id: videoGenId, error: polledVideo.error });
@@ -443,12 +455,83 @@ function resumeProcessingVideoGenerations(db, log) {
   }
 }
 
+/** ComfyUI 提交成功即持久化 prompt_id，保证软件重启后能恢复轮询而不是判死 */
+function persistProviderTaskId(db, log, videoGenId, providerTaskId) {
+  const id = String(providerTaskId || '').trim();
+  if (!id) return;
+  try {
+    db.prepare(
+      'UPDATE video_generations SET status = ?, provider_task_id = ?, updated_at = ? WHERE id = ?'
+    ).run('processing', id, new Date().toISOString(), videoGenId);
+    log.info('已持久化上游任务 ID（重启后可续轮询）', { videoGenId, provider_task_id: id });
+  } catch (e) {
+    log.warn('持久化上游任务 ID 失败（不影响本次生成）', { videoGenId, error: e.message });
+  }
+}
+
+/**
+ * 取消视频生成：标记本地为已取消 + 取消上游任务（ComfyUI：运行中中断、排队中出队）。
+ * 旧记录没有 provider_task_id 时无法定位上游任务，只能标记本地状态并留日志。
+ */
+async function cancelVideoGenerationByTask(db, log, taskId, reason) {
+  const row = db.prepare(
+    'SELECT * FROM video_generations WHERE task_id = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 1'
+  ).get(String(taskId || ''));
+  if (!row) return { ok: false, reason: 'not_video_generation' };
+  if (row.status !== 'pending' && row.status !== 'processing') {
+    return { ok: true, skipped: true, status: row.status };
+  }
+  const now = new Date().toISOString();
+  setVideoGenFailed(db, row.id, reason || '用户取消生成', now, { force: true });
+  cancelledVideoGens.add(Number(row.id));
+  const upstreamId = row.provider_task_id && String(row.provider_task_id).trim();
+  if (!upstreamId) {
+    log.warn('取消视频任务：该记录没有上游任务 ID（旧数据），ComfyUI 里已排队的任务无法定向取消', {
+      videoGenId: row.id,
+    });
+    return { ok: true, upstream: false, video_gen_id: row.id };
+  }
+  try {
+    const r = await videoClient.cancelUpstreamVideoTask(db, log, row);
+    return { ok: true, upstream: !!(r && r.ok), video_gen_id: row.id };
+  } catch (e) {
+    log.error('取消上游视频任务异常', { videoGenId: row.id, error: e.message });
+    return { ok: true, upstream: false, video_gen_id: row.id };
+  }
+}
+
+/** 该镜是否为全能镜头（creation_mode='universal'） */
+function isUniversalStoryboard(db, storyboardId) {
+  if (!storyboardId) return false;
+  try {
+    const sb = db
+      .prepare('SELECT creation_mode FROM storyboards WHERE id = ? AND deleted_at IS NULL')
+      .get(Number(storyboardId));
+    return !!(sb && sb.creation_mode === 'universal');
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * 提交给上游的尾帧：
+ *  - 全能镜头：参考图是主要约束，尾帧不参与（保持原有行为，避免两种约束互相干扰）；
+ *  - 经典/首尾帧镜头：场景参考图与首尾帧锚定要共存。
+ * 以前这里无条件 `hasOmniRefs ? undefined` —— 等于给经典镜补了场景图就悄悄丢掉尾帧锚定。
+ */
+function resolveLastFrameForSubmit({ hasRefs, isUniversalShot, lastFrameUrl }) {
+  if (!lastFrameUrl) return undefined;
+  if (hasRefs && isUniversalShot) return undefined;
+  return lastFrameUrl;
+}
+
 async function processVideoGeneration(db, log, videoGenId) {
   if (activeVideoPolls.has(videoGenId)) {
     log.info('Video generation already in progress, skip duplicate', { videoGenId });
     return;
   }
   activeVideoPolls.add(videoGenId);
+  cancelledVideoGens.delete(Number(videoGenId));
   log.info('processVideoGeneration started', { videoGenId });
   const row = db.prepare('SELECT * FROM video_generations WHERE id = ? AND deleted_at IS NULL').get(Number(videoGenId));
   if (!row) {
@@ -558,13 +641,19 @@ async function processVideoGeneration(db, log, videoGenId) {
         storyboard_id: row.storyboard_id || undefined,
         image_url: row.image_url,
         first_frame_url: row.first_frame_url,
-        last_frame_url: hasOmniRefs ? undefined : row.last_frame_url,
+        last_frame_url: resolveLastFrameForSubmit({
+          hasRefs: hasOmniRefs,
+          isUniversalShot: isUniversalStoryboard(db, row.storyboard_id),
+          lastFrameUrl: row.last_frame_url,
+        }),
         reference_urls,
         reference_labels,
         reference_audio_urls,
         files_base_url: filesBaseUrl,
         storage_local_path: storageLocalPath,
         video_gen_id: videoGenId,
+        // ComfyUI 提交成功立刻落库 prompt_id
+        onSubmitted: (promptId) => persistProviderTaskId(db, log, videoGenId, promptId),
       });
     } finally {
       stopHeartbeat();
@@ -693,6 +782,9 @@ module.exports = {
   processVideoGeneration,
   resumeProcessingVideoGenerations,
   resumeFailedVideoPoll,
+  cancelVideoGenerationByTask,
+  resolveLastFrameForSubmit,
+  isUniversalStoryboard,
   resumePollForVideoGeneration,
   saveManualVideoUpload,
 };

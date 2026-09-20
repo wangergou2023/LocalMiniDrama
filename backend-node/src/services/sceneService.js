@@ -67,6 +67,91 @@ function deleteScene(db, log, sceneId) {
   return { ok: true };
 }
 
+function hasAssetImage(row) {
+  return !!(row && (row.image_url || row.local_path));
+}
+
+/**
+ * 地点归一化：仅用于跨集判断「是不是同一个场景」。
+ * 去掉空白、括号补充说明与大小写差异（「吴家（客厅）」与「吴家」视为同一处）。
+ */
+function normalizeSceneLocationKey(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[（(][^）)]*[)）]/g, '')
+    .replace(/\s+/g, '')
+    .toLowerCase();
+}
+
+/**
+ * 在本剧中查找可复用的既有场景（跨集）：
+ *   同地点优先、其次同时间；优先带图的候选；排除本集自己（重新提取时不要复用刚被软删的行）。
+ * 目的：同一地点在后续剧集里不必重新生成场景图，也保持提示词一致。
+ * @returns {object|null} 命中的 scenes 行（原始行）
+ */
+function findReusableScene(db, dramaId, opts) {
+  const { location, time, excludeEpisodeId } = opts || {};
+  const key = normalizeSceneLocationKey(location);
+  if (!key) return null;
+  const rows = db.prepare(
+    `SELECT * FROM scenes
+      WHERE drama_id = ? AND deleted_at IS NULL
+        AND (episode_id IS NULL OR episode_id != ?)
+      ORDER BY id ASC`
+  ).all(Number(dramaId), Number(excludeEpisodeId) || -1);
+  const sameLocation = rows.filter((r) => normalizeSceneLocationKey(r.location) === key);
+  if (sameLocation.length === 0) return null;
+  const timeKey = String(time || '').trim();
+  const sameTime = sameLocation.filter((r) => String(r.time || '').trim() === timeKey);
+  const pool = sameTime.length > 0 ? sameTime : sameLocation;
+  const withImage = pool.filter(hasAssetImage);
+  return (withImage.length > 0 ? withImage : pool)[0] || null;
+}
+
+/** 复用同一地点场景时一并沿用的字段（提示词 + 图片资产） */
+const INHERIT_SCENE_FIELDS = [
+  'prompt',
+  'polished_prompt',
+  'polished_prompt_single',
+  'negative_prompt',
+  'image_url',
+  'local_path',
+  'ref_image',
+  'extra_images',
+];
+
+/** 把 sourceSceneId 的提示词与图片资产复制到新建的本集场景行上（不复制文件，仅引用同一张图） */
+function inheritSceneAssets(db, log, sceneId, sourceSceneId) {
+  if (!sourceSceneId) return null;
+  const src = db.prepare('SELECT * FROM scenes WHERE id = ? AND deleted_at IS NULL').get(Number(sourceSceneId));
+  if (!src) return null;
+  const sets = [];
+  const params = [];
+  for (const field of INHERIT_SCENE_FIELDS) {
+    if (src[field] === undefined) continue; // 老库可能缺列
+    sets.push(field + ' = ?');
+    params.push(src[field] === undefined ? null : src[field]);
+  }
+  if (sets.length === 0) return null;
+  try {
+    db.prepare(
+      `UPDATE scenes SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`
+    ).run(...params, new Date().toISOString(), Number(sceneId));
+  } catch (e) {
+    log.warn('Scene inherit failed', { scene_id: sceneId, source_scene_id: sourceSceneId, error: e.message });
+    return null;
+  }
+  log.info('Scene reused from earlier episode', {
+    scene_id: sceneId,
+    source_scene_id: src.id,
+    source_episode_id: src.episode_id,
+    location: src.location,
+    time: src.time,
+    has_image: hasAssetImage(src),
+  });
+  return src;
+}
+
 function createScene(db, log, dramaId, req) {
   const now = new Date().toISOString();
   const episodeId = req.episode_id != null ? Number(req.episode_id) : null;
@@ -86,6 +171,7 @@ function createScene(db, log, dramaId, req) {
       now
     );
     log.info('Scene created', { scene_id: info.lastInsertRowid, drama_id: dramaId, episode_id: episodeId });
+    if (req.inherit_from_scene_id) inheritSceneAssets(db, log, info.lastInsertRowid, req.inherit_from_scene_id);
     return getSceneById(db, info.lastInsertRowid);
   } catch (e) {
     // 老库可能没有 episode_id 列，降级为不含 episode_id 的 INSERT
@@ -94,6 +180,7 @@ function createScene(db, log, dramaId, req) {
         `INSERT INTO scenes (drama_id, location, time, prompt, image_url, local_path, storyboard_count, status, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, 1, 'pending', ?, ?)`
       ).run(Number(dramaId), req.location || '', req.time || '', req.prompt || '', req.image_url ?? null, req.local_path ?? null, now, now);
+      if (req.inherit_from_scene_id) inheritSceneAssets(db, log, info.lastInsertRowid, req.inherit_from_scene_id);
       return getSceneById(db, info.lastInsertRowid);
     }
     throw e;
@@ -144,6 +231,7 @@ function getSceneById(db, id) {
   return row ? {
     id: row.id,
     drama_id: row.drama_id,
+    episode_id: row.episode_id ?? null,
     location: row.location,
     time: row.time,
     prompt: row.prompt,
@@ -544,6 +632,10 @@ module.exports = {
   deleteScene,
   createScene,
   createSceneForEpisode,
+  findReusableScene,
+  inheritSceneAssets,
+  normalizeSceneLocationKey,
+  hasAssetImage,
   deleteScenesByEpisodeId,
   listByDramaId,
   getSceneById,

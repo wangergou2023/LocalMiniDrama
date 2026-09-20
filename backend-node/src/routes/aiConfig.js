@@ -127,61 +127,6 @@ function testConnection(log) {
   };
 }
 
-/** ModelArk / 方舟私有资产库：代理调用 CreateAssetGroup、ListAssets 等（与官方 Action 名一致） */
-function modelArkAsset(log) {
-  return async (req, res) => {
-    const body = req.body || {};
-    const action = (body.action || '').toString().trim();
-    try {
-      const modelArkAssetProxyService = require('../services/modelArkAssetProxyService');
-      const data = await modelArkAssetProxyService.callModelArkAsset(
-        {
-          base_url: body.base_url,
-          api_key: body.api_key,
-          action,
-          body: body.payload,
-          path_mode: body.path_mode,
-          http_method: body.http_method,
-          api_version: body.api_version,
-          auth_mode: body.auth_mode,
-          access_key_id: body.access_key_id,
-          secret_access_key: body.secret_access_key,
-          sign_region: body.sign_region,
-          sign_service: body.sign_service,
-          session_token: body.session_token,
-          project_name: body.project_name,
-        },
-        log
-      );
-      response.success(res, data);
-    } catch (err) {
-      log.error('model-ark-asset proxy failed', { error: err.message, action });
-      const status = err.status >= 400 && err.status < 600 ? err.status : 400;
-      return response.error(res, status, 'MODEL_ARK_ASSET', err.message || '请求失败', err.payload);
-    }
-  };
-}
-
-/** 即梦2角色认证：代理 GET 素材列表（表单未保存也可用当前填写的网关与 Token） */
-function listJimeng2MaterialAssets(log) {
-  return async (req, res) => {
-    const body = req.body || {};
-    const base_url = (body.base_url || '').toString().trim().replace(/\/$/, '');
-    const { normalizeMaterialHubToken } = require('../services/jimengMaterialHubService');
-    let api_key = normalizeMaterialHubToken(body.api_key || '');
-    if (!base_url || !api_key) {
-      return response.badRequest(res, '请先填写网关 URL 与 Token');
-    }
-    const jimengMaterialHubService = require('../services/jimengMaterialHubService');
-    const ctx = { baseUrl: base_url, token: api_key };
-    const r = await jimengMaterialHubService.listAssets(ctx, { limit: body.limit, cursor: body.cursor }, log);
-    if (!r.ok) {
-      return response.badRequest(res, String(r.error || '列出素材失败').slice(0, 800));
-    }
-    response.success(res, r.data);
-  };
-}
-
 module.exports = function aiConfigRoutes(db, log, cfg) {
   return {
     list: list(db),
@@ -191,8 +136,6 @@ module.exports = function aiConfigRoutes(db, log, cfg) {
     update: update(db, log, cfg),
     delete: remove(db, log, cfg),
     testConnection: testConnection(log),
-    listJimeng2MaterialAssets: listJimeng2MaterialAssets(log),
-    modelArkAsset: modelArkAsset(log),
     bulkUpdateKey: bulkUpdateKey(db, log, cfg),
   };
 };

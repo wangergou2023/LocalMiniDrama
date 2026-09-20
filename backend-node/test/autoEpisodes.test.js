@@ -91,7 +91,25 @@ describe('全能模式的必填字段：必须写在用户提示词里（模型�
     assert.match(p.getStoryboardUniversalOmniUserReminder({ app: { language: 'en' } }), /TWO MORE REQUIRED FIELDS/);
   });
 
-  /**
+    /**
+   * 对白镜的时间安排曾经把台词排到「第三秒起 / 第六秒起」，直接导致成片「嘴动了半天没声音」：
+   * 实测 vg158/vg163/vg164/vg165/vg166/vg167/vg168 的 ust 分别把台词排在 4/4/3/5/4/7/6 秒，
+   * 而音频只有 ~0.5 秒的固有起声余量（vg169 实测 0.6 秒起声）→ 前几秒画面里的人在动嘴、声音迟迟不来。
+   * 规范里那两条是最初的写法来源：「必须在正文里写出台词开始的时间点（from the sixth second onward …）」
+   * 与「把运镜全部压在该时间点之前」。现在改成台词从第一拍就来。
+   */
+  it('对白镜规范要求台词尽早出现，并禁止开口前有口型', () => {
+    const spec = p.getDefaultPromptBody('universal_multi_beat_format');
+    assert.match(spec, /台词必须尽早出现/);
+    assert.match(spec, /台词就是\*\*第一拍的内容\*\*/);
+    assert.match(spec, /禁止\*\*把台词排到「第三秒起/);
+    assert.match(spec, /开口前不得有口型/);
+    // 旧的「把运镜全部压在该时间点之前」写法必须消失（它就是在教模型把台词往后排）
+    assert.equal(/把运镜全部压在该时间点之前/.test(spec), false, '旧的时间安排规则必须删掉');
+    assert.equal(/from the sixth second onward she says/.test(spec), false, '旧的英文示范必须删掉');
+  });
+
+/**
    * 这份「最高优先级」提醒曾经要求模型写**已废弃的四行块格式**
    * （第1行风格句 / 第2行「生成一个由以下 1 个分镜组成的视频。」/ 第3行约束 / 第4行「分镜1： …」），
    * 而落库前的修复只认精简三段格式 → 首轮写出来的 ust 一律被判「缺少 detailed_description」→ fatal

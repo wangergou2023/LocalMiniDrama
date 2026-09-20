@@ -1,12 +1,8 @@
 // AI 配置 CRUD，与 Go application/services/ai_service.go 对齐
 const fs = require('fs');
 const path = require('path');
-const { normalizeMaterialHubToken } = require('./jimengMaterialHubService');
 
-function normalizeApiKeyForService(serviceType, apiKey) {
-  if (serviceType === 'jimeng2_character_auth' && apiKey != null) {
-    return normalizeMaterialHubToken(apiKey);
-  }
+function normalizeApiKeyForService(_serviceType, apiKey) {
   return apiKey;
 }
 const { applyDeepSeekConnectivityOptions } = require('./deepseekConfig');
@@ -29,10 +25,12 @@ function modelFromDb(val) {
 
 /** 每种服务类型只保留一个默认：若有多个 is_default=1，只保留优先级最高（同优先级取 id 最小）的那条 */
 function ensureSingleDefaultPerType(db) {
-  const types = ['text', 'image', 'storyboard_image', 'video', 'tts', 'jimeng2_character_auth', 'model_ark_asset'];
+  const types = ['text', 'image', 'storyboard_image', 'video'];
   for (const st of types) {
     const rows = db.prepare(
-      'SELECT id, priority FROM ai_service_configs WHERE deleted_at IS NULL AND service_type = ? AND is_default = 1 ORDER BY priority DESC, id ASC'
+      // 同一类型出现多个默认时（例如前端批量保存、或从旧版升级）保留「最近设置过」的那条：
+      // 以前按 id ASC 保留最老的一条，会把用户刚点选的默认悄悄改回去。
+      'SELECT id, priority FROM ai_service_configs WHERE deleted_at IS NULL AND service_type = ? AND is_default = 1 ORDER BY priority DESC, updated_at DESC, id DESC'
     ).all(st);
     if (rows.length <= 1) continue;
     const keepId = rows[0].id;
@@ -70,47 +68,39 @@ function getConfig(db, id) {
 function createConfig(db, log, req) {
   const now = new Date().toISOString();
   const model = modelToDb(req.model);
+  const providerLower = String(req.provider || '').toLowerCase().trim();
+  // OpenAI 官方 gpt-image-2 云端图像通道（协议名 openai_image）
+  const isOpenAIImage = providerLower === 'openai_image' || providerLower === 'gpt_image' || providerLower === 'gpt-image';
   let endpoint = req.endpoint || '';
   let queryEndpoint = req.query_endpoint || '';
+  let apiProtocol = req.api_protocol || '';
+  if (isOpenAIImage) apiProtocol = 'openai_image';
   if (!endpoint && req.provider) {
     const p = req.provider.toLowerCase();
     const st = (req.service_type || 'text').toLowerCase();
-    if (p === 'openai') {
-      if (st === 'text') endpoint = '/chat/completions';
-      else if (st === 'image') endpoint = '/images/generations';
-      else if (st === 'video') {
-        endpoint = '/videos';
-        queryEndpoint = '/videos/{taskId}';
-      }
-    } else if (p === 'gemini' || p === 'google') {
-      endpoint = '/v1beta/models/{model}:generateContent';
-    } else if (p === 'dashscope' || p === 'qwen_image') {
-      if (st === 'image' || st === 'storyboard_image') endpoint = '/api/v1/services/aigc/multimodal-generation/generation';
-      else if (st === 'video' && p === 'dashscope') {
-        endpoint = '/api/v1/services/aigc/image2video/video-synthesis';
-        queryEndpoint = '/api/v1/tasks/{taskId}';
-      }
-    } else if (p === 'volces' || p === 'volcengine' || p === 'volc') {
-      if (st === 'video') {
-        endpoint = '/contents/generations/tasks';
-        queryEndpoint = '/contents/generations/tasks/{taskId}';
-      } else if (st === 'image' || st === 'storyboard_image') {
-        endpoint = '/images/generations';
-      }
-    } else if (p === 'nano_banana') {
-      if (st === 'image' || st === 'storyboard_image') {
-        endpoint = '/api/v1/nanobanana/generate-2';
-        queryEndpoint = '/api/v1/nanobanana/record-info';
-      }
-    } else if (p === 'agnes') {
-      if (st === 'text') endpoint = '/chat/completions';
-      else if (st === 'image' || st === 'storyboard_image') endpoint = '/images/generations';
-      else if (st === 'video') {
-        endpoint = '/videos';
-        queryEndpoint = '/videos/{taskId}';
-      }
+    // 只支持四类后端：ComfyUI（本地/在线，靠 base_url 区分）、OpenAI 官方 gpt-image-2（云端图像）、
+    // 云端 MiniMax H3、OpenAI 兼容（文本/DeepSeek 等）。
+    // 其余云厂商（火山/即梦/可灵/通义/海螺/Vidu/Gemini…）已下线，不再推导端点。
+    if (p === 'comfyui') {
+      // ComfyUI 走 /prompt 等自有接口，由 comfyuiClient 处理，不需要 endpoint 字段
+    } else if (isOpenAIImage) {
+      // OpenAI 官方 gpt-image-2：文生图 /images/generations，带参考图自动切 /images/edits
+      endpoint = '/images/generations';
+    } else if (p === 'minimax_h3') {
+      // 云端 MiniMax H3（Video Generation V2）
+      apiProtocol = apiProtocol || 'minimax_h3';
+      endpoint = '/v2/video_generation';
+      queryEndpoint = '/v2/query/video_generation/{taskId}';
+    } else if (st === 'text') {
+      endpoint = '/chat/completions';
+    } else if (st === 'image' || st === 'storyboard_image') {
+      endpoint = '/images/generations';
+    } else if (st === 'video') {
+      endpoint = '/videos';
+      queryEndpoint = '/videos/{taskId}';
     }
   }
+  const baseUrl = req.base_url || (isOpenAIImage ? 'https://api.openai.com/v1' : '');
   const defaultModel = req.default_model != null ? String(req.default_model).trim() || null : null;
   const info = db.prepare(
     `INSERT INTO ai_service_configs (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, priority, is_default, is_active, settings, created_at, updated_at)
@@ -118,9 +108,9 @@ function createConfig(db, log, req) {
   ).run(
     req.service_type || 'text',
     req.provider || '',
-    req.api_protocol || '',
+    apiProtocol,
     req.name || '',
-    req.base_url || '',
+    baseUrl,
     normalizeApiKeyForService(req.service_type, req.api_key || ''),
     model,
     defaultModel,
@@ -232,14 +222,6 @@ function rowToConfig(r) {
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
-  // TTS 配置：从 settings JSON 展开 voice_id / group_id 供 ttsService 直接读取
-  if (r.service_type === 'tts' && r.settings) {
-    try {
-      const s = JSON.parse(r.settings);
-      if (s.voice_id) cfg.voice_id = s.voice_id;
-      if (s.group_id) cfg.group_id = s.group_id;
-    } catch (_) {}
-  }
   return cfg;
 }
 
@@ -254,176 +236,88 @@ async function testConnection(opts) {
   if (!opts.api_key) throw new Error('api_key 必填');
   const models = Array.isArray(opts.model) ? opts.model : opts.model != null ? [opts.model] : [];
   const model = models[0] || '';
-  if (!model && (opts.provider === 'gemini' || opts.provider === 'google')) throw new Error('model 必填');
   const provider = (opts.provider || 'openai').toLowerCase();
   const serviceType = (opts.service_type || '').toLowerCase();
   let endpoint = opts.endpoint || '';
 
   // --- NanoBanana ---
-  if (provider === 'nano_banana') {
-    // 用 record-info 查询一个不存在的 taskId：401/403=key 无效，404=key 有效已联通
-    const url = base + '/api/v1/nanobanana/record-info?taskId=test-connectivity';
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: { Authorization: 'Bearer ' + (opts.api_key || '') },
-    });
+
+  // --- OpenAI 官方 gpt-image-2（云端图像）---
+  // 轻量校验：GET /models 验证 Key 与网络，不触发真实生图（不产生费用）
+  if (provider === 'openai_image' || provider === 'gpt_image' || provider === 'gpt-image'
+    || (provider === 'openai' && model === 'gpt-image-2')) {
+    // 与图像通道用同一套归一化：内部网关常填 http://gw:port（缺 /v1），这里也要补，否则探针 404
+    let modelBase = base;
+    try { modelBase = require('./imageClient').resolveOpenAIImageBaseUrl({ base_url: base }); } catch (_) {}
+    const url = modelBase + '/models';
+    console.log('[testConnection] OpenAI gpt-image-2 图像服务', { url, serviceType, model });
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: 'Bearer ' + (opts.api_key || '') },
+      });
+    } catch (e) {
+      throw new Error('网络错误：无法连接 OpenAI（' + (e?.message || e) + '）');
+    }
     if (res.status === 401 || res.status === 403) {
-      const text = await res.text();
-      let errMsg = `API Key 无效 (${res.status})`;
-      try { const j = JSON.parse(text); errMsg = j.msg || j.message || errMsg; } catch {}
-      throw new Error(errMsg);
-    }
-    return;
-  }
-
-  // --- Gemini ---
-  if (provider === 'gemini' || provider === 'google') {
-    endpoint = endpoint || '/v1beta/models/{model}:generateContent';
-    const path = endpoint.replace(/{model}/g, model || 'gemini-pro');
-    const url = base + (path.startsWith('/') ? path : '/' + path) + '?key=' + encodeURIComponent(opts.api_key || '');
-    const body = { contents: [{ parts: [{ text: 'Hello' }] }] };
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`请求失败: ${res.status} ${text.slice(0, 200)}`);
-    }
-    const data = await res.json().catch(() => ({}));
-    if (data.candidates == null && data.error != null) {
-      throw new Error(data.error.message || data.error || 'Gemini 返回错误');
-    }
-    return;
-  }
-
-  // --- TTS 语音合成 ---
-  if (serviceType === 'tts') {
-    // MiniMax T2A：用 /v1/models 或直接对 chat 端点做轻量探针
-    const ttsBase = base.includes('minimaxi.com') || base.includes('minimax') ? base : base;
-    // 尝试调用一个极简的 MiniMax T2A 请求（1 字，验证 key 合法性）
-    // 为避免真实扣费，使用非计费的 list-voices 或 models 接口
-    const probeUrl = ttsBase + '/text_to_speech';
-    const probeBody = JSON.stringify({ model: model || 'speech-02-hd', text: 'hi', stream: false });
-    const res = await fetch(probeUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (opts.api_key || '') },
-      body: probeBody,
-    });
-    if (res.status === 401 || res.status === 403) {
-      const text = await res.text();
-      let errMsg = `API Key 无效 (${res.status})`;
-      try { const j = JSON.parse(text); errMsg = j.base_resp?.status_msg || j.error?.message || j.message || errMsg; } catch {}
-      throw new Error(errMsg);
-    }
-    // 其他状态（400 缺参数、404 端点不对等）说明网络通、key 疑似有效
-    return;
-  }
-
-  // service_type 作为主要判断信号
-  const isImageService = serviceType === 'image' || serviceType === 'storyboard_image';
-  const isVideoService = serviceType === 'video';
-  const hasImageEndpoint = !!(endpoint && endpoint.includes('/images/'));
-
-  const isDashscope = provider === 'dashscope' || provider === 'qwen_image';
-  const isVolcengine = provider === 'volces' || provider === 'volcengine' || provider === 'volc';
-  const modelLower = model.toLowerCase();
-
-  // 兜底识别图片/视频模型（service_type 未传时使用）
-  const looksLikeImageModel = /seedream|image2video|text2image|img2img|wanx|wan\d|flux|stable.?diff|dall.?e|imagen|agnes-image|-image$/i.test(modelLower)
-    || (isVolcengine && /seedream|vision|image/i.test(modelLower));
-  const looksLikeVideoModel = /seedance|video.?gen|video2video|kf2v|cogvideo|sora|kling|agnes-video/i.test(modelLower);
-  // DashScope 图片/视频专用端点特征
-  const isDashscopeNonChatEndpoint = isDashscope && !!(endpoint && (endpoint.includes('aigc') || endpoint.includes('multimodal') || endpoint.includes('video')));
-
-  // 综合判断是否为图片服务
-  const treatAsImage = isImageService || hasImageEndpoint || isDashscopeNonChatEndpoint
-    || looksLikeImageModel
-    || (isVolcengine && !serviceType && !endpoint);
-
-  // --- DashScope 图片 / 视频 / 分镜 ---
-  // 通义万象 / WAN 系列：API key 通过 compatible-mode chat 接口验证即可（同一 key 通用）
-  if (isDashscope && (isImageService || isVideoService || looksLikeImageModel || looksLikeVideoModel || isDashscopeNonChatEndpoint)) {
-    const chatUrl = base.replace(/\/(api\/v1|compatible-mode)\/.*$/, '') + '/compatible-mode/v1/chat/completions';
-    const body = { model: 'qwen-turbo', messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 };
-    console.log('[testConnection] DashScope 非文本服务，用 compatible chat 验证 key', { chatUrl, serviceType, model });
-    const res = await fetch(chatUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + opts.api_key },
-      body: JSON.stringify(body),
-    });
-    // 401/403 = key 无效，其他均视为联通
-    if (res.status === 401 || res.status === 403) {
-      const text = await res.text();
-      let errMsg = `API Key 无效 (${res.status})`;
+      const text = await res.text().catch(() => '');
+      let errMsg = `OpenAI API Key 无效或无权限 (${res.status})`;
       try { const j = JSON.parse(text); errMsg = j.error?.message || j.message || errMsg; } catch {}
       throw new Error(errMsg);
     }
+    if (res.status === 429) throw new Error('额度不足/触发限流');
+    // 其它状态（含部分中转不支持 /models 的 404）说明网络已连通、Key 已送达，视为可用
     return;
   }
 
-  // --- 视频生成服务（非 DashScope）：通过 chat/completions 验证 key 合法性 ---
-  // 视频生成 API 调用代价高昂，无法直接测试；但同账号 chat 接口验证 key 有效性即可
-  if (isVideoService || looksLikeVideoModel) {
-    const chatPath = '/chat/completions';
-    const url = base + chatPath;
-    const body = { model: model || '', messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 };
-    console.log('[testConnection] 视频服务，用 chat/completions 验证 key', { url, serviceType, model });
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (opts.api_key || '') },
-      body: JSON.stringify(body),
-    });
-    // 401/403 = key 无效；其他（400 模型不存在等）视为联通
+
+  // ComfyUI（本地或远程）：只探 /system_stats，不触发任何生成、不占显存。
+  // 以前这里对图像/视频配置走的是 chat/completions 探针，而裁剪时把 treatAsImage /
+  // looksLikeVideoModel 两个标识符一起删了、判断语句却留着 → 点「测试连接」直接 ReferenceError。
+  const isMediaService = serviceType === 'image' || serviceType === 'storyboard_image' || serviceType === 'video';
+  if (provider === 'comfyui' || /comfyui/i.test(opts.api_protocol || '')) {
+    const url = base + '/system_stats';
+    console.log('[testConnection] ComfyUI 服务', { url, serviceType });
+    let res;
+    try {
+      res = await fetch(url, { method: 'GET' });
+    } catch (e) {
+      throw new Error('无法连接 ComfyUI（' + (e?.message || e) + '）—— 请确认地址可达、ComfyUI 已启动');
+    }
+    if (!res.ok) throw new Error(`ComfyUI 返回 ${res.status} —— 请确认 ${base} 是 ComfyUI 地址`);
+    return;
+  }
+  // 云端 MiniMax H3（视频）：轻量探 /v1/models 验 Key 与网络，不触发真实生成（不产生费用）。
+  // 401/403 → Key 无效；429 → 额度/限流；其余状态（含中转不支持 /models 的 404）说明网络已连通。
+  if (provider === 'minimax_h3' || opts.api_protocol === 'minimax_h3') {
+    let root = String(base || 'https://api.minimaxi.com').trim().replace(/\/$/, '');
+    for (const suf of ['/v2', '/v1']) {
+      if (root.toLowerCase().endsWith(suf)) { root = root.slice(0, -suf.length).replace(/\/$/, ''); break; }
+    }
+    const url = root + '/v1/models';
+    console.log('[testConnection] MiniMax H3 云端服务', { url, serviceType, model });
+    let res;
+    try {
+      res = await fetch(url, { method: 'GET', headers: { Authorization: 'Bearer ' + (opts.api_key || '') } });
+    } catch (e) {
+      throw new Error('网络错误：无法连接 MiniMax（' + (e?.message || e) + '）');
+    }
     if (res.status === 401 || res.status === 403) {
-      const text = await res.text();
-      let errMsg = `API Key 无效 (${res.status})`;
+      const text = await res.text().catch(() => '');
+      let errMsg = `MiniMax API Key 无效或无权限 (${res.status})`;
       try { const j = JSON.parse(text); errMsg = j.error?.message || j.message || errMsg; } catch {}
       throw new Error(errMsg);
     }
+    if (res.status === 429) throw new Error('额度不足/触发限流');
     return;
   }
 
-  // --- OpenAI 兼容图片生成（volcengine、OpenAI DALL·E、其他）---
-  if (treatAsImage) {
-    endpoint = endpoint || '/images/generations';
-    const path = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
-    const url = base + path;
-    const body = { model: model || '', prompt: 'test connectivity', n: 1 };
-    console.log('[testConnection] 图片服务', { url, serviceType, model, body });
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer ' + (opts.api_key || ''),
-      },
-      body: JSON.stringify(body),
-    });
-    // 401/403 = key 无效；其他状态（含 400 参数错误、429 限流等）表示已联通
-    if (res.status === 401 || res.status === 403) {
-      const text = await res.text();
-      let errMsg = `API Key 无效 (${res.status})`;
-      try {
-        const j = JSON.parse(text);
-        errMsg = j.error?.message || j.message || errMsg;
-      } catch {}
-      throw new Error(errMsg);
-    }
-    if (!res.ok) {
-      // 其他 4xx/5xx：如果能解析出明确的 auth 错误才拒绝，否则视为联通
-      const text = await res.text();
-      let parsed = null;
-      try { parsed = JSON.parse(text); } catch {}
-      const msg = parsed?.error?.message || parsed?.message || '';
-      const lmsg = msg.toLowerCase();
-      const isAuthErr = lmsg.includes('unauthorized') || lmsg.includes('invalid api key')
-        || lmsg.includes('authentication') || lmsg.includes('forbidden');
-      if (isAuthErr) throw new Error(`API Key 无效: ${msg || res.status}`);
-      // 其他错误（如模型不支持某个 API 参数）说明网络通、key 有效
-      return;
-    }
-    return;
+  if (isMediaService) {
+    throw new Error(
+      '图像/视频只支持两种接口规范：ComfyUI（本地或远程）与 OpenAI gpt-image-2（图像）/ 云端 MiniMax H3（视频）。' +
+      `当前 provider=${opts.provider || '-'} api_protocol=${opts.api_protocol || '-'}`
+    );
   }
 
   // --- OpenAI / 默认：chat completions ---

@@ -97,7 +97,6 @@
             <el-option label="文本生成图片" value="image" />
             <el-option label="分镜图片生成" value="storyboard_image" />
             <el-option label="视频生成" value="video" />
-            <el-option label="语音合成 TTS" value="tts" />
           </el-select>
           <p class="field-tip">由场景键自动决定，不可更改</p>
         </el-form-item>
@@ -233,8 +232,7 @@ function serviceTypeLabel(type) {
     text: '文本/对话',
     image: '文本生成图片',
     storyboard_image: '分镜图片生成',
-    video: '视频生成',
-    tts: '语音合成 TTS'
+    video: '视频生成'
   }
   return map[type] || type
 }
@@ -244,8 +242,7 @@ function serviceTypeTagType(type) {
     text: 'primary',
     image: 'success',
     storyboard_image: 'warning',
-    video: 'danger',
-    tts: 'info'
+    video: 'danger'
   }
   return map[type] || ''
 }

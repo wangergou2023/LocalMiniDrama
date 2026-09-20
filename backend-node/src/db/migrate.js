@@ -211,8 +211,8 @@ function ensureAllColumns(database) {
     { name: 'polished_prompt',   type: 'TEXT' },   // 文字AI润色后的完整图片生成提示词（可编辑，生图时直接使用）
     { name: 'ref_image',         type: 'TEXT' },   // 用户上传的参考图（本地相对路径或 URL），独立于 AI 生成的主图
     { name: 'stages',            type: 'TEXT' },   // JSON: 多阶段造型 [{episode_range:[1,3], appearance:"..."}]
-    { name: 'seedance2_asset', type: 'TEXT' },   // JSON: 即梦/Seedance2 素材库认证 hub_asset_id / asset_url 等
-    { name: 'seedance2_voice_asset', type: 'TEXT' }, // JSON: Seedance 2.0 音色参考音频（仅 SD2 模型有效）
+    { name: 'seedance2_asset', type: 'TEXT' },   // 历史列（即梦/Seedance2 素材库认证），已无代码读取；列保留不删
+    { name: 'seedance2_voice_asset', type: 'TEXT' }, // JSON: 角色音色参考音频（本地 H3 读它做音色参考；列名沿用历史命名）
     { name: 'negative_prompt', type: 'TEXT' },
     { name: 'created_at',        type: 'TEXT' },
     { name: 'updated_at',        type: 'TEXT' },

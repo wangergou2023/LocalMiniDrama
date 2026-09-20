@@ -1,5 +1,6 @@
 const dramaService = require('../services/dramaService');
 const propService = require('../services/propService');
+const sceneService = require('../services/sceneService');
 const response = require('../response');
 const dramaExportService = require('../services/dramaExportService');
 const dramaImportService = require('../services/dramaImportService');
@@ -143,6 +144,14 @@ function listProps(db) {
   return (req, res) => {
     const props = propService.listByDramaId(db, req.params.id);
     response.success(res, props);
+  };
+}
+
+/** 全剧场景列表（供分镜绑定了别的剧集场景时展示/引用；常规下拉仍只显示本集场景） */
+function listScenes(db) {
+  return (req, res) => {
+    const scenes = sceneService.listByDramaId(db, req.params.id);
+    response.success(res, scenes);
   };
 }
 
@@ -294,6 +303,7 @@ module.exports = function dramaRoutes(db, cfg, log) {
     saveProgress: saveProgress(db, log),
     saveCanvasLayout: saveCanvasLayout(db, log),
     listProps: listProps(db),
+    listScenes: listScenes(db),
     finalizeEpisode: finalizeEpisode(db, log, cfg),
     downloadEpisodeVideo: downloadEpisodeVideo(db),
     generateStoryboard: generateStoryboard(db, log),

@@ -87,6 +87,7 @@ function setupRouter(cfg, db, log) {
   r.put('/dramas/:id/progress', drama.saveProgress);
   r.put('/dramas/:id/canvas-layout', drama.saveCanvasLayout);
   r.get('/dramas/:id/props', drama.listProps);
+  r.get('/dramas/:id/scenes', drama.listScenes);
   r.get('/dramas/:id', drama.getDrama);
   r.put('/dramas/:id', drama.updateDrama);
   r.delete('/dramas/:id', drama.deleteDrama);
@@ -95,8 +96,6 @@ function setupRouter(cfg, db, log) {
   r.get('/ai-configs', aiConfig.list);
   r.post('/ai-configs', aiConfig.create);
   r.post('/ai-configs/test', aiConfig.testConnection);
-  r.post('/ai-configs/jimeng2-list-assets', aiConfig.listJimeng2MaterialAssets);
-  r.post('/ai-configs/model-ark-asset', aiConfig.modelArkAsset);
   r.get('/ai-configs/vendor-lock', aiConfig.vendorLock);  // 必须在 /:id 之前
   r.put('/ai-configs/bulk-update-key', aiConfig.bulkUpdateKey);  // 必须在 /:id 之前
   r.get('/ai-configs/:id', aiConfig.get);
@@ -176,10 +175,6 @@ function setupRouter(cfg, db, log) {
   r.put('/characters/:id/image-from-library', characters.imageFromLibrary);
   r.post('/characters/:id/add-to-library', characters.addToLibrary);
   r.post('/characters/:id/add-to-material-library', characters.addToMaterialLibrary);
-  r.post('/characters/:id/sd2-certify', characters.sd2Certify);
-  r.post('/characters/:id/sd2-certify/refresh', characters.sd2CertifyRefresh);
-  r.post('/characters/:id/sd2-voice-upload', uploadModule.multerAudioSingle, characters.sd2VoiceUpload);
-  r.post('/characters/:id/sd2-voice-refresh', characters.sd2VoiceRefresh);
   r.get('/voice-bank', characters.voiceBankList);
   r.get('/voice-bank/audio/:key', characters.voiceBankAudio);
   r.post('/characters/:id/voice-bank-apply', characters.voiceBankApply);

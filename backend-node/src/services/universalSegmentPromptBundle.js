@@ -1,5 +1,5 @@
 /**
- * 全能片段（Omni / Seedance 多图参考）用户消息构建：供「生成」与「润色」共用。
+ * 全能片段（本地 H3 / ComfyUI 多图参考）用户消息构建：供「生成」与「润色」共用。
  * @param {import('better-sqlite3').Database} db
  * @param {number} sbId
  * @param {object} reqBody 可选 duration
@@ -13,29 +13,27 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
   } = require('./universalOmniMultiBeatFormat');
   const bodyIn = reqBody && typeof reqBody === 'object' ? reqBody : {};
 
-  // MiniMax H3 参考图引用适配：官方 r2va 示例用「参考图N」而非「@图片N」。
-  // 判断当前视频默认配置的 provider，若是 MiniMax 则生成/润色时直接教 AI 用「参考图N」。
-  let imageRefWord = '@图片';
-  try {
-    const aiConfigService = require('./aiConfigService');
-    const vcfg = aiConfigService.listConfigs(db, 'video');
-    const activeV = (vcfg || []).filter((c) => c.is_active);
-    const def = activeV.find((c) => c.is_default) || activeV[0] || null;
-    const vp = String((def && def.provider) || '').toLowerCase();
-    if (vp === 'minimax_h3' || /minimax[-_]?h3/.test(vp)) imageRefWord = '参考图';
-  } catch (_) {}
-  // 把 /@图片(\d+)/ 里的词替换为 imageRefWord（仅 @图片 -> imageRefWord，数字保留）
-  const imgRef = (s) => String(s || '').replace(/@图片/g, imageRefWord);
-
   const sb = db.prepare(
     `SELECT id, episode_id, storyboard_number, scene_id, title, description, location, time,
-      action, dialogue, narration, result, atmosphere,
+      action, dialogue, narration, result, atmosphere, emotion, emotion_intensity,
       image_prompt, polished_prompt, video_prompt, universal_segment_text,
       shot_type, angle, angle_h, angle_v, angle_s, movement, lighting_style, depth_of_field,
       characters, local_path, duration, segment_index, segment_title
      FROM storyboards WHERE id = ? AND deleted_at IS NULL`
   ).get(sbId);
   if (!sb) return { ok: false, code: 'not_found', message: '分镜不存在' };
+
+  // 前端「生成全能提示词」会把编辑框里的当前值经 field_overrides 传进来。
+  // 之前这里**完全忽略**了它（全文件只用了 duration）—— 用户在分镜页改完动作/对白再点生成，
+  // 后端读的却是数据库旧值，「改了像没改」。现在把允许覆盖的字段合并进 sb。
+  const ov = (bodyIn && bodyIn.field_overrides && typeof bodyIn.field_overrides === 'object') ? bodyIn.field_overrides : null;
+  if (ov) {
+    const ALLOW = ['title', 'description', 'location', 'time', 'action', 'dialogue', 'narration', 'result',
+      'atmosphere', 'emotion', 'emotion_intensity', 'shot_type', 'movement', 'lighting_style', 'depth_of_field'];
+    for (const k of ALLOW) {
+      if (ov[k] !== undefined && ov[k] !== null && String(ov[k]).trim() !== '') sb[k] = ov[k];
+    }
+  }
 
   let dramaId = null;
   let dramaRow = null;
@@ -76,6 +74,10 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     chunk('NARRATION', sb.narration),
     chunk('RESULT', sb.result),
     chunk('ATMOSPHERE', sb.atmosphere),
+    // 情绪与强度决定表演幅度（规范里有强度→幅度的映射）。此前这两个字段**根本没进过提示词**，
+    // 分镜阶段已经算好的「情绪=暴戾/强度3」在写 ust 时丢失，写手只能写"含笑""居高"这类泛词 → 人物木讷。
+    chunk('EMOTION', sb.emotion),
+    chunk('EMOTION_INTENSITY', sb.emotion_intensity),
     chunk('IMAGE_PROMPT', sb.image_prompt),
     chunk('POLISHED_IMAGE_PROMPT', sb.polished_prompt),
     chunk('VIDEO_PROMPT', sb.video_prompt),
@@ -533,6 +535,11 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     '- **状态一致性（硬性）**：收尾状态必须与本镜 ACTION / RESULT 一致；不得把 RESULT 里留在画面内的人写成' +
       '「空无一人」；只在更早镜头发生、现在持续的状态用静态措辞（横卧/静置/已倒/昏迷不醒），禁止用动作措辞' +
       '（倒下/倒地）让模型再演一次。',
+    '- **表演要写出来（治"木讷"）**：每镜至少 2-3 个可演的微表演细节（视线落点/眉心眼睑/嘴角下颌/呼吸/喉结/' +
+      '手指指节/肩线重心/身体朝向），并写出**起→变**；EMOTION_INTENSITY 1=克制微表情、2=可见面部与身体反应、' +
+      '3=必须有外化身体动作（后退/踉跄/攥拳/发抖/猛然抬头）。**台词镜必须写"听的人"的反应**，' +
+      '把对手写成「闭口不动 / 全程不出声 / 面无表情」是不合格的。',
+    '- 非说话人**不得有发声口型**，但**必须有反应性表演**（眼神/眉/呼吸/点头/缩肩/后仰）。',
     '- 禁止 markdown、英文小标题之外的额外说明行；禁止 @图片N / @人物N / 灵境单行格式。',
   ].join('\n');
 
@@ -561,7 +568,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     .filter(Boolean)
     .join('\n');
 
-  const finalPrompt = imgRef(userPrompt);
+  const finalPrompt = userPrompt;
 
   return {
     ok: true,

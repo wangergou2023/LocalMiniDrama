@@ -1,7 +1,7 @@
 /**
  * 内置音色库服务
- * 从 software 自带的 voice-bank 资源目录读取预置 TTS 音色，
- * 供角色「从内置音色库选择」使用（Seedance 2.0 / MiniMax H3 均生效）。
+ * 从 software 自带的 voice-bank 资源目录读取预置音色，
+ * 供角色「从内置音色库选择」使用；选中的 mp3 会作为本地 H3 的音色参考音频。
  *
  * 资源目录：backend-node/src/assets/voice-bank/
  *   ├── labels.json      → 音色元数据（中文名 / 性别 / 方言 / 风格）
@@ -74,7 +74,7 @@ function voiceAudioPath(voiceKey) {
 
 /**
  * 把某个内置音色应用到角色：复制 mp3 到角色的 voice 目录，
- * 写入 seedance2_voice_asset（status=active），与手动上传等价。
+ * 并写入角色的音色参考字段（列名沿用历史命名 seedance2_voice_asset，本地 H3 读它取音色参考）。
  * @returns {{ ok: boolean, error?: string, seedance2_voice_asset?: object }}
  */
 function applyVoiceToCharacter(db, cfg, charId, voiceKey) {

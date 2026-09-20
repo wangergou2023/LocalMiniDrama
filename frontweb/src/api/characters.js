@@ -44,22 +44,6 @@ export const characterAPI = {
   extractAnchors(characterId) {
     return request.post(`/characters/${characterId}/extract-anchors`, {})
   },
-  sd2Certify(characterId) {
-    return request.post(`/characters/${characterId}/sd2-certify`, {})
-  },
-  sd2CertifyRefresh(characterId) {
-    return request.post(`/characters/${characterId}/sd2-certify/refresh`, {})
-  },
-  sd2VoiceUpload(characterId, file) {
-    const form = new FormData()
-    form.append('file', file)
-    return request.post(`/characters/${characterId}/sd2-voice-upload`, form, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
-  },
-  sd2VoiceRefresh(characterId) {
-    return request.post(`/characters/${characterId}/sd2-voice-refresh`, {})
-  },
   // 软件内置音色库（参考音色）
   voiceBankList() {
     return request.get('/voice-bank')

@@ -2,7 +2,6 @@
 
 const storageLayout = require('./storageLayout');
 const { resolveStylePreset } = require('../constants/generationStylePresets');
-const seedance2AssetGuards = require('../utils/seedance2AssetGuards');
 
 /**
  * 清理 image_url：如果数据库中存储的是 base64 data URL，则返回 null。
@@ -420,8 +419,6 @@ function rowToCharacter(r) {
     polished_prompt: r.polished_prompt || null,
     negative_prompt: r.negative_prompt || null,
     four_view_image_url: r.four_view_image_url || null,
-    seedance2_asset: parseJsonColumn(r.seedance2_asset),
-    seedance2_voice_asset: parseJsonColumn(r.seedance2_voice_asset),
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
@@ -580,14 +577,8 @@ function saveCharacters(db, log, dramaId, req) {
         if ('local_path' in char) { imgFields.push('local_path = ?'); imgParams.push(char.local_path ?? null); }
         if (imgFields.length > 0) {
           const prevC = db
-            .prepare('SELECT id, local_path, image_url, seedance2_asset FROM characters WHERE id = ? AND deleted_at IS NULL')
+            .prepare('SELECT id, local_path, image_url FROM characters WHERE id = ? AND deleted_at IS NULL')
             .get(char.id);
-          if (prevC) {
-            seedance2AssetGuards.markStaleOnCharacterMainImageDrift(db, log, prevC, {
-              image_url: 'image_url' in char ? char.image_url : prevC.image_url,
-              local_path: 'local_path' in char ? char.local_path : prevC.local_path,
-            });
-          }
         }
         const imgSql = imgFields.length > 0 ? ', ' + imgFields.join(', ') : '';
         let setCore = 'name = ?, role = ?, description = ?, personality = ?, appearance = ?';
@@ -612,14 +603,8 @@ function saveCharacters(db, log, dramaId, req) {
       if ('local_path' in char) { imgFieldsN.push('local_path = ?'); imgParamsN.push(char.local_path ?? null); }
       if (imgFieldsN.length > 0) {
         const prevN = db
-          .prepare('SELECT id, local_path, image_url, seedance2_asset FROM characters WHERE id = ?')
+          .prepare('SELECT id, local_path, image_url FROM characters WHERE id = ?')
           .get(byName.id);
-        if (prevN) {
-          seedance2AssetGuards.markStaleOnCharacterMainImageDrift(db, log, prevN, {
-            image_url: 'image_url' in char ? char.image_url : prevN.image_url,
-            local_path: 'local_path' in char ? char.local_path : prevN.local_path,
-          });
-        }
       }
       const imgSqlN = imgFieldsN.length > 0 ? ', ' + imgFieldsN.join(', ') : '';
       let setCoreN = 'role = ?, description = ?, personality = ?, appearance = ?';

@@ -118,3 +118,62 @@ describe('精简格式 ust：缺 <Picture N> 映射行必须被补上', () => {
     assert.equal(rep.text, leanUst);
   });
 });
+
+
+/**
+ * 「木讷」修复回归（用户实测：第二集人物表演呆、听的人像木头）。
+ *   A. 写 ust 的字段清单里必须带 EMOTION / EMOTION_INTENSITY（此前完全没有 → 情绪强度丢失）
+ *      并让 field_overrides 真正生效（此前只用了 duration，前端改了字段等于没改）
+ *   B. 规范必须有"表演必写项"（微表情细节 + 起→变 + 强度→幅度）
+ *   C. 口型规则不得把非说话人冻住（要"不得发声口型"，但"必须有反应性表演"）
+ */
+describe('治木讷：情绪进提示词 + field_overrides 生效', () => {
+  const db = (() => {
+    try {
+      const Database = require('better-sqlite3');
+      const path = require('path');
+      const f = path.join(__dirname, '..', 'data', 'drama_generator.db');
+      if (!require('fs').existsSync(f)) return null;
+      return new Database(f, { readonly: true });
+    } catch (_) { return null; }
+  })();
+  const { buildUniversalSegmentUserPromptBundle } = require('../src/services/universalSegmentPromptBundle');
+
+  it('EMOTION / EMOTION_INTENSITY 进提示词，field_overrides 覆盖库里的值', (t) => {
+    if (!db) return t.skip('无本地数据库');
+    const row = db.prepare('SELECT id FROM storyboards WHERE deleted_at IS NULL ORDER BY id DESC LIMIT 1').get();
+    if (!row) return t.skip('库里没有分镜');
+    const a = buildUniversalSegmentUserPromptBundle(db, row.id, {}, {});
+    assert.ok(a.userPrompt.includes('EMOTION:'), '提示词里必须带 EMOTION');
+    assert.ok(a.userPrompt.includes('EMOTION_INTENSITY:'), '提示词里必须带 EMOTION_INTENSITY');
+
+    const b = buildUniversalSegmentUserPromptBundle(db, row.id, {
+      field_overrides: { action: '【覆盖测试】她把杯子砸在地上', emotion: '暴怒', emotion_intensity: 3 },
+    }, {});
+    assert.match(b.userPrompt, /ACTION: 【覆盖测试】她把杯子砸在地上/, 'field_overrides.action 必须生效');
+    assert.match(b.userPrompt, /EMOTION: 暴怒/);
+    assert.match(b.userPrompt, /EMOTION_INTENSITY: 3/);
+  });
+});
+
+describe('治木讷：规范里的表演与口型要求', () => {
+  const p = require('../src/services/promptI18n');
+
+  it('规范要求写出微表演与强度幅度，且要求写"听的人"的反应', () => {
+    const spec = p.getDefaultPromptBody('universal_multi_beat_format');
+    assert.match(spec, /表演必须写出来/);
+    assert.match(spec, /微表演细节/);
+    assert.match(spec, /视线落点/);
+    assert.match(spec, /起 → 变/);
+    assert.match(spec, /强度 3 = 强情绪/);
+    assert.match(spec, /台词镜必须写"听的人"的反应/);
+  });
+
+  it('口型规则改成"不得发声口型 + 必须有反应性表演"，不再把非说话人冻住', () => {
+    const spec = p.getDefaultPromptBody('universal_multi_beat_format');
+    assert.match(spec, /必须有反应性表演/);
+    assert.match(spec, /禁止\*\*把非说话人写成「闭口不动/);
+    assert.equal(/其他角色\*\*不得\*\*出现疑似发声的口型/.test(spec), false, '旧的"不得出现疑似发声的口型"必须改掉');
+    assert.equal(/非说话人不写口型/.test(spec), false, '输出前必检里那条也要同步改掉');
+  });
+});

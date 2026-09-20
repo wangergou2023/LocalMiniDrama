@@ -869,7 +869,7 @@ function repairRefBindingForRecord(db, sb, d, log, episodeIdNum) {
     const before = checkSegmentRefBinding(text, slots, { knownNames });
     const bad = before.missing.length + before.unknown.length + before.mismatched.length;
     if (!bad) return;
-    const rep = repairSegmentRefBinding(text, slots, { knownNames });
+    const rep = repairSegmentRefBinding(text, slots, { knownNames, log });
     const after = checkSegmentRefBinding(rep.text, slots, { knownNames });
     d.universalSegmentText = rep.text;
     if (rep.changes.length && log && typeof log.info === 'function') {
@@ -1621,6 +1621,38 @@ function deriveStoryboardCount(scriptContent, explicitCount, plannedSeconds) {
   return Math.min(40, Math.max(6, shots));
 }
 
+/**
+ * 生成分镜时喂给模型的「场景清单」文本。
+ *
+ * 为什么要分块：以前只给一份全剧场景列表，且不含所属剧集。同一地点在多集里各有一行
+ * （例如「吴家」在第1/2/5集各一行，location+time 完全相同），模型无从判断该选本集的哪一行，
+ * 实测会挑到列表最靠前的老剧集场景行 —— 分镜于是绑到了别的集；前端按 episode_id 查本集场景，
+ * 查不到就显示不出场景、参考图也收不到。
+ *
+ * 现在：本集场景单独成块并排在最前，其它剧集的场景另列一块（本集确实没有对应地点时才该用）。
+ * @param {Array<{id:number, location:string, time:string, episode_id:number}>} scenes
+ * @param {number} currentEpisodeId
+ * @returns {string} 形如「本集场景（…）:\n[{...}]\n本剧其它剧集的场景（…）:\n[{...}]」；无场景时返回「无场景」
+ */
+function buildSceneListBlock(scenes, currentEpisodeId) {
+  const list = Array.isArray(scenes) ? scenes : [];
+  const own = list.filter((s) => Number(s.episode_id) === Number(currentEpisodeId));
+  const others = list.filter((s) => Number(s.episode_id) !== Number(currentEpisodeId));
+  const toJson = (rows) =>
+    '[' +
+    rows
+      .map(
+        (s) =>
+          `{"id": ${s.id}, "location": "${String(s.location || '').replace(/"/g, '\\"')}", "time": "${String(s.time || '').replace(/"/g, '\\"')}"}`
+      )
+      .join(', ') +
+    ']';
+  const parts = [];
+  if (own.length > 0) parts.push(`本集场景（同一地点请优先选这里的 id）:\n${toJson(own)}`);
+  if (others.length > 0) parts.push(`本剧其它剧集的场景（仅当本集没有对应地点时才使用）:\n${toJson(others)}`);
+  return parts.length > 0 ? parts.join('\n') : '无场景';
+}
+
 function generateStoryboard(db, log, episodeId, model, style, storyboardCount, videoDuration, aspectRatio, includeNarration, universalOmni) {
   const cfg = loadConfig();
   const episode = db.prepare(
@@ -1696,12 +1728,9 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   }
 
   const scenes = db.prepare(
-    'SELECT id, location, time FROM scenes WHERE drama_id = ? AND deleted_at IS NULL ORDER BY location ASC, time ASC'
+    'SELECT id, location, time, episode_id FROM scenes WHERE drama_id = ? AND deleted_at IS NULL ORDER BY location ASC, time ASC'
   ).all(episode.drama_id);
-  let sceneList = '无场景';
-  if (scenes.length > 0) {
-    sceneList = '[' + scenes.map((s) => `{"id": ${s.id}, "location": "${(s.location || '').replace(/"/g, '\\"')}", "time": "${(s.time || '').replace(/"/g, '\\"')}"}`).join(', ') + ']';
-  }
+  const sceneList = buildSceneListBlock(scenes, episode.id);
 
   const props = db.prepare(
     'SELECT id, name, type FROM props WHERE drama_id = ? AND deleted_at IS NULL ORDER BY id ASC'
@@ -2023,6 +2052,7 @@ module.exports = {
   generateImagePrompt,
   /** 分镜数量推导（未指定时按剧本时长 ÷ 规划单镜秒数）——供测试 */
   deriveStoryboardCount,
+  buildSceneListBlock,
   /** 角色短锚点（首帧提示词主体块）——供测试锁住「多人同框只给 2 个锚点」这条实测结论 */
   shortAnchorForCharacter,
   loadCharacterAnchors,

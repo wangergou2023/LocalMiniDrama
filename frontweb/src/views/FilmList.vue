@@ -35,7 +35,7 @@
             <el-icon><Setting /></el-icon>AI配置
           </el-button>
           <el-button class="btn-import" :loading="importing" @click="triggerImport">
-            <el-icon><Upload /></el-icon>导入项目
+            <el-icon><Download /></el-icon>导入项目
           </el-button>
           <input ref="importFileInput" type="file" accept=".zip" style="display:none" @change="onImportFile" />
           <el-button type="primary" class="btn-new" @click="goNewProject">
@@ -57,7 +57,7 @@
                   <el-icon><Plus /></el-icon>新建短剧项目
                 </el-button>
                 <el-button size="large" class="action-btn action-btn-import" :loading="importing" @click="triggerImport">
-                  <el-icon><Upload /></el-icon>导入短剧项目
+                  <el-icon><Download /></el-icon>导入短剧项目
                 </el-button>
               </div>
               <div v-if="exampleList.length > 0" class="action-card-example">
@@ -87,7 +87,7 @@
             @click="openProject(d.id)"
           >
             <div class="project-card-actions" @click.stop>
-              <el-button size="small" circle :icon="Download" title="导出项目" :loading="exportingId === d.id" @click="onExport(d)" />
+              <el-button size="small" circle :icon="Upload" title="导出项目" :loading="exportingId === d.id" @click="onExport(d)" />
               <el-button size="small" circle :icon="Edit" title="编辑" @click="openEditDialog(d)" />
               <el-button size="small" type="danger" plain circle :icon="Delete" title="删除" @click="onDelete(d)" />
             </div>

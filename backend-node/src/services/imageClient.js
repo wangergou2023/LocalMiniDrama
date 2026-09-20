@@ -1,76 +1,32 @@
 // 与 Go pkg/image + ImageGenerationService 对齐：调用图片生成 API，更新 image_generations 与角色头像
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
-const http = require('http');
-const https = require('https');
 const aiConfigService = require('./aiConfigService');
 const uploadService = require('./uploadService');
 const storageLayout = require('./storageLayout');
 const taskService = require('./taskService');
 const { loadConfig } = require('../config');
-const { postJSONWithTimeout } = require('./aiClient');
-const seedance2AssetGuards = require('../utils/seedance2AssetGuards');
 const { callComfyUIImageApi } = require("./comfyuiClient");
 
-/** 图生 POST 使用 Node http(s)，默认 10 分钟，避免 undici fetch 大包体/慢链路下模糊失败 */
-const IMAGE_HTTP_TIMEOUT_MS = 600000;
-
-// 多参考图时注入到所有支持 negative_prompt 的模型，防止生成分割/拼贴布局；同时加入安全词以减少敏感拦截
-const ANTI_SPLIT_NEGATIVE_PROMPT = 'nsfw, nudity, naked, violence, blood, gore, sensitive content, split panels, side-by-side layout, collage, diptych, triptych, grid layout, multiple panels, comparison view, composite image, two images in one frame';
-
-function mergeNegativePromptFragments(auto, user) {
-  const a = (auto || '').trim();
-  const u = (user || '').trim();
-  if (a && u) return `${a}, ${u}`;
-  return a || u || '';
-}
+// ── OpenAI 官方 gpt-image-2 云端图像通道（协议名 openai_image，给无显卡用户）──────────
+// 只支持 OpenAI 官方的 gpt-image-2；不做通用多模型，也不恢复任何其它云图像供应商。
+const OPENAI_IMAGE_MODEL = 'gpt-image-2';
+const OPENAI_IMAGE_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
+/** OpenAI gpt-image-2 仅支持这三种尺寸 */
+const OPENAI_IMAGE_SIZES = ['1024x1024', '1024x1536', '1536x1024'];
+/** /images/edits 的 image[] 上限 */
+const OPENAI_IMAGE_MAX_REF_IMAGES = 8;
+/** 生图/编辑单次请求超时（毫秒）——gpt-image-2 云端出图较慢，给足 5 分钟 */
+const OPENAI_IMAGE_TIMEOUT_MS = 300000;
+/** 异步任务轮询：间隔 / 次数（总等待 ≈ 3s × 60 = 3 分钟，仍受上面的整体超时约束） */
+const OPENAI_IMAGE_POLL_INTERVAL_MS = 3000;
+const OPENAI_IMAGE_POLL_ATTEMPTS = 60;
 
 /** 角色/场景/道具资产生图：请求里显式传入 model 且资产上存有负面词时，与自动负面片段合并后传给图生 API */
 function resolveAssetUserNegativeForApi(explicitModelName, storedNegative) {
   const hasModel = explicitModelName != null && String(explicitModelName).trim().length > 0;
   const neg = storedNegative != null ? String(storedNegative).trim() : '';
   return hasModel && neg ? neg : '';
-}
-
-// sharp 惰性加载（参考图压缩用，sharp 已在 package.json 中声明）
-let _sharp = null;
-function getSharp() {
-  if (!_sharp) {
-    try { _sharp = require('sharp'); } catch (_) {}
-  }
-  return _sharp;
-}
-
-/**
- * 压缩单张参考图 buffer，目标 ≤ targetKB（默认 2048KB=2MB）
- * 用 JPEG 递减质量压缩直到达标或质量降到最低阈值。
- * 若 sharp 不可用或压缩后更大，返回原始 buffer。
- */
-async function compressImageBuffer(buffer, mimeType, targetKB = 2048, log = null) {
-  const sharp = getSharp();
-  if (!sharp) return { buffer, mimeType };
-  const targetBytes = targetKB * 1024;
-  if (buffer.length <= targetBytes) return { buffer, mimeType };
-  try {
-    let quality = 80;
-    let compressed = await sharp(buffer).jpeg({ quality }).toBuffer();
-    while (compressed.length > targetBytes && quality > 30) {
-      quality -= 15;
-      compressed = await sharp(buffer).jpeg({ quality }).toBuffer();
-    }
-    if (compressed.length < buffer.length) {
-      if (log) log.info('[参考图压缩] 压缩完成', {
-        original_kb: Math.round(buffer.length / 1024),
-        compressed_kb: Math.round(compressed.length / 1024),
-        quality,
-      });
-      return { buffer: compressed, mimeType: 'image/jpeg' };
-    }
-  } catch (e) {
-    if (log) log.warn('[参考图压缩] sharp 压缩失败，使用原图', { error: e.message });
-  }
-  return { buffer, mimeType };
 }
 
 // 惰性加载配置，避免循环依赖与启动顺序问题
@@ -90,18 +46,18 @@ function getProxyExpireHours() {
 /**
  * 根据 provider 名推断接口规范（api_protocol 未设置时的兜底逻辑）
  * 已明确设置 api_protocol 的配置不会走此函数。
+ * 目前只支持两种图像后端：comfyui（本地/远程）与 openai_image（OpenAI 官方 gpt-image-2 云端）。
+ * 其它 provider（包括 provider=openai 但模型不是 gpt-image-2 的）会返回 'openai'，
+ * 由 callImageApi 兜底给出明确报错，绝不静默走通用多模型通道。
  */
-function inferProtocol(provider, model) {
-  const p = String(provider || '').toLowerCase();
-  if (p === 'dashscope' || p === 'qwen_image') return 'dashscope';
-  if (p === 'nano_banana') return 'nano_banana';
+function inferImageProtocol(provider, model) {
+  const p = String(provider || '').toLowerCase().trim();
   if (p === 'comfyui' || p === 'comfy') return 'comfyui';
-  if (p === 'gemini' || p === 'google') return 'gemini';
-  if (p === 'volces' || p === 'volcengine' || p === 'volc') return 'volcengine';
-  if (/seedream|doubao/i.test(model || '')) return 'volcengine';
-  if (p === 'kling' || p === 'klingai') return 'kling';
-  if (/^kling-/i.test(model || '')) return 'kling';
-  if (p === 'agnes' || /agnes-image|apihub\.agnes-ai\.com/i.test(String(model || ''))) return 'agnes';
+  if (p === 'openai_image' || p === 'gpt_image' || p === 'gpt-image') return 'openai_image';
+  // provider=openai 且模型就是 gpt-image-2 时，也归入 OpenAI 官方云端图像通道
+  const models = Array.isArray(model) ? model : (model != null ? [model] : []);
+  const first = String(models[0] || '').toLowerCase().trim();
+  if (p === 'openai' && first === OPENAI_IMAGE_MODEL) return 'openai_image';
   return 'openai';
 }
 
@@ -110,40 +66,48 @@ function inferProtocol(provider, model) {
  * 可选按 preferredProvider / preferredModel 进一步筛选。
  * @param {object} db
  * @param {string} [preferredModel] - 指定模型名时，在匹配到的配置中选含该模型的
- * @param {string} [preferredProvider] - 指定供应商（如 openai / dashscope），只在该 provider 的配置中选
+ * @param {string} [preferredProvider] - 指定供应商（本软件只支持 comfyui）
  * @param {string} [imageServiceType] - 'image' 文本生成图片（角色/场景/道具），'storyboard_image' 分镜图片生成（支持参考图）；缺省为 'image'
  */
 function getDefaultImageConfig(db, preferredModel, preferredProvider, imageServiceType) {
   const serviceType = imageServiceType || 'image';
-  let configs = aiConfigService.listConfigs(db, serviceType);
-  if (configs.length === 0 && serviceType === 'storyboard_image') {
-    configs = aiConfigService.listConfigs(db, 'image');
+  const activeOf = (st) => aiConfigService.listConfigs(db, st).filter((c) => c.is_active);
+  let active = activeOf(serviceType);
+  if (serviceType === 'storyboard_image') {
+    // 分镜图通道 = storyboard_image 类型 ∪ image 类型（图片配置对分镜图同样适用）。
+    // 规则：只有 storyboard_image 配置被「显式设为默认」时才由它负责分镜图；
+    //      否则沿用 image 类型的默认（本地 ComfyUI）。
+    // 以前是「只要存在任意一条 storyboard_image 配置就完全不再看 image 配置」→
+    // 新加一条云端分镜配置就会无声顶掉本地 ComfyUI；反过来本地那条被停用时又会
+    // 直接报「未配置图片模型」（configs 非空但 active 为空）。
+    const sbTyped = active;
+    const imageTyped = activeOf('image');
+    const sbDefault = sbTyped.find((c) => c.is_default);
+    active = sbDefault
+      ? [sbDefault, ...imageTyped, ...sbTyped.filter((c) => c !== sbDefault)]
+      : [...imageTyped, ...sbTyped];
   }
-  let active = configs.filter((c) => c.is_active);
   if (active.length === 0) return null;
-  if (preferredProvider && String(preferredProvider).trim()) {
-    const want = String(preferredProvider).trim().toLowerCase();
-    const byProvider = active.filter((c) => (c.provider || '').toLowerCase() === want);
-    if (byProvider.length > 0) active = byProvider;
-  }
+  // 显式指定的模型最优先（用户/调用方就是要这个模型）
   if (preferredModel) {
     for (const c of active) {
       const models = Array.isArray(c.model) ? c.model : (c.model != null ? [c.model] : []);
       if (models.includes(preferredModel)) return c;
     }
   }
-  // 显式使用前端设置的「默认」：优先 is_default，再按 priority 降序（listConfigs 已按 is_default DESC, priority DESC 排序，取第一个即可）
+  // 其次是「AI 配置」里显式设的默认 —— 它代表用户当前意图，必须压过调用方传来的厂商偏好。
+  // preferred_provider 来自配置文件的历史偏好（config.yaml 的 ai.default_image_provider，
+  // 默认值是 'openai'）；曾经因为它优先级更高，把默认改成本地 ComfyUI 后，道具图仍然被发去
+  // 云端 gpt-image-2，撞上安全策略拦截而报错。
   const defaultOne = active.find((c) => c.is_default);
   if (defaultOne) return defaultOne;
+  // 没有设默认时才用厂商偏好兜底
+  if (preferredProvider && String(preferredProvider).trim()) {
+    const want = String(preferredProvider).trim().toLowerCase();
+    const byProvider = active.filter((c) => (c.provider || '').toLowerCase() === want);
+    if (byProvider.length > 0) active = byProvider;
+  }
   return active[0];
-}
-
-// 与 Go image_generation_service 一致：openai/chatfire 使用 "/images/generations"，base_url 通常已含 /v1
-function buildImageUrl(config) {
-  const base = (config.base_url || '').replace(/\/$/, '');
-  let ep = config.endpoint || '/images/generations';
-  if (!ep.startsWith('/')) ep = '/' + ep;
-  return base + ep;
 }
 
 function getModelFromConfig(config, preferredModel) {
@@ -152,1036 +116,6 @@ function getModelFromConfig(config, preferredModel) {
   if (config.default_model && models.includes(config.default_model)) return config.default_model;
   return models[0] || 'dall-e-3';
 }
-
-// 通义万象 size：格式 "宽*高"，总像素须在 589824(768*768)～1638400(1280*1280) 之间
-const DASHSCOPE_MIN_PIXELS = 589824;
-const DASHSCOPE_MAX_PIXELS = 1638400;
-
-// 火山引擎 Doubao-Seedream-4.5 最低像素要求 3,686,400 (1920*1920)
-// 需要自动将低分辨率请求放大到该标准，保持长宽比
-const SEEDREAM_MIN_PIXELS = 3686400;
-
-function fixSeedreamSize(size) {
-  if (!size || typeof size !== 'string') return '1920x1920'; // 默认使用最低要求 1920x1920
-  // 支持 1024x1024 或 1024*1024 格式，统一解析
-  const s = size.trim().toLowerCase().replace(/\*/g, 'x');
-  const match = s.match(/^(\d+)\s*x\s*(\d+)$/);
-  if (!match) return '1920x1920';
-  
-  let w = parseInt(match[1], 10);
-  let h = parseInt(match[2], 10);
-  if (!w || !h) return '1920x1920';
-  
-  const pixels = w * h;
-  if (pixels >= SEEDREAM_MIN_PIXELS) return `${w}x${h}`; // 已达标，直接用
-  
-  // 需要放大
-  const scale = Math.sqrt(SEEDREAM_MIN_PIXELS / pixels);
-  // 向上取整到 64 的倍数（通常 AI 模型对 64/32/16 对齐有偏好，这里取 64 较稳妥）
-  w = Math.ceil((w * scale) / 64) * 64;
-  h = Math.ceil((h * scale) / 64) * 64;
-  
-  // 二次检查是否因为取整导致略小于标准（虽然 ceil 应该不会，但为了保险）
-  if (w * h < SEEDREAM_MIN_PIXELS) {
-    w += 64;
-    h += 64;
-  }
-  
-  return `${w}x${h}`;
-}
-
-/** Agnes Image 2.x 官方常用尺寸（过大如 1440x2560 会导致上游 do_request_failed） */
-const AGNES_IMAGE_SIZE_BY_RATIO = {
-  '16:9': '1792x1024',
-  '9:16': '1024x1792',
-};
-
-function isAgnesImageConfig(config, model) {
-  const p = String(config?.provider || '').toLowerCase();
-  const m = String(model || '').toLowerCase();
-  const base = String(config?.base_url || '').toLowerCase();
-  return p === 'agnes' || /agnes-image/.test(m) || /apihub\.agnes-ai\.com/.test(base);
-}
-
-/** 将项目内高分辨率 size 映射为 Agnes 支持的尺寸，保持宽高比类别 */
-function fixAgnesImageSize(size) {
-  if (!size || typeof size !== 'string') return AGNES_IMAGE_SIZE_BY_RATIO['16:9'];
-  const s = size.trim().toLowerCase().replace(/\*/g, 'x');
-  const match = s.match(/^(\d+)\s*x\s*(\d+)$/);
-  if (!match) return AGNES_IMAGE_SIZE_BY_RATIO['16:9'];
-  const w = parseInt(match[1], 10);
-  const h = parseInt(match[2], 10);
-  if (!w || !h) return AGNES_IMAGE_SIZE_BY_RATIO['16:9'];
-  const mapped = AGNES_IMAGE_SIZE_BY_RATIO['16:9'];
-  const ratio = w / h;
-  const candidates = Object.entries(AGNES_IMAGE_SIZE_BY_RATIO).map(([label, sz]) => {
-    const [rw, rh] = sz.split('x').map(Number);
-    return { label, sz, r: rw / rh };
-  });
-  let best = mapped;
-  let bestDiff = Infinity;
-  for (const c of candidates) {
-    const diff = Math.abs(Math.log(ratio) - Math.log(c.r));
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      best = c.sz;
-    }
-  }
-  return best;
-}
-
-function dashScopeSize(size) {
-  if (!size || typeof size !== 'string') return '1280*1280';
-  const s = String(size).trim().toLowerCase().replace(/x/g, '*');
-  const match = s.match(/^(\d+)\s*\*\s*(\d+)$/);
-  if (!match) return '1280*1280';
-  let w = parseInt(match[1], 10);
-  let h = parseInt(match[2], 10);
-  if (!w || !h) return '1280*1280';
-  let pixels = w * h;
-  if (pixels <= DASHSCOPE_MAX_PIXELS && pixels >= DASHSCOPE_MIN_PIXELS) return `${w}*${h}`;
-  if (pixels > DASHSCOPE_MAX_PIXELS) {
-    const scale = Math.sqrt(DASHSCOPE_MAX_PIXELS / pixels);
-    w = Math.max(16, Math.round((w * scale) / 16) * 16);
-    h = Math.max(16, Math.round((h * scale) / 16) * 16);
-    if (w * h > DASHSCOPE_MAX_PIXELS) {
-      w = Math.min(w, 1280);
-      h = Math.min(h, Math.floor(DASHSCOPE_MAX_PIXELS / w));
-      h = Math.floor(h / 16) * 16;
-    }
-    return `${w}*${h}`;
-  }
-  const scale = Math.sqrt(DASHSCOPE_MIN_PIXELS / pixels);
-  w = Math.max(384, Math.round((w * scale) / 16) * 16);
-  h = Math.max(384, Math.round((h * scale) / 16) * 16);
-  return `${w}*${h}`;
-}
-
-// 从 DashScope 返回的 output.choices 中取第一张图 URL（兼容 type 为 "image" 或 仅有 image 字段）
-function parseDashScopeImageUrl(data) {
-  const choices = data?.output?.choices;
-  if (!Array.isArray(choices)) return null;
-  for (const c of choices) {
-    const content = c?.message?.content;
-    if (!Array.isArray(content)) continue;
-    for (const part of content) {
-      if (!part) continue;
-      if (part.image && (part.type === 'image' || !part.type)) return part.image;
-    }
-  }
-  return null;
-}
-
-// Gemini 支持的宽高比标签 → 数值 w/h（与 API 一致）
-const GEMINI_ASPECT_NUMERIC = [
-  ['16:9', 16 / 9],
-  ['9:16', 9 / 16],
-];
-
-/** 按像素尺寸选最接近的 Gemini aspectRatio（对数距离，避免 1440×2560 被误判为 4:5） */
-function closestGeminiAspectRatioFromPixels(w, h) {
-  if (!w || !h) return '16:9';
-  const r = w / h;
-  let best = '16:9';
-  let bestD = Infinity;
-  for (const [label, tr] of GEMINI_ASPECT_NUMERIC) {
-    const d = Math.abs(Math.log(r) - Math.log(tr));
-    if (d < bestD) {
-      bestD = d;
-      best = label;
-    }
-  }
-  return best;
-}
-
-// Gemini 图片生成支持的比例：1:1 / 16:9 / 9:16 / 4:3 / 3:4 / 3:2 / 2:3 / 5:4 / 4:5 / 21:9
-function geminiAspectRatio(size) {
-  if (!size || typeof size !== 'string') return '16:9';
-  const s = String(size).trim().toLowerCase().replace(/\s/g, '');
-  const ratioSet = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9']);
-  if (ratioSet.has(s)) return s;
-  const match = s.match(/^(\d+)[x*](\d+)$/);
-  if (!match) return '16:9';
-  const w = parseInt(match[1], 10);
-  const h = parseInt(match[2], 10);
-  return closestGeminiAspectRatioFromPixels(w, h);
-}
-
-function parseSizeWxHForGemini(size) {
-  const match = String(size || '').trim().toLowerCase().replace(/\s/g, '').match(/^(\d+)[x*](\d+)$/);
-  if (!match) return null;
-  const w = parseInt(match[1], 10);
-  const h = parseInt(match[2], 10);
-  if (!w || !h) return null;
-  return { w, h };
-}
-
-/**
- * Google 官方 REST：宽高比在 generationConfig.imageConfig.aspectRatio（不是顶层 aspectRatio）。
- * 顶层字段会被忽略 → 行为变为「匹配参考图尺寸」或近 1:1；参考图多为横屏四视图时成片易为横屏，
- * 再在本地 contain 到 9:16 就会出现上下黑边。
- * imageSize（1K/2K/4K）见官方文档，仅 gemini-3.x 图生模型支持；2.5 不传。
- */
-function buildGeminiImageConfig(aspectRatio, modelName, size) {
-  const imageConfig = { aspectRatio };
-  const m = String(modelName || '').toLowerCase();
-  const supportsImageSize =
-    m.includes('gemini-3') || m.includes('3.1-flash-image') || m.includes('3-pro-image');
-  if (supportsImageSize) {
-    const px = parseSizeWxHForGemini(size);
-    const longEdge = px ? Math.max(px.w, px.h) : 0;
-    // 与项目里常见 1440/2560 档位对齐用 2K；仅小尺寸用 1K（避免默认 4K token 暴涨）
-    imageConfig.imageSize = longEdge >= 1200 ? '2K' : '1K';
-  }
-  return imageConfig;
-}
-
-// nano-banana size 转 aspectRatio（1:1 / 16:9 / 9:16 / 4:3 / 3:4 / 3:2 / 2:3 / 5:4 / 4:5 / 21:9 / auto）
-function nanoBananaAspectRatio(size) {
-  if (!size || typeof size !== 'string') return 'auto';
-  const s = String(size).trim().toLowerCase().replace(/\s/g, '');
-  const ratioSet = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9']);
-  if (ratioSet.has(s)) return s;
-  const match = s.match(/^(\d+)[x*](\d+)$/);
-  if (!match) return 'auto';
-  const w = parseInt(match[1], 10);
-  const h = parseInt(match[2], 10);
-  if (!w || !h) return 'auto';
-  return closestGeminiAspectRatioFromPixels(w, h);
-}
-
-// 可灵 aspect_ratio：16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 3:2 / 2:3
-function klingImageAspectRatio(size) {
-  if (!size) return '16:9';
-  const s = String(size).trim().toLowerCase().replace(/\s/g, '');
-  const ratioSet = new Set(['16:9', '9:16']);
-  if (ratioSet.has(s)) return s;
-  const match = s.match(/^(\d+)[x*](\d+)$/);
-  if (!match) return '16:9';
-  const w = parseInt(match[1], 10);
-  const h = parseInt(match[2], 10);
-  if (!w || !h) return '16:9';
-  const r = w / h;
-  if (r >= 1.3) return '16:9';
-  return '9:16';
-}
-
-/**
- * 调用可灵（Kling AI）图片生成 API（异步任务轮询）
- * 支持模型：kling-image / kling-omni-image（以及其他 kling-* 模型）
- * 接口规范：POST /v1/images/generations → 轮询 GET /v1/images/generations/{taskId}
- * 认证：Authorization: Bearer {api_key}
- */
-async function callKlingImageApi(config, log, opts) {
-  const { prompt, model, size, image_gen_id, reference_image_urls, files_base_url, storage_local_path } = opts;
-  const base = (config.base_url || 'https://api.klingai.com').replace(/\/$/, '');
-  const apiKey = config.api_key || '';
-  const headers = {
-    'Content-Type': 'application/json',
-    Authorization: 'Bearer ' + apiKey,
-  };
-
-  let ep = config.endpoint || '/v1/images/generations';
-  if (!ep.startsWith('/')) ep = '/' + ep;
-  const submitUrl = base + ep;
-
-  const aspectRatio = klingImageAspectRatio(size);
-  const m = model || 'kling-image';
-
-  const rawRefs = Array.isArray(reference_image_urls) ? reference_image_urls.filter(Boolean) : [];
-  const resolvedRefs = rawRefs.map((r) => resolveImageRef(r, files_base_url, storage_local_path)).filter(Boolean);
-
-  const body = {
-    model: m,
-    prompt: prompt || '',
-    aspect_ratio: aspectRatio,
-    n: 1,
-    callback_url: '',
-  };
-
-  if (resolvedRefs.length > 0) {
-    // 可灵 image_reference 支持 subject（人物/主体）和 face（面部）类型
-    body.image_reference = resolvedRefs.slice(0, 1).map((url) => ({ type: 'subject', url }));
-    body.image_fidelity = 0.5;
-  }
-
-  const bodyForLog = { ...body };
-  if (Array.isArray(bodyForLog.image_reference)) {
-    bodyForLog.image_reference = bodyForLog.image_reference.map((r) =>
-      r.url && r.url.startsWith('data:') ? { ...r, url: '(base64)' } : r
-    );
-  }
-  log.info('[Kling图生] 发送请求', {
-    url: submitUrl, model: m, image_gen_id,
-    has_ref: resolvedRefs.length > 0,
-    aspect_ratio: aspectRatio,
-    body_preview: JSON.stringify(bodyForLog).slice(0, 300),
-  });
-
-  let submitRaw;
-  let submitStatus;
-  try {
-    const out = await postJSONWithTimeout(submitUrl, headers, body, IMAGE_HTTP_TIMEOUT_MS);
-    submitStatus = out.statusCode;
-    submitRaw = out.raw;
-  } catch (e) {
-    log.error('[Kling图生] 网络错误', { image_gen_id, error: e.message });
-    return { error: 'Kling 图片生成网络请求失败: ' + e.message };
-  }
-
-  if (submitStatus < 200 || submitStatus >= 300) {
-    let errMsg = 'Kling 图片生成请求失败: ' + submitStatus;
-    try {
-      const errJson = JSON.parse(submitRaw);
-      const msg = errJson.message || errJson.msg || (errJson.error && (errJson.error.message || errJson.error));
-      if (msg) errMsg += ' - ' + String(msg).slice(0, 200);
-    } catch (_) {
-      if (submitRaw) errMsg += ' - ' + submitRaw.slice(0, 200);
-    }
-    log.error('[Kling图生] 请求失败', { status: submitStatus, body: submitRaw.slice(0, 500), image_gen_id });
-    return { error: errMsg };
-  }
-
-  let submitData;
-  try {
-    submitData = JSON.parse(submitRaw);
-  } catch (e) {
-    return { error: 'Kling 返回格式异常: ' + submitRaw.slice(0, 200) };
-  }
-
-  if (submitData.code !== undefined && submitData.code !== 0) {
-    return { error: `Kling 错误(${submitData.code}): ${submitData.message || '未知错误'}` };
-  }
-
-  // 部分场景可能同步返回图片（兜底）
-  const directUrl = submitData?.data?.task_result?.images?.[0]?.url;
-  if (directUrl) {
-    log.info('[Kling图生] 同步返回图片', { image_gen_id });
-    return { image_url: directUrl };
-  }
-
-  const taskId = submitData?.data?.task_id;
-  if (!taskId) {
-    log.warn('[Kling图生] 未返回 task_id', { image_gen_id, raw_preview: submitRaw.slice(0, 300) });
-    return { error: 'Kling 未返回 task_id: ' + submitRaw.slice(0, 200) };
-  }
-
-  // 构建轮询 URL
-  const cfgQEp = config.query_endpoint
-    ? (config.query_endpoint.startsWith('/') ? config.query_endpoint : '/' + config.query_endpoint)
-    : '';
-  function buildKlingQueryUrl(tid) {
-    if (cfgQEp) return base + cfgQEp.replace(/\{taskId\}/gi, encodeURIComponent(tid)).replace(/\{task_id\}/gi, encodeURIComponent(tid)).replace(/\{id\}/gi, encodeURIComponent(tid));
-    return base + ep + '/' + encodeURIComponent(tid);
-  }
-
-  log.info('[Kling图生] 任务已提交，开始轮询', { image_gen_id, task_id: taskId });
-  const maxAttempts = 60;
-  const intervalMs = 4000;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    await new Promise((r) => setTimeout(r, intervalMs));
-    try {
-      const queryRes = await fetch(buildKlingQueryUrl(taskId), { method: 'GET', headers });
-      if (!queryRes.ok) continue;
-      const queryData = JSON.parse(await queryRes.text());
-      const status = queryData?.data?.task_status;
-      log.info('[Kling图生] 轮询状态', { image_gen_id, task_id: taskId, attempt, status });
-      if (status === 'succeed') {
-        const imgUrl = queryData?.data?.task_result?.images?.[0]?.url;
-        if (imgUrl) {
-          log.info('[Kling图生] 生成完成', { image_gen_id, task_id: taskId });
-          return { image_url: imgUrl };
-        }
-        return { error: '可灵未返回图片地址' };
-      }
-      if (status === 'failed') {
-        const errMsg = queryData?.data?.task_status_msg || '任务失败';
-        log.warn('[Kling图生] 任务失败', { image_gen_id, task_id: taskId, error: errMsg });
-        return { error: '可灵生成失败: ' + errMsg };
-      }
-    } catch (e) {
-      log.warn('[Kling图生] 轮询请求失败', { attempt, error: e.message, image_gen_id });
-    }
-  }
-  return { error: '可灵图片生成超时' };
-}
-
-/**
- * 调用 NanoBanana 图片生成 API（异步任务轮询）
- * 模型 → 端点：
- *   nano-banana-2   → POST /api/v1/nanobanana/generate-2
- *   nano-banana-pro → POST /api/v1/nanobanana/generate-pro
- *   nano-banana     → POST /api/v1/nanobanana/generate（需 callBackUrl，用占位符）
- * 结果轮询：GET /api/v1/nanobanana/record-info?taskId=xxx
- */
-async function callNanoBananaImageApi(config, log, opts) {
-  const { prompt, model, size, image_gen_id, reference_image_urls, files_base_url, storage_local_path } = opts;
-  const base = (config.base_url || 'https://api.nanobananaapi.ai').replace(/\/$/, '');
-  const apiKey = config.api_key || '';
-  const headers = {
-    'Content-Type': 'application/json',
-    Authorization: 'Bearer ' + apiKey,
-  };
-  // 解析参考图：本地路径 / localhost URL → base64，确保外部 API 可访问
-  const rawRefs = Array.isArray(reference_image_urls) ? reference_image_urls.filter(Boolean) : [];
-  const refs = rawRefs.map((r) => resolveImageRef(r, files_base_url, storage_local_path)).filter(Boolean);
-  const aspectRatio = nanoBananaAspectRatio(size);
-  const m = (model || 'nano-banana-2').toLowerCase();
-
-  // 标准 nano-banana 原生端点；若 config.endpoint 与这些不同，视为代理模式，直接使用配置的端点
-  const NATIVE_ENDPOINTS = new Set([
-    '/api/v1/nanobanana/generate-2',
-    '/api/v1/nanobanana/generate-pro',
-    '/api/v1/nanobanana/generate',
-  ]);
-  const cfgEp = config.endpoint ? (config.endpoint.startsWith('/') ? config.endpoint : '/' + config.endpoint) : '';
-  const isProxyMode = cfgEp && !NATIVE_ENDPOINTS.has(cfgEp);
-
-  let submitUrl;
-  let body;
-  if (isProxyMode) {
-    submitUrl = base + cfgEp;
-    const isNativeBananaModel = m.startsWith('nano-banana');
-    if (isNativeBananaModel) {
-      // FAL 代理等：转发 nano-banana 模型，使用 camelCase 字段
-      body = {
-        prompt: prompt || '',
-        imageUrls: refs,
-        aspectRatio: aspectRatio === 'auto' ? '16:9' : aspectRatio,
-        resolution: '1K',
-      };
-    } else {
-      // 通用代理（如 dmiapi）：模型名直接透传，使用 snake_case 字段
-      body = {
-        model: model || '',
-        prompt: prompt || '',
-        aspect_ratio: aspectRatio === 'auto' ? '16:9' : (aspectRatio || ''),
-        image_size: '1K',
-        ...(refs.length > 0 ? { imageUrls: refs } : {}),
-      };
-    }
-  } else if (m === 'nano-banana-2') {
-    submitUrl = base + '/api/v1/nanobanana/generate-2';
-    body = {
-      prompt: prompt || '',
-      imageUrls: refs,
-      aspectRatio,
-      resolution: '1K',
-      outputFormat: 'jpg',
-    };
-  } else if (m === 'nano-banana-pro') {
-    submitUrl = base + '/api/v1/nanobanana/generate-pro';
-    body = {
-      prompt: prompt || '',
-      imageUrls: refs,
-      aspectRatio: aspectRatio === 'auto' ? '16:9' : aspectRatio,
-      resolution: '2K',
-    };
-  } else {
-    // nano-banana 基础模型：callBackUrl 为必填，提供占位 URL（服务端轮询结果）
-    submitUrl = base + '/api/v1/nanobanana/generate';
-    body = {
-      prompt: prompt || '',
-      type: refs.length > 0 ? 'IMAGETOIAMGE' : 'TEXTTOIAMGE',
-      imageUrls: refs,
-      image_size: (aspectRatio === 'auto' ? '16:9' : aspectRatio),
-      numImages: 1,
-      callBackUrl: 'https://placeholder.no-op/callback',
-    };
-  }
-
-  const bodyForLog = { ...body };
-  if (Array.isArray(bodyForLog.imageUrls)) {
-    bodyForLog.imageUrls = bodyForLog.imageUrls.map((u) => (u && u.startsWith('data:') ? '(base64)' : u));
-  }
-  log.info('NanoBanana Image API request', {
-    url: submitUrl,
-    model: m,
-    image_gen_id,
-    proxy_mode: isProxyMode,
-    auth_header_prefix: (headers.Authorization || '').slice(0, 20) + '…',
-    body_keys: Object.keys(body),
-    body_preview: JSON.stringify(bodyForLog).slice(0, 300),
-  });
-  let submitRaw;
-  let submitStatus;
-  try {
-    const out = await postJSONWithTimeout(submitUrl, headers, body, IMAGE_HTTP_TIMEOUT_MS);
-    submitStatus = out.statusCode;
-    submitRaw = out.raw;
-  } catch (e) {
-    log.error('NanoBanana submit network error', { image_gen_id, error: e.message });
-    return { error: 'NanoBanana 图片生成网络请求失败: ' + e.message };
-  }
-  if (submitStatus < 200 || submitStatus >= 300) {
-    let errMsg = 'NanoBanana 图片生成请求失败: ' + submitStatus;
-    try {
-      const errJson = JSON.parse(submitRaw);
-      const msg = errJson.msg || errJson.message || (errJson.error && (errJson.error.message || errJson.error));
-      if (msg) errMsg += ' - ' + String(msg).slice(0, 200);
-    } catch (_) {
-      if (submitRaw) errMsg += ' - ' + submitRaw.slice(0, 200);
-    }
-    log.error('NanoBanana submit failed', {
-      status: submitStatus,
-      body: submitRaw.slice(0, 500),
-      image_gen_id,
-      submit_url: submitUrl,
-      auth_header_prefix: (headers.Authorization || '').slice(0, 20) + '…',
-    });
-    return { error: errMsg };
-  }
-  let submitData;
-  try {
-    submitData = JSON.parse(submitRaw);
-  } catch (e) {
-    return { error: 'NanoBanana 返回格式异常' };
-  }
-
-  // 兼容同步代理响应：部分代理直接返回图片 URL，无需轮询
-  // 也兼容提交即完成的响应（state=succeeded + data.data.images[0].url）
-  const sdTopImages = submitData?.images;
-  const sd0 = Array.isArray(sdTopImages) ? sdTopImages[0] : null;
-  const sdTopFirst = typeof sd0 === 'string' && sd0 && !/^https?:\/\//i.test(sd0) && !sdTopImages[0]?.url
-    ? (sd0.startsWith('data:') ? sd0 : `data:image/png;base64,${sd0.replace(/\s/g, '')}`)
-    : null;
-  const directImageUrl = submitData?.images?.[0]?.url
-    || sdTopFirst
-    || submitData?.image?.url
-    || submitData?.image_url
-    || submitData?.data?.url
-    || submitData?.url
-    || (submitData?.data?.state === 'succeeded' ? submitData?.data?.data?.images?.[0]?.url : null);
-  if (directImageUrl) {
-    log.info('NanoBanana image (synchronous proxy response)', { image_gen_id });
-    return { image_url: directImageUrl };
-  }
-
-  // task_id 兼容驼峰（taskId）和下划线（task_id）两种格式
-  const taskId = submitData?.data?.taskId || submitData?.data?.task_id || submitData?.request_id || submitData?.taskId;
-  if (!taskId) {
-    const msg = submitData?.msg || submitData?.message || '未返回任务ID';
-    log.warn('NanoBanana no taskId in response', { image_gen_id, raw_preview: submitRaw.slice(0, 300) });
-    return { error: 'NanoBanana 提交失败: ' + String(msg).slice(0, 200) };
-  }
-
-  // 构建轮询 URL：优先用配置的 query_endpoint，否则用默认
-  // 支持占位符 {taskId} / {taskid} / {task_id} / {id}（大小写不敏感）
-  const DEFAULT_QUERY_EP = '/api/v1/nanobanana/record-info';
-  const cfgQEp = config.query_endpoint
-    ? (config.query_endpoint.startsWith('/') ? config.query_endpoint : '/' + config.query_endpoint)
-    : '';
-  const useQueryEp = cfgQEp && cfgQEp !== DEFAULT_QUERY_EP ? cfgQEp : DEFAULT_QUERY_EP;
-  function buildQueryUrl(tid) {
-    // 大小写不敏感替换所有常见占位符：{taskId} / {taskid} / {task_id} / {id}
-    if (/\{(taskId|taskid|task_id|id)\}/i.test(useQueryEp)) {
-      return base + useQueryEp
-        .replace(/\{taskId\}/gi, encodeURIComponent(tid))
-        .replace(/\{task_id\}/gi, encodeURIComponent(tid))
-        .replace(/\{id\}/gi, encodeURIComponent(tid));
-    }
-    return base + useQueryEp + '?taskId=' + encodeURIComponent(tid);
-  }
-
-  const firstQueryUrl = buildQueryUrl(taskId);
-  log.info('NanoBanana task submitted, polling…', {
-    image_gen_id, task_id: taskId,
-    query_ep: useQueryEp,
-    first_query_url: firstQueryUrl,
-    config_query_endpoint: config.query_endpoint || '(not set)',
-  });
-  const maxAttempts = 60;
-  const intervalMs = 3000;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    await new Promise((r) => setTimeout(r, intervalMs));
-    const pollUrl = buildQueryUrl(taskId);
-    try {
-      const queryRes = await fetch(pollUrl, {
-        method: 'GET',
-        headers,
-      });
-      const queryRaw = await queryRes.text();
-      if (!queryRes.ok) {
-        log.warn('NanoBanana poll HTTP error', {
-          image_gen_id, task_id: taskId, attempt,
-          poll_url: pollUrl,
-          status: queryRes.status,
-          body_preview: queryRaw.slice(0, 300),
-        });
-        continue;
-      }
-      let queryData;
-      try {
-        queryData = JSON.parse(queryRaw);
-      } catch (parseErr) {
-        log.warn('NanoBanana poll JSON parse error', {
-          image_gen_id, task_id: taskId, attempt,
-          poll_url: pollUrl,
-          raw_preview: queryRaw.slice(0, 300),
-        });
-        continue;
-      }
-      const successFlag = queryData?.data?.successFlag;
-      const state = queryData?.data?.state;
-      const status = queryData?.data?.status;
-      log.info('NanoBanana poll status', {
-        image_gen_id, task_id: taskId, attempt,
-        code: queryData?.code, successFlag, state, status,
-      });
-      if (successFlag === 1 || state === 'succeeded' || status === '3') {
-        const respImgs = queryData?.data?.response?.images;
-        const fromSdWrapped = Array.isArray(respImgs) && typeof respImgs[0] === 'string' && respImgs[0].length > 0
-          ? (respImgs[0].startsWith('data:') ? respImgs[0] : `data:image/png;base64,${respImgs[0].replace(/\s/g, '')}`)
-          : null;
-        const imageUrl = queryData?.data?.response?.resultImageUrl
-          || queryData?.data?.response?.originImageUrl
-          || queryData?.data?.data?.images?.[0]?.url
-          || fromSdWrapped;
-        if (imageUrl) {
-          log.info('NanoBanana image completed', { image_gen_id, task_id: taskId, image_url: imageUrl.slice(0, 120) });
-          return { image_url: imageUrl };
-        }
-        log.warn('NanoBanana succeeded but no image URL found', {
-          image_gen_id, task_id: taskId,
-          data_keys: queryData?.data ? Object.keys(queryData.data) : [],
-          nested_data_keys: queryData?.data?.data ? Object.keys(queryData.data.data) : [],
-          response_keys: queryData?.data?.response ? Object.keys(queryData.data.response) : [],
-          raw_preview: queryRaw.slice(0, 500),
-        });
-        return { error: '未返回图片地址' };
-      }
-      if (successFlag === 2 || successFlag === 3 || state === 'failed') {
-        const errMsg = queryData?.data?.errorMessage || queryData?.data?.msg || '任务失败';
-        log.warn('NanoBanana task failed', { image_gen_id, task_id: taskId, successFlag, state, error_message: errMsg });
-        return { error: 'NanoBanana 生成失败: ' + errMsg };
-      }
-    } catch (e) {
-      log.warn('NanoBanana poll request failed', { attempt, error: e.message, image_gen_id, poll_url: pollUrl });
-    }
-  }
-  return { error: 'NanoBanana 图片生成超时' };
-}
-
-// 通义千问 qwen-image 同步接口：仅支持单条 text，不支持参考图；parameters 仅 size/negative_prompt/prompt_extend/watermark
-function isQwenImageProvider(config, model) {
-  const p = (config.provider || '').toLowerCase();
-  const m = (model || '').toLowerCase();
-  return p === 'qwen_image' || /^qwen-image/.test(m);
-}
-
-// qwen-image 仅支持以下 size：1664*928(16:9), 1472*1104(4:3), 1328*1328(1:1), 1104*1472(3:4), 928*1664(9:16)
-function qwenImageSize(size) {
-  const allowed = ['1664*928', '928*1664'];
-  if (!size || typeof size !== 'string') return '1664*928';
-  const s = String(size).trim().toLowerCase().replace(/x/g, '*');
-  const match = s.match(/^(\d+)\s*\*\s*(\d+)$/);
-  if (!match) return '1664*928';
-  const w = parseInt(match[1], 10);
-  const h = parseInt(match[2], 10);
-  if (!w || !h) return '1664*928';
-  const ratio = w / h;
-  if (ratio >= 1.3) return '1664*928';   // 16:9
-  return '928*1664';                      // 9:16
-}
-
-/**
- * 将参考图值解析为适合传给外部 API 的形式：
- * - 本地相对路径（如 "characters/ig_xxx.jpg"）→ 读文件转 base64 data URL
- * - localhost URL → 从 storageLocalPath 读文件转 base64 data URL
- * - 公网 URL（非 localhost）→ 直接原样返回
- *
- * 调用方应优先传 local_path 而非 image_url，
- * 以避免外部存储链接过期或第三方 API 无法访问的问题。
- */
-function resolveImageRef(value, filesBaseUrl, storageLocalPath) {
-  if (!value || !String(value).trim()) return null;
-  const s = String(value).trim();
-  const baseUrl = (filesBaseUrl || '').replace(/\/$/, '');
-  // isLocalhost: 只要 URL 本身或配置的 base_url 含 localhost/127，都视为本地
-  const isLocalhostUrl = /localhost|127\.0\.0\.1/i.test(s);
-  const isLocalhostBase = baseUrl && /localhost|127\.0\.0\.1/i.test(baseUrl);
-  const isLocalhost = isLocalhostUrl || isLocalhostBase;
-
-  function toPublicUrl(v) {
-    if (!v || !String(v).trim()) return null;
-    const sv = String(v).trim();
-    if (sv.startsWith('http://') || sv.startsWith('https://')) return sv;
-    if (baseUrl) return baseUrl + '/' + sv.replace(/^\//, '');
-    return sv;
-  }
-
-  let relPath = null;
-  if (s.startsWith('http://') || s.startsWith('https://')) {
-    if (!isLocalhost || !storageLocalPath) return s;
-    // 从 URL 中提取 /static/ 之后的相对路径；或去掉 baseUrl 前缀
-    const afterStatic = s.split('/static/')[1]
-      || (baseUrl ? s.replace(baseUrl + '/', '').replace(baseUrl, '') : null)
-      || s.replace(/^https?:\/\/[^/]+\//, '');
-    if (afterStatic) relPath = afterStatic.replace(/^\//, '');
-    else return s;
-  } else if (storageLocalPath) {
-    relPath = s.replace(/^\//, '');
-  }
-  if (!relPath) return toPublicUrl(s);
-  const filePath = path.join(storageLocalPath, relPath);
-  try {
-    if (!fs.existsSync(filePath)) return toPublicUrl(s);
-    const buf = fs.readFileSync(filePath);
-    const ext = path.extname(filePath).toLowerCase();
-    const mime = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.bmp': 'image/bmp' }[ext] || 'image/png';
-    return 'data:' + mime + ';base64,' + buf.toString('base64');
-  } catch (e) {
-    return toPublicUrl(s);
-  }
-}
-
-/**
- * 将 resolveImageRef 的输出转为 { buffer, filename, mimeType }，供 multipart form-data 使用。
- * 支持 base64 data URL 和 HTTP(S) URL 两种情况。
- */
-async function bufferFromRef(ref, log) {
-  const s = String(ref).trim();
-  // base64 data URL
-  if (s.startsWith('data:')) {
-    const match = s.match(/^data:([^;]+);base64,(.+)$/);
-    if (!match) throw new Error('Invalid base64 data URL');
-    const mimeType = match[1];
-    const ext = mimeType.split('/')[1] || 'png';
-    const buffer = Buffer.from(match[2], 'base64');
-    return { buffer, filename: `ref_${crypto.randomBytes(4).toString('hex')}.${ext}`, mimeType };
-  }
-  // HTTP(S) URL → 下载
-  if (s.startsWith('http://') || s.startsWith('https://')) {
-    return new Promise((resolve, reject) => {
-      const parsed = new URL(s);
-      const mod = parsed.protocol === 'https:' ? https : http;
-      const req = mod.get(s, { timeout: 60000 }, (res) => {
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          reject(new Error(`Download ref failed: ${res.statusCode}`));
-          return;
-        }
-        const chunks = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => {
-          const buffer = Buffer.concat(chunks);
-          const contentType = res.headers['content-type'] || 'image/png';
-          const ext = contentType.split('/')[1] || 'png';
-          resolve({ buffer, filename: `ref_${crypto.randomBytes(4).toString('hex')}.${ext}`, mimeType: contentType });
-        });
-      });
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('Download ref timeout')); });
-    });
-  }
-  // 本地路径 → readFile
-  try {
-    if (fs.existsSync(s)) {
-      const buf = fs.readFileSync(s);
-      const ext = path.extname(s).toLowerCase();
-      const mime = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' }[ext] || 'image/png';
-      return { buffer: buf, filename: `ref_${crypto.randomBytes(4).toString('hex')}${ext || '.png'}`, mimeType: mime };
-    }
-  } catch (_) {}
-  throw new Error(`Cannot resolve ref to buffer: ${s.slice(0, 80)}`);
-}
-
-/**
- * 发送 multipart/form-data POST 请求（用于 OpenAI /images/edits 等原生端点）
- */
-function postMultipartWithTimeout(url, fields, files, bearerToken, timeoutMs = 600000) {
-  return new Promise((resolve, reject) => {
-    const boundary = '----FormBoundary' + crypto.randomBytes(16).toString('hex');
-    const CRLF = '\r\n';
-    const parts = [];
-
-    // 文本字段
-    for (const [name, value] of Object.entries(fields)) {
-      if (value == null) continue;
-      parts.push(Buffer.from(
-        `--${boundary}${CRLF}Content-Disposition: form-data; name="${name}"${CRLF}${CRLF}${String(value)}${CRLF}`
-      ));
-    }
-
-    // 文件字段
-    for (const { name, buffer, filename, mimeType } of files) {
-      parts.push(Buffer.from(
-        `--${boundary}${CRLF}Content-Disposition: form-data; name="${name}"; filename="${filename}"${CRLF}Content-Type: ${mimeType}${CRLF}${CRLF}`
-      ));
-      parts.push(buffer);
-      parts.push(Buffer.from(CRLF));
-    }
-
-    // 结束边界
-    parts.push(Buffer.from(`--${boundary}--${CRLF}`));
-
-    const body = Buffer.concat(parts);
-    const parsed = new URL(url);
-    const mod = parsed.protocol === 'https:' ? https : http;
-
-    const headers = {
-      'Content-Type': `multipart/form-data; boundary=${boundary}`,
-      'Content-Length': String(body.length),
-      Authorization: 'Bearer ' + (bearerToken || ''),
-    };
-
-    const options = {
-      hostname: parsed.hostname,
-      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-      path: parsed.pathname + parsed.search,
-      method: 'POST',
-      headers,
-    };
-
-    const req = mod.request(options, (res) => {
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => {
-        clearTimeout(timer);
-        const raw = Buffer.concat(chunks).toString('utf-8');
-        resolve({ statusCode: res.statusCode || 0, raw });
-      });
-      res.on('error', (e) => {
-        clearTimeout(timer);
-        reject(e);
-      });
-    });
-
-    const timer = setTimeout(() => {
-      req.destroy();
-      reject(new Error(`Multipart HTTP timeout after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    req.on('error', (e) => {
-      clearTimeout(timer);
-      reject(e);
-    });
-    req.write(body);
-    req.end();
-  });
-}
-
-// 通义万象：支持参考图（角色/场景），content 为 [text, image, image, ...]；本地调试时参考图可转 base64
-// 通义千问 qwen-image：仅支持 content 中一个 text，用同步接口，parameters 不含 stream/enable_interleave
-async function callDashScopeImageApi(config, log, opts) {
-  const { prompt, model, size, image_gen_id, reference_image_urls, files_base_url, storage_local_path, negative_prompt } = opts;
-  const base = (config.base_url || '').replace(/\/$/, '');
-  const url = base + (config.endpoint || '/api/v1/services/aigc/multimodal-generation/generation');
-  if (!url.includes('dashscope')) {
-    return { error: '通义万象 base_url 需为 https://dashscope.aliyuncs.com' };
-  }
-  const isQwenImage = isQwenImageProvider(config, model);
-
-  if (isQwenImage) {
-    // 千问文生图：仅支持单条 text，长度不超过 800 字符；同步接口，无 stream/enable_interleave
-    const text = (prompt || '').toString().trim().slice(0, 800);
-    const body = {
-      model: model || 'qwen-image-max',
-      input: {
-        messages: [{ role: 'user', content: [{ text }] }],
-      },
-      parameters: {
-        prompt_extend: true,
-        watermark: false,
-        size: qwenImageSize(size),
-      },
-    };
-    if (negative_prompt && String(negative_prompt).trim()) {
-      body.parameters.negative_prompt = String(negative_prompt).trim().slice(0, 500);
-    }
-    log.info('Image API request (Qwen-Image sync)', { url: url.slice(0, 70), model: body.model, image_gen_id });
-    const qwenHeaders = {
-      'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + (config.api_key || ''),
-    };
-    let raw;
-    let httpStatus;
-    try {
-      const out = await postJSONWithTimeout(url, qwenHeaders, body, IMAGE_HTTP_TIMEOUT_MS);
-      httpStatus = out.statusCode;
-      raw = out.raw;
-    } catch (e) {
-      log.error('Qwen-Image network error', { image_gen_id, error: e.message });
-      return { error: '图片生成网络请求失败: ' + e.message };
-    }
-    if (httpStatus < 200 || httpStatus >= 300) {
-      let errMsg = '图片生成请求失败: ' + httpStatus;
-      try {
-        const errJson = JSON.parse(raw);
-        if (errJson.message) errMsg += ' - ' + errJson.message;
-        else if (errJson.code) errMsg += ' - ' + errJson.code;
-      } catch (_) {
-        if (raw && raw.length) errMsg += ' - ' + raw.slice(0, 200);
-      }
-      log.error('Qwen-Image create failed', { status: httpStatus, body: raw.slice(0, 300), image_gen_id });
-      return { error: errMsg };
-    }
-    try {
-      const data = JSON.parse(raw);
-      if (data.code) {
-        log.warn('Qwen-Image response error', { code: data.code, message: data.message, image_gen_id });
-        return { error: data.message || data.code || '通义千问接口错误' };
-      }
-      const imageUrl = parseDashScopeImageUrl(data);
-      if (imageUrl) {
-        log.info('Qwen-Image image (sync)', { image_gen_id, has_image_url: true });
-        return { image_url: imageUrl };
-      }
-      return { error: '未返回图片地址' };
-    } catch (e) {
-      log.warn('Qwen-Image parse error', { image_gen_id, error: e.message, raw_preview: raw.slice(0, 300) });
-      return { error: '通义千问返回格式异常' };
-    }
-  }
-
-  const refs = Array.isArray(reference_image_urls) ? reference_image_urls.filter(Boolean) : [];
-  const content = [{ text: prompt || '' }];
-  const resolvedRefs = [];
-  for (const ref of refs.slice(0, 10)) {
-    const img = resolveImageRef(ref, files_base_url, storage_local_path);
-    if (img) {
-      content.push({ image: img });
-      resolvedRefs.push(img.startsWith('data:') ? '(base64)' : img);
-    }
-  }
-  log.info('reference_image_urls 完整路径（imageClient 入参及解析后）', {
-    image_gen_id,
-    raw_reference_image_urls: reference_image_urls || [],
-    resolved_for_api: resolvedRefs,
-  });
-
-  const hasRefs = content.length > 1;
-  const stream = !hasRefs; // enable_interleave=false 时必须 stream=false
-  const body = {
-    model: model || 'wan2.6-image',
-    input: {
-      messages: [{ role: 'user', content }],
-    },
-    parameters: {
-      prompt_extend: true,
-      watermark: false,
-      n: 1,
-      enable_interleave: !hasRefs,
-      size: dashScopeSize(size),
-      stream,
-      // 多张参考图时注入 negative_prompt，防止生成分割/拼贴布局
-      ...(hasRefs ? { negative_prompt: negative_prompt || ANTI_SPLIT_NEGATIVE_PROMPT } : (negative_prompt ? { negative_prompt } : {})),
-    },
-  };
-  const contentSummary = content.map((p) => (p.text != null ? 'text' : p.image && p.image.startsWith('data:') ? 'image(base64)' : 'image(url)'));
-  log.info('Image API request (DashScope)', {
-    url: url.slice(0, 70),
-    model: body.model,
-    image_gen_id,
-    reference_count: refs.length,
-    enable_interleave: body.parameters.enable_interleave,
-    stream: body.parameters.stream,
-    content_parts: contentSummary,
-  });
-  const headers = {
-    'Content-Type': 'application/json',
-    Authorization: 'Bearer ' + (config.api_key || ''),
-  };
-  if (stream) headers['X-DashScope-Sse'] = 'enable';
-  let raw;
-  let httpStatus;
-  try {
-    const out = await postJSONWithTimeout(url, headers, body, IMAGE_HTTP_TIMEOUT_MS);
-    httpStatus = out.statusCode;
-    raw = out.raw;
-  } catch (e) {
-    log.error('DashScope network error', { image_gen_id, error: e.message });
-    return { error: '图片生成网络请求失败: ' + e.message };
-  }
-  if (httpStatus < 200 || httpStatus >= 300) {
-    let errMsg = '图片生成请求失败: ' + httpStatus;
-    try {
-      const errJson = JSON.parse(raw);
-      if (errJson.message) errMsg += ' - ' + errJson.message;
-      else if (errJson.code) errMsg += ' - ' + errJson.code;
-    } catch (_) {
-      if (raw && raw.length) errMsg += ' - ' + raw.slice(0, 200);
-    }
-    log.error('DashScope create failed', { status: httpStatus, body: raw.slice(0, 300), image_gen_id });
-    return { error: errMsg };
-  }
-
-  if (!stream) {
-    // 非流式：单次 JSON 响应
-    try {
-      const data = JSON.parse(raw);
-      if (data.code) {
-        log.warn('DashScope response error', { code: data.code, message: data.message, image_gen_id });
-        return { error: data.message || data.code || '通义万象接口错误' };
-      }
-      const imageUrl = parseDashScopeImageUrl(data);
-      if (imageUrl) {
-        log.info('DashScope image (sync)', { image_gen_id, has_image_url: true });
-        return { image_url: imageUrl };
-      }
-      log.warn('DashScope sync no image in response', {
-        image_gen_id,
-        output_keys: data.output ? Object.keys(data.output) : [],
-        raw_preview: raw.slice(0, 500),
-      });
-      return { error: '未返回图片地址' };
-    } catch (e) {
-      log.warn('DashScope sync parse error', { image_gen_id, error: e.message, raw_preview: raw.slice(0, 300) });
-      return { error: '通义万象返回格式异常' };
-    }
-  }
-
-  // 流式响应：可能是纯 JSON 行，或 SSE 格式 "data: {...}\n"
-  let lastImageUrl = null;
-  const lines = raw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-  let firstChunkKeys = null;
-  for (const line of lines) {
-    let jsonStr = line;
-    if (line.startsWith('data:')) {
-      jsonStr = line.slice(5).trim();
-      if (!jsonStr || jsonStr === '[DONE]') continue;
-    }
-    try {
-      const data = JSON.parse(jsonStr);
-      if (data.code) {
-        log.warn('DashScope stream chunk error', { code: data.code, message: data.message, image_gen_id });
-        return { error: data.message || data.code || '通义万象接口错误' };
-      }
-      if (firstChunkKeys == null && data.output) {
-        const oc = data.output.choices?.[0];
-        firstChunkKeys = {
-          output_keys: Object.keys(data.output),
-          choice_message_keys: oc?.message ? Object.keys(oc.message) : [],
-          content_types: Array.isArray(oc?.message?.content) ? oc.message.content.map((p) => p && p.type) : [],
-        };
-      }
-      const urlFromChunk = parseDashScopeImageUrl(data);
-      if (urlFromChunk) lastImageUrl = urlFromChunk;
-    } catch (_) {
-      // 忽略非 JSON 行
-    }
-  }
-  if (lastImageUrl) {
-    log.info('DashScope image (stream)', { image_gen_id, has_image_url: true });
-    return { image_url: lastImageUrl };
-  }
-  if (lines.length > 0) {
-    try {
-      const firstLine = lines[0].startsWith('data:') ? lines[0].slice(5).trim() : lines[0];
-      const first = JSON.parse(firstLine);
-      if (first.code) return { error: first.message || first.code || '通义万象接口错误' };
-    } catch (_) {}
-  }
-  log.warn('DashScope stream no image in response', {
-    image_gen_id,
-    line_count: lines.length,
-    first_chunk: firstChunkKeys,
-    raw_preview: raw.slice(0, 400),
-  });
-  return { error: '未返回图片地址' };
-}
-
-// 图床上传：复用 uploadService 的共享实现
-const { uploadToImageProxy } = require('./uploadService');
 
 /**
  * 从 image_proxy_cache 表查询已缓存的图床 URL。
@@ -1209,39 +143,6 @@ function deleteProxyCache(db, cacheKey) {
   try { db.prepare('DELETE FROM image_proxy_cache WHERE cache_key = ?').run(cacheKey); } catch (_) {}
 }
 
-/** 探测图床 URL 是否仍可访问（远端拉取失败时视为失效） */
-async function isProxyUrlAlive(url, timeoutMs = 8000) {
-  if (!url || !/^https?:\/\//i.test(url)) return false;
-  const opts = { method: 'HEAD', signal: AbortSignal.timeout(timeoutMs), redirect: 'follow' };
-  try {
-    let res = await fetch(url, opts);
-    if (res.ok) return true;
-    if (res.status === 405 || res.status === 501) {
-      res = await fetch(url, {
-        method: 'GET',
-        headers: { Range: 'bytes=0-0' },
-        signal: AbortSignal.timeout(timeoutMs),
-        redirect: 'follow',
-      });
-    }
-    return res.ok || res.status === 206;
-  } catch (_) {
-    return false;
-  }
-}
-
-/**
- * 读取图床缓存并在使用前校验 URL 仍有效；404/超时等则删缓存并返回 null 以触发重新上传。
- */
-async function getProxyCacheValidated(db, cacheKey, log, tag) {
-  const url = getProxyCache(db, cacheKey);
-  if (!url) return null;
-  if (await isProxyUrlAlive(url)) return url;
-  deleteProxyCache(db, cacheKey);
-  log?.warn?.('[图床缓存] URL 已失效，将重新上传', { tag, cache_key: cacheKey, url_head: url.slice(0, 80) });
-  return null;
-}
-
 /** 写入 image_proxy_cache 缓存记录 */
 function setProxyCache(db, cacheKey, proxyUrl) {
   try {
@@ -1251,251 +152,470 @@ function setProxyCache(db, cacheKey, proxyUrl) {
   } catch (_) {}
 }
 
-/** 根据 ref 字符串计算缓存 key：本地路径直接使用；data URL 取 buffer sha256 前 16 字节的 hex */
-function buildCacheKey(ref, imageBuffer) {
-  if (!ref.startsWith('data:')) return ref;
-  return 'sha256:' + crypto.createHash('sha256').update(imageBuffer).digest('hex').slice(0, 32);
+// ─────────────────────────────────────────────────────────────────────────────
+// OpenAI 官方 gpt-image-2（云端图像通道）
+//   文生图：POST {base_url}/images/generations（JSON）
+//   带参考图（分镜/角色一致性）：POST {base_url}/images/edits（multipart/form-data，image[]）
+// 返回契约与 ComfyUI 图像通道一致：成功 { image_url }（data URL 或 http URL），失败 { error }。
+// 落盘/写库由 imageService Step5 的 uploadService.downloadImageToLocal 统一处理，
+// 本函数不自己写文件、不直接更新数据库（避免 base64 进库或双重落盘）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 项目尺寸/画幅 → OpenAI gpt-image-2 支持的尺寸。
+ * 9:16 → 1024x1536、16:9 → 1536x1024、1:1 → 1024x1024；
+ * 显式给了合法尺寸（1024x1024 / 1024x1536 / 1536x1024）就直接沿用；
+ * 其它：按长边就近（竖 → 1024x1536，横 → 1536x1024，无法解析 → 1536x1024）。
+ */
+function mapOpenAIImageSize(size) {
+  const raw = String(size == null ? '' : size)
+    .trim()
+    .toLowerCase()
+    .replace(/[×*]/g, 'x')
+    .replace(/\s+/g, '');
+  if (!raw) return '1024x1024';
+  if (OPENAI_IMAGE_SIZES.includes(raw)) return raw;
+
+  const px = raw.match(/^(\d+)x(\d+)$/);
+  if (px) {
+    const w = Number(px[1]);
+    const h = Number(px[2]);
+    if (!w || !h) return '1536x1024';
+    if (w === h) return '1024x1024';
+    return h > w ? '1024x1536' : '1536x1024';
+  }
+
+  const ratio = raw.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
+  if (ratio) {
+    const w = Number(ratio[1]);
+    const h = Number(ratio[2]);
+    if (!w || !h) return '1536x1024';
+    if (Math.abs(w - h) < 1e-6) return '1024x1024';
+    return h > w ? '1024x1536' : '1536x1024';
+  }
+
+  return '1536x1024';
+}
+
+/** OpenAI 图像 base_url：默认官方地址，去掉尾部斜杠，并容忍用户把完整端点写进 base_url */
+/**
+ * 归一化图像通道的 base_url：
+ *   · 去掉末尾斜杠；若用户把完整端点（/images/generations|edits）填进来，也一并剥掉
+ *   · **没写版本前缀时自动补 `/v1`** —— 公司内部网关常见写法是 `http://gw:port` 或 `http://gw:port/v1`，
+ *     少了 /v1 会 404 到网关的静态路由上，排查起来很费时间。
+ *     只要路径里已经出现 `/vN`（v1/v2/…）就原样保留（有的网关是 /api/v1、/openai/v1）。
+ */
+function resolveOpenAIImageBaseUrl(config) {
+  let base = String(config?.base_url || '').trim() || OPENAI_IMAGE_DEFAULT_BASE_URL;
+  base = base.replace(/\/+$/, '');
+  base = base.replace(/\/images\/(generations|edits)$/i, '');
+  base = base.replace(/\/+$/, '');
+  let pathPart = '';
+  try { pathPart = new URL(base).pathname || ''; } catch (_) { pathPart = base; }
+  if (!/\/v\d+(\/|$)/i.test(pathPart)) base += '/v1';
+  return base.replace(/\/+$/, '');
+}
+
+/** 判断参考图是否为本机资源（相对路径 / /static/... / 127.0.0.1 等本机 http 地址 / data URL） */
+function isLocalImageRef(ref) {
+  const s = String(ref || '').trim();
+  if (!s) return false;
+  if (/^data:/i.test(s)) return true;
+  if (/^https?:\/\//i.test(s)) {
+    try {
+      const host = new URL(s).hostname.toLowerCase();
+      return host === '127.0.0.1' || host === 'localhost' || host === '0.0.0.0' || host === '::1' || host === '[::1]';
+    } catch (_) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** 把参考图路径规范成 storage 内的相对路径（/static/xxx、本机 http URL 均还原为 xxx） */
+function normalizeLocalRefPath(ref) {
+  let s = String(ref || '').trim().replace(/\\/g, '/');
+  if (!s) return '';
+  s = s.replace(/^https?:\/\/[^/]+/i, '');
+  s = s.replace(/^\/?static\//i, '');
+  s = s.replace(/^\/+/, '');
+  return s.split('?')[0].split('#')[0];
+}
+
+/** 从 storage_local_path（或绝对路径）读取本机参考图；读不到返回 null */
+function readLocalImageBuffer(ref, storageLocalPath) {
+  const raw = String(ref || '').trim().replace(/\\/g, '/');
+  const rel = normalizeLocalRefPath(raw);
+  if (!rel) return null;
+  const candidates = [];
+  if (path.isAbsolute(raw)) candidates.push(raw);
+  const root = storageLocalPath ? String(storageLocalPath) : '';
+  if (root) {
+    candidates.push(path.join(root, rel));
+    candidates.push(path.join(root, '..', rel));
+  }
+  candidates.push(path.join(process.cwd(), rel));
+  for (const candidate of candidates) {
+    try {
+      if (candidate && fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        return fs.readFileSync(candidate);
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+function guessImageMime(refOrName) {
+  const s = String(refOrName || '').toLowerCase();
+  if (s.includes('.jpg') || s.includes('.jpeg') || s.includes('image/jpeg')) return 'image/jpeg';
+  if (s.includes('.webp') || s.includes('image/webp')) return 'image/webp';
+  if (s.includes('.gif') || s.includes('image/gif')) return 'image/gif';
+  return 'image/png';
+}
+
+function extFromMime(mime) {
+  const sub = String(mime || '').split('/')[1] || 'png';
+  const clean = sub.split(';')[0].trim().replace(/[^a-z0-9]/gi, '') || 'png';
+  return clean === 'jpeg' ? 'jpg' : clean;
 }
 
 /**
- * 调用 Google Gemini 图片生成 API（generateContent 接口，返回 base64 inlineData）
- * 支持模型：gemini-2.5-flash-image / gemini-2.5-flash-image-preview /
- *          gemini-3.1-flash-image-preview / gemini-3-pro-image-preview 等
- * 参考图先查本地缓存表，未命中则上传到中转图床并缓存，再通过 fileData.fileUri 传给 Gemini。
- * 避免 inlineData base64 大 payload 触发 503 memory overload。
+ * 把一张参考图准备成 multipart 可上传的 Blob。
+ * - 本机相对路径 / /static/... / 本机 http：从 storage_local_path 读文件；读不到记 warn 跳过
+ * - 公网 URL：下载后转 Blob
+ * - data URL：解 base64
+ * @returns {Promise<{blob: Blob, filename: string}|null>}
  */
-async function callGeminiImageApi(db, config, log, opts) {
-  const { prompt, model, size, image_gen_id, reference_image_urls, files_base_url, storage_local_path, system_prompt } = opts;
-  const apiKey = config.api_key || '';
-  const base = (config.base_url || 'https://generativelanguage.googleapis.com').replace(/\/$/, '');
-  const modelName = model || 'gemini-2.5-flash-image';
-  const aspectRatio = geminiAspectRatio(size);
-  const geminiImageConfig = buildGeminiImageConfig(aspectRatio, modelName, size);
-  const tStart = Date.now();
-  const elapsed = () => `${Date.now() - tStart}ms`;
+async function buildOpenAIRefBlob(ref, storageLocalPath, log) {
+  const s = String(ref || '').trim();
+  if (!s) return null;
 
-  log.info('[Gemini图生] ▶ 开始', {
-    image_gen_id,
-    model: modelName,
-    imageConfig: geminiImageConfig,
-    base_url: base.slice(0, 60),
-    prompt_len: (prompt || '').length,
-    raw_ref_count: Array.isArray(reference_image_urls) ? reference_image_urls.length : 0,
-  });
-
-  // 读取全局配置，判断参考图传输方式
-  // image_proxy.use_for_gemini = false（默认）→ 直接 inlineData base64
-  // image_proxy.use_for_gemini = true          → 上传图床后用 fileData.fileUri
-  const globalCfg = (() => { try { return require('../config').loadConfig(); } catch (_) { return {}; } })();
-  const useImageProxy = !!(globalCfg?.image_proxy?.use_for_gemini);
-  log.info('[Gemini图生] 参考图传输方式', { image_gen_id, use_image_proxy: useImageProxy });
-
-  const rawRefs = Array.isArray(reference_image_urls) ? reference_image_urls.filter(Boolean) : [];
-  const MAX_GEMINI_REF_IMAGES = 4; // 场景 + 角色/道具等合计最多 4 张（由 imageService 组装顺序决定）
-
-  // 解析 system_prompt 中的每张参考图标签（格式: "Image N: description..."）
-  // Gemini 多模态的正确输入结构：[文字说明] → [图片] → [文字说明] → [图片] → [生成指令]
-  // 即：每张参考图紧跟其说明文字，最后才是生成任务
-  const refLabelMap = {}; // index(0-based) → label text
-  if (system_prompt) {
-    system_prompt.split('\n').forEach(line => {
-      const m = line.match(/^Image\s+(\d+):\s*(.+)/i);
-      if (m) refLabelMap[parseInt(m[1], 10) - 1] = m[2].trim(); // 转为 0-based index
-    });
+  if (/^data:/i.test(s)) {
+    const m = s.match(/^data:(image\/[\w.+-]+);base64,(.+)$/i);
+    if (!m) {
+      log.warn('[OpenAI图生] 参考图 data URL 无法解析，跳过该张', { ref: s.slice(0, 60) });
+      return null;
+    }
+    const mime = m[1];
+    return { blob: new Blob([Buffer.from(m[2], 'base64')], { type: mime }), filename: `ref.${extFromMime(mime)}` };
   }
 
-  // 读取所有参考图（buffer + mimeType）
-  const refImageParts = []; // { label, imagePart }
-  const TOTAL_REF_LIMIT_BYTES = 10 * 1024 * 1024; // inlineData 模式总大小上限 10MB
-  let totalRefSizeBytes = 0;
-  for (let i = 0; i < rawRefs.slice(0, MAX_GEMINI_REF_IMAGES).length; i++) {
-    const ref = rawRefs[i];
-    log.info('[Gemini图生] 参考图 读取中', { image_gen_id, ref_index: i, ref: String(ref).slice(0, 80), elapsed: elapsed() });
-    const tRead = Date.now();
-
-    const resolved = resolveImageRef(ref, files_base_url, storage_local_path);
-    if (!resolved) {
-      log.warn('[Gemini图生] 参考图 无法解析，跳过', { image_gen_id, ref_index: i, ref: String(ref).slice(0, 80) });
-      continue;
+  if (isLocalImageRef(s)) {
+    const buf = readLocalImageBuffer(s, storageLocalPath);
+    if (!buf) {
+      log.warn('[OpenAI图生] 参考图本地文件读不到，跳过该张', {
+        ref: s.slice(0, 120),
+        storage_local_path: storageLocalPath || '(空)',
+      });
+      return null;
     }
-
-    let imageBuffer, mimeType;
-    if (resolved.startsWith('data:')) {
-      const m = resolved.match(/^data:([\w/]+);base64,(.+)$/);
-      if (!m) { log.warn('[Gemini图生] 参考图 data URL 格式异常，跳过', { image_gen_id, ref_index: i }); continue; }
-      mimeType = m[1];
-      imageBuffer = Buffer.from(m[2], 'base64');
-    } else {
-      try {
-        const imgRes = await fetch(resolved, { method: 'GET' });
-        if (!imgRes.ok) {
-          log.warn('[Gemini图生] 参考图 HTTP 读取失败，跳过', { image_gen_id, ref_index: i, status: imgRes.status, url: resolved.slice(0, 80) });
-          continue;
-        }
-        imageBuffer = Buffer.from(await imgRes.arrayBuffer());
-        mimeType = (imgRes.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
-      } catch (fetchErr) {
-        log.warn('[Gemini图生] 参考图 读取异常，跳过', { image_gen_id, ref_index: i, err: fetchErr.message });
-        continue;
-      }
-    }
-
-    log.info('[Gemini图生] 参考图 读取完成', {
-      image_gen_id, ref_index: i, mime: mimeType,
-      size_kb: Math.round(imageBuffer.length / 1024),
-      read_ms: Date.now() - tRead, elapsed: elapsed(),
-    });
-
-    // 超过 10MB 直接跳过（Gemini 硬限制）
-    if (imageBuffer.length > 10 * 1024 * 1024) {
-      log.warn('[Gemini图生] 参考图 超过10MB，跳过', { image_gen_id, ref_index: i, size_mb: (imageBuffer.length / 1024 / 1024).toFixed(1) });
-      continue;
-    }
-
-    // ① 单张超过 2MB 时用 sharp 压缩到 2MB 以内
-    if (imageBuffer.length > 2 * 1024 * 1024) {
-      const compressed = await compressImageBuffer(imageBuffer, mimeType, 2048, log);
-      imageBuffer = compressed.buffer;
-      mimeType = compressed.mimeType;
-    }
-
-    // ② 总大小预算控制（inlineData 模式）：所有参考图合计不超过 10MB
-    if (!useImageProxy) {
-      const remaining = TOTAL_REF_LIMIT_BYTES - totalRefSizeBytes;
-      if (imageBuffer.length > remaining) {
-        const targetKB = Math.max(200, Math.floor(remaining / 1024));
-        log.info('[Gemini图生] 参考图 总大小超预算，追加压缩', {
-          image_gen_id, ref_index: i,
-          current_kb: Math.round(imageBuffer.length / 1024),
-          budget_kb: Math.round(remaining / 1024),
-          target_kb: targetKB,
-        });
-        const compressed2 = await compressImageBuffer(imageBuffer, mimeType, targetKB, log);
-        imageBuffer = compressed2.buffer;
-        mimeType = compressed2.mimeType;
-        if (imageBuffer.length > remaining) {
-          log.warn('[Gemini图生] 参考图 追加压缩后仍超总预算，跳过', { image_gen_id, ref_index: i });
-          continue;
-        }
-      }
-      totalRefSizeBytes += imageBuffer.length;
-    }
-
-    let imagePart;
-    if (useImageProxy) {
-      const cacheKey = buildCacheKey(ref, imageBuffer);
-      let fileUri = await getProxyCacheValidated(db, cacheKey, log, `gemini_ig${image_gen_id}_ref${i}`);
-      if (fileUri) {
-        log.info('[Gemini图生] 参考图 缓存命中（图床）', { image_gen_id, ref_index: i });
-      } else {
-        log.info('[Gemini图生] 参考图 缓存未命中，上传图床 →', { image_gen_id, ref_index: i, elapsed: elapsed() });
-        fileUri = await uploadToImageProxy(imageBuffer, mimeType, log, image_gen_id);
-        if (fileUri) {
-          setProxyCache(db, cacheKey, fileUri);
-        } else {
-          log.warn('[Gemini图生] 参考图 上传图床失败，该参考图将跳过', { image_gen_id, ref_index: i, elapsed: elapsed() });
-          continue;
-        }
-      }
-      imagePart = { fileData: { fileUri, mimeType } };
-    } else {
-      imagePart = { inlineData: { mimeType, data: imageBuffer.toString('base64') } };
-    }
-
-    refImageParts.push({ label: refLabelMap[i] || null, imagePart });
-    log.info('[Gemini图生] 参考图 已处理', { image_gen_id, ref_index: i, has_label: !!refLabelMap[i] });
+    const mime = guessImageMime(s);
+    return { blob: new Blob([buf], { type: mime }), filename: `ref.${extFromMime(mime)}` };
   }
 
-  // 构建 parts：正确的 Gemini 多模态输入顺序
-  // [参考说明] → [参考图1] → [参考图2] → ... → [生成指令+主提示词]
-  // 这与 Gemini 的 "文字描述紧接对应内容" 原则一致，避免模型混淆
-  const parts = [];
-  if (refImageParts.length > 0) {
-    parts.push({ text: 'The following are visual reference images. Use them ONLY to maintain character appearance and scene environment consistency. Do NOT reproduce their layout or format.' });
-    for (let i = 0; i < refImageParts.length; i++) {
-      const { label, imagePart } = refImageParts[i];
-      parts.push({ text: label ? `Reference ${i + 1}: ${label}` : `Reference ${i + 1}:` });
-      parts.push(imagePart);
-    }
-    // 生成指令放在所有参考图之后，清晰分隔
-    parts.push({ text: `Generate ONE single cinematic storyboard frame (do NOT create a grid or multi-panel layout):\n\n${prompt || ''}` });
-  } else {
-    // 无参考图：直接用 prompt
-    parts.push({ text: prompt || '' });
-  }
-
-  log.info('[Gemini图生] 参考图处理完毕，准备请求 Gemini API', {
-    image_gen_id, parts_count: parts.length, ref_parts: refImageParts.length, elapsed: elapsed(),
-  });
-
-  // 宽高比必须在 imageConfig 内（与 Google 官方 REST 一致）；顶层 aspectRatio 会被忽略。
-  // 勿与 Imagen 的 imageGenerationConfig 混淆。
-  const body = {
-    contents: [{ role: 'user', parts }],
-    generationConfig: {
-      responseModalities: ['IMAGE', 'TEXT'],
-      numberOfImages: 1,
-      imageConfig: geminiImageConfig,
-    },
-  };
-
-  const url = `${base}/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  log.info('[Gemini图生] → 发送请求', { image_gen_id, model: modelName, url: url.replace(/key=[^&]+/, 'key=***').slice(0, 120), elapsed: elapsed() });
-
-  const tReq = Date.now();
-  let geminiStatus;
-  let raw;
   try {
-    const out = await postJSONWithTimeout(
-      url,
-      { 'Content-Type': 'application/json' },
-      body,
-      IMAGE_HTTP_TIMEOUT_MS,
-    );
-    geminiStatus = out.statusCode;
-    raw = out.raw;
+    const res = await fetch(s);
+    if (!res.ok) {
+      log.warn('[OpenAI图生] 参考图下载失败，跳过该张', { ref: s.slice(0, 120), status: res.status });
+      return null;
+    }
+    const ab = await res.arrayBuffer();
+    const mime = String(res.headers?.get?.('content-type') || guessImageMime(s)).split(';')[0].trim() || 'image/png';
+    return { blob: new Blob([Buffer.from(ab)], { type: mime }), filename: `ref.${extFromMime(mime)}` };
   } catch (e) {
-    log.error('[Gemini图生] ✗ 网络错误', { image_gen_id, error: e.message, total_elapsed: elapsed() });
-    return { error: 'Gemini 图片生成网络请求失败: ' + e.message };
+    log.warn('[OpenAI图生] 参考图下载异常，跳过该张', { ref: s.slice(0, 120), error: e?.message || String(e) });
+    return null;
   }
-  log.info('[Gemini图生] ← 收到响应', { image_gen_id, status: geminiStatus, req_ms: Date.now() - tReq, elapsed: elapsed() });
+}
 
-  if (geminiStatus < 200 || geminiStatus >= 300) {
-    let errMsg = 'Gemini 图片生成请求失败: ' + geminiStatus;
+/** 解析 OpenAI 图像响应：data[0].b64_json（默认）或 data[0].url；解析不出返回 null */
+function extractOpenAIImage(text) {
+  let data = null;
+  try {
+    data = JSON.parse(String(text || ''));
+  } catch (_) {
+    return null;
+  }
+  const item = data && Array.isArray(data.data) ? data.data[0] : null;
+  if (item && typeof item.b64_json === 'string' && item.b64_json) {
+    return { image_url: `data:image/png;base64,${item.b64_json}`, kind: 'b64_json' };
+  }
+  if (item && typeof item.url === 'string' && item.url) {
+    return { image_url: item.url, kind: 'url' };
+  }
+  return null;
+}
+
+/** HTTP 状态 → 可读中文报错 */
+function describeOpenAIImageHttpError(status, text) {
+  const body = String(text || '');
+  const lower = body.toLowerCase();
+  if (status === 401 || status === 403) return 'OpenAI API Key 无效或无权限';
+  if (status === 429) return '额度不足/触发限流';
+  if (status === 400 && /moderation|content[_ ]?policy|safety|violat/.test(lower)) {
+    return '内容策略拒绝：OpenAI 判定提示词或参考图违反内容政策（moderation/content policy），请修改后重试';
+  }
+  let detail = '';
+  try {
+    const j = JSON.parse(body);
+    detail = j?.error?.message || j?.message || '';
+  } catch (_) {}
+  const tail = detail || body.slice(0, 300);
+  return `OpenAI gpt-image-2 请求失败（HTTP ${status}）${tail ? '：' + tail : ''}`;
+}
+
+/** 网络异常 → 可读中文报错（超时单独指出） */
+function describeOpenAIImageNetworkError(err) {
+  const name = err?.name || '';
+  const msg = String(err?.message || err || '');
+  if (name === 'AbortError' || /abort|timeout|timed out/i.test(msg)) {
+    return 'OpenAI gpt-image-2 请求超时（网络超时），请检查网络或代理后重试';
+  }
+  if (/fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|socket hang up|network/i.test(msg)) {
+    return `网络错误：无法连接 OpenAI（${msg.slice(0, 200)}）`;
+  }
+  return `OpenAI gpt-image-2 请求失败：${msg.slice(0, 300)}`;
+}
+
+/**
+ * 调用 OpenAI 官方 gpt-image-2：
+ * - 无参考图 → POST {base_url}/images/generations（JSON: model/prompt/size/n=1）
+ * - 有参考图 → POST {base_url}/images/edits（multipart/form-data: model/prompt/size/image[]，最多 8 张）
+ * @returns {Promise<{image_url?: string, error?: string}>}
+ */
+/**
+ * 仅对**网络层**失败重试（连接被重置 / DNS 抖动 / socket hang up）。
+ *
+ * 为什么需要：实测这个中转（aicost.me）的 /images/edits 会偶发 `fetch failed` —— 同一份请求
+ * 立刻重跑就成功（1024x1024 58s、1024x1536 48s）。云端接口偶发断连是常态，
+ * 一次失败就把整张角色图判死、还让用户以为配置错了，代价太大。
+ *
+ * 不重试的情况：超时（AbortError，整体预算已经等很久了）与 HTTP 4xx/5xx（那是接口/参数问题，
+ * 重试只会重复计费）。
+ */
+/** 轮询异步任务：文档里 gpt-image-2 可能返回 {task_id, status:"pending"|"processing"} */
+function extractOpenAITaskId(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  const id = obj.task_id || obj.taskId || (obj.data && (obj.data.task_id || obj.data.taskId)) || obj.id;
+  return id ? String(id) : null;
+}
+function extractOpenAIStatus(obj) {
+  if (!obj || typeof obj !== 'object') return '';
+  const s = obj.status || obj.state || (obj.data && obj.data.status) || '';
+  return String(s || '').trim().toLowerCase();
+}
+/**
+ * 异步任务轮询：`GET {base}/images/generations/{task_id}`（中转文档 §2.3/§3.3 明确写的就是这条，
+ * edits 的异步任务也用同一个查询路径）。拿到图片或失败即返回。
+ */
+async function pollOpenAIImageTask({ base, apiKey, taskId, safeLog, signal, imageGenId }) {
+  const url = `${base}/images/generations/${encodeURIComponent(taskId)}`;
+  safeLog.info('[OpenAI图生] 返回异步任务，开始轮询', { image_gen_id: imageGenId, task_id: taskId, url });
+  for (let attempt = 1; attempt <= OPENAI_IMAGE_POLL_ATTEMPTS; attempt++) {
+    await new Promise((r) => setTimeout(r, OPENAI_IMAGE_POLL_INTERVAL_MS));
+    let text = '';
     try {
-      const errJson = JSON.parse(raw);
-      const msg = errJson.error?.message || errJson.message;
-      if (msg) errMsg += ' - ' + String(msg).slice(0, 200);
-    } catch (_) {
-      if (raw) errMsg += ' - ' + raw.slice(0, 200);
+      const res = await fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${apiKey}` }, signal });
+      text = await res.text().catch(() => '');
+      if (res.ok) {
+        const img = extractOpenAIImage(text);
+        if (img) return { ok: true, image: img };
+        let obj = null;
+        try { obj = JSON.parse(text); } catch (_) {}
+        const st = extractOpenAIStatus(obj);
+        if (['failed', 'error', 'cancelled', 'canceled'].includes(st)) {
+          const msg = (obj && (obj.error?.message || obj.message || obj.error)) || text.slice(0, 200);
+          return { ok: false, error: `异步任务失败：${String(msg).slice(0, 200)}` };
+        }
+      } else if (res.status === 401 || res.status === 403) {
+        return { ok: false, error: 'OpenAI API Key 无效或无权限（异步查询被拒）' };
+      }
+      safeLog.info('[OpenAI图生] 异步任务未完成', { image_gen_id: imageGenId, attempt, task_id: taskId });
+    } catch (e) {
+      if (e?.name === 'AbortError') return { ok: false, error: 'OpenAI gpt-image-2 请求超时（等待异步任务超时）' };
+      safeLog.warn('[OpenAI图生] 异步查询失败，继续重试', { image_gen_id: imageGenId, attempt, error: String(e?.message || e).slice(0, 120) });
     }
-    log.error('[Gemini图生] ✗ API错误', { image_gen_id, status: geminiStatus, body: raw.slice(0, 400), total_elapsed: elapsed() });
-    return { error: errMsg };
+  }
+  return { ok: false, error: `异步任务轮询 ${OPENAI_IMAGE_POLL_ATTEMPTS} 次仍未拿到图片（task_id=${taskId}）` };
+}
+
+async function fetchOpenAIImageWithRetry(makeRequest, safeLog, { attempts = 3, url = '' } = {}) {
+  let lastErr;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await makeRequest();
+    } catch (e) {
+      lastErr = e;
+      const aborted = e?.name === 'AbortError';
+      if (aborted || attempt === attempts) throw e;
+      const wait = 1500 * attempt;
+      safeLog.warn('[OpenAI图生] 网络错误，准备重试', {
+        url, attempt, attempts, error: String(e?.message || e).slice(0, 120), wait_ms: wait,
+      });
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  throw lastErr;
+}
+
+async function callOpenAIGptImageApi(config, log, opts = {}) {
+  const safeLog = (log && typeof log.info === 'function')
+    ? log
+    : { info() {}, warn() {}, error() {} };
+
+  const apiKey = String(config?.api_key || '').trim();
+  if (!apiKey) {
+    return { error: 'OpenAI gpt-image-2 未配置 API Key，请在「AI 配置」中填写 OpenAI 的 API Key' };
   }
 
-  let data;
+  // 模型固定 gpt-image-2：配置里为空或不是它时，一律规范化并记 warn
+  const requestedModel = String(opts.model || '').trim();
+  const model = OPENAI_IMAGE_MODEL;
+  if (requestedModel !== OPENAI_IMAGE_MODEL) {
+    safeLog.warn('[OpenAI图生] 模型已规范化为 gpt-image-2', {
+      requested: requestedModel || '(空)',
+      used: OPENAI_IMAGE_MODEL,
+    });
+  }
+
+  const prompt = String(opts.prompt || '');
+  if (!prompt.trim()) {
+    return { error: 'OpenAI gpt-image-2 提示词为空，无法生成图片' };
+  }
+
+  const size = mapOpenAIImageSize(opts.size);
+  const base = resolveOpenAIImageBaseUrl(config);
+
+  const rawRefs = Array.isArray(opts.reference_image_urls)
+    ? opts.reference_image_urls.filter((r) => r != null && String(r).trim() !== '')
+    : [];
+  const refs = rawRefs.slice(0, OPENAI_IMAGE_MAX_REF_IMAGES);
+  if (rawRefs.length > OPENAI_IMAGE_MAX_REF_IMAGES) {
+    safeLog.warn('[OpenAI图生] 参考图数量超上限，已截断', {
+      total: rawRefs.length,
+      used: refs.length,
+      max: OPENAI_IMAGE_MAX_REF_IMAGES,
+    });
+  }
+  const hasRefs = refs.length > 0;
+  const url = base + (hasRefs ? '/images/edits' : '/images/generations');
+  // 中转文档（aicost.me/api-docs §1.2/§2.1/§3.1）把 quality / output_format / moderation 标为必填；
+  // 我们现在补齐，并且**显式要 png** —— 返回的 b64 我们按 image/png 落盘，若中转默认给 jpeg，
+  // 字节与后缀就会不一致。缺这些字段这次能过只是中转宽容，不该依赖。
+  const COMMON_FIELDS = { quality: 'auto', output_format: 'png', moderation: 'auto' };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OPENAI_IMAGE_TIMEOUT_MS);
+  let res;
   try {
-    data = JSON.parse(raw);
+    if (hasRefs) {
+      // 先把可用的参考图读成 Blob（读一次），重试时重建 FormData —— multipart body 不要复用
+      const blobs = [];
+      for (const ref of refs) {
+        const built = await buildOpenAIRefBlob(ref, opts.storage_local_path, safeLog);
+        if (built) blobs.push(built);
+      }
+      if (blobs.length === 0) {
+        clearTimeout(timer);
+        return { error: 'OpenAI gpt-image-2 参考图全部不可用（本地文件读不到或下载失败），无法调用 /images/edits' };
+      }
+      const buildForm = (fieldName = 'image[]') => {
+        const form = new FormData();
+        form.append('model', model);
+        form.append('prompt', prompt);
+        form.append('n', '1');
+        form.append('size', size);
+        for (const [k, v] of Object.entries(COMMON_FIELDS)) form.append(k, v);
+        for (const b of blobs) form.append(fieldName, b.blob, b.filename);
+        return form;
+      };
+      // multipart/form-data：不要手写 Content-Type，交给 FormData 生成 boundary
+      res = await fetchOpenAIImageWithRetry(() => fetch(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: buildForm('image[]'),
+        signal: controller.signal,
+      }), safeLog, { url });
+      // 文档 §3.1：服务端不接受 `image[]` 字段时，改用单数 `image` 重试一次
+      if (!res.ok) {
+        const probe = await res.clone().text().catch(() => '');
+        const looksLikeFieldIssue = /image(\[\])?/i.test(probe) || res.status === 400 || res.status === 422;
+        if (looksLikeFieldIssue) {
+          safeLog.warn('[OpenAI图生] image[] 未被接受，改用单数 image 重试一次', {
+            image_gen_id: opts.image_gen_id, status: res.status, body: probe.slice(0, 160),
+          });
+          res = await fetchOpenAIImageWithRetry(() => fetch(url, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${apiKey}` },
+            body: buildForm('image'),
+            signal: controller.signal,
+          }), safeLog, { url });
+        }
+      }
+    } else {
+      res = await fetchOpenAIImageWithRetry(() => fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model, prompt, size, n: 1, ...COMMON_FIELDS }),
+        signal: controller.signal,
+      }), safeLog, { url });
+    }
   } catch (e) {
-    log.error('[Gemini图生] ✗ 响应 JSON 解析失败', { image_gen_id, raw_preview: raw.slice(0, 300), total_elapsed: elapsed() });
-    return { error: 'Gemini 图片生成返回格式异常' };
+    clearTimeout(timer);
+    const msg = describeOpenAIImageNetworkError(e);
+    safeLog.error('[OpenAI图生] 请求异常', {
+      url, model, size, has_ref_images: hasRefs, error: e?.message || String(e),
+    });
+    return { error: msg };
+  }
+  clearTimeout(timer);
+
+  let text = '';
+  try { text = await res.text(); } catch (_) {}
+
+  if (!res.ok) {
+    const msg = describeOpenAIImageHttpError(res.status, text);
+    safeLog.error('[OpenAI图生] API 返回错误', {
+      url, model, size, has_ref_images: hasRefs, status: res.status, error: msg,
+    });
+    return { error: msg };
   }
 
-  // 从 candidates → content → parts 中找 inlineData（图片）
-  const candidates = data?.candidates || [];
-  for (const candidate of candidates) {
-    for (const part of candidate?.content?.parts || []) {
-      if (part.inlineData?.data) {
-        const mimeType = part.inlineData.mimeType || 'image/png';
-        const dataUrl = `data:${mimeType};base64,${part.inlineData.data}`;
-        log.info('[Gemini图生] ✓ 成功', { image_gen_id, model: modelName, mime: mimeType, total_elapsed: elapsed() });
-        return { image_url: dataUrl };
+  let parsed = extractOpenAIImage(text);
+
+  // 异步任务（文档 §2.3/§3.3：{task_id, status:"pending"|"processing"}）→ 轮询查询接口
+  if (!parsed) {
+    let obj = null;
+    try { obj = JSON.parse(text); } catch (_) {}
+    const taskId = extractOpenAITaskId(obj);
+    const st = extractOpenAIStatus(obj);
+    const looksAsync = taskId && (!st || ['pending', 'processing', 'queued', 'in_progress', 'running', 'submitted'].includes(st));
+    if (looksAsync) {
+      const polled = await pollOpenAIImageTask({
+        base, apiKey, taskId, safeLog, signal: controller.signal, imageGenId: opts.image_gen_id,
+      });
+      if (polled.ok) {
+        parsed = polled.image;
+      } else {
+        safeLog.error('[OpenAI图生] 异步任务未取到图片', { url, task_id: taskId, error: polled.error });
+        return { error: polled.error };
       }
     }
   }
+  if (!parsed) {
+    return {
+      error: `OpenAI gpt-image-2 返回无法解析（响应前 300 字）：${String(text || '').slice(0, 300)}`,
+    };
+  }
 
-  log.warn('[Gemini图生] ✗ 响应中无图片内容', { image_gen_id, candidates_count: candidates.length, raw_preview: raw.slice(0, 500), total_elapsed: elapsed() });
-  return { error: 'Gemini 未返回图片内容，请检查模型名称或 API Key 权限' };
+  safeLog.info('[OpenAI图生] gpt-image-2 生成成功', {
+    url,
+    model,
+    size,
+    has_ref_images: hasRefs,
+    response_kind: parsed.kind,
+  });
+  return { image_url: parsed.image_url };
 }
 
 /**
@@ -1531,7 +651,7 @@ async function callImageApi(db, log, opts) {
   const model = getModelFromConfig(config, preferredModel);
   const provider = (config.provider || '').toLowerCase();
   // api_protocol 显式指定接口规范，优先级高于 provider 推断；未设置时按 provider 自动判断
-  const protocol = (config.api_protocol || '').toLowerCase() || inferProtocol(provider, model);
+  const protocol = (config.api_protocol || '').toLowerCase() || inferImageProtocol(provider, model);
 
   // ── 参考图标签注入：为所有非 Gemini 模型将标签注入 prompt 文本 ─────────────────────────────
   // Gemini 通过 parts 结构处理（interleaved text+image），不需要文字注入。
@@ -1539,7 +659,6 @@ async function callImageApi(db, log, opts) {
   // 避免模型模仿参考图的宫格/四视图布局，同时抑制生成分割画面。
   let effectivePrompt = prompt || '';
   if (
-    protocol !== 'gemini' &&
     Array.isArray(reference_image_urls) && reference_image_urls.length > 0 &&
     system_prompt
   ) {
@@ -1565,24 +684,6 @@ async function callImageApi(db, log, opts) {
     effectivePrompt
   });
 
-  // 多参考图时统一生成 negative_prompt（供各子函数使用）
-  const refCountForNeg = Array.isArray(opts.reference_image_urls) ? opts.reference_image_urls.filter(Boolean).length : 0;
-  // Seedream/Volcengine 模型强制启用安全词负面提示，其他模型仅在多参考图时启用
-  const isVolcOrSeedream = (protocol === 'volcengine' || /seedream|doubao/i.test(model));
-  const autoNegativePrompt = (refCountForNeg > 1 || isVolcOrSeedream) ? ANTI_SPLIT_NEGATIVE_PROMPT : '';
-  const userNegFragment = (user_negative_prompt && String(user_negative_prompt).trim()) || '';
-  const mergedNegativePrompt = mergeNegativePromptFragments(autoNegativePrompt, userNegFragment);
-
-  if (protocol === 'dashscope') {
-    return callDashScopeImageApi(config, log, {
-      prompt: effectivePrompt, model, size, image_gen_id,
-      reference_image_urls: opts.reference_image_urls,
-      files_base_url: opts.files_base_url,
-      storage_local_path: opts.storage_local_path,
-      negative_prompt: mergedNegativePrompt,
-    });
-  }
-
   if (protocol === 'comfyui') {
     return callComfyUIImageApi(config, log, {
       prompt: effectivePrompt, model, size, image_gen_id,
@@ -1594,217 +695,24 @@ async function callImageApi(db, log, opts) {
     });
   }
 
-  if (protocol === 'nano_banana') {
-    return callNanoBananaImageApi(config, log, {
+  // OpenAI 官方 gpt-image-2 云端图像通道（文生图 / 带参考图的分镜图）
+  if (protocol === 'openai_image') {
+    return callOpenAIGptImageApi(config, log, {
       prompt: effectivePrompt, model, size, image_gen_id,
       reference_image_urls: opts.reference_image_urls,
       files_base_url: opts.files_base_url,
       storage_local_path: opts.storage_local_path,
+      raw_prompt: prompt,
+      reference_labels: (system_prompt ? String(system_prompt).split('\n').filter(l => /^Image\s+/i.test(l)) : []),
     });
   }
 
-  if (protocol === 'kling') {
-    return callKlingImageApi(config, log, {
-      prompt: effectivePrompt, model, size, image_gen_id,
-      reference_image_urls: opts.reference_image_urls,
-      files_base_url: opts.files_base_url,
-      storage_local_path: opts.storage_local_path,
-    });
-  }
-
-  if (protocol === 'gemini') {
-    return callGeminiImageApi(db, config, log, {
-      prompt, model, size, image_gen_id,          // Gemini 用原始 prompt，不注入文字标签
-      reference_image_urls: opts.reference_image_urls,
-      files_base_url: opts.files_base_url,
-      storage_local_path: opts.storage_local_path,
-      system_prompt: opts.system_prompt,
-    });
-  }
-
-  const baseUrl = buildImageUrl(config);
-  const isVolc = protocol === 'volcengine';
-  const isAgnes = isAgnesImageConfig(config, model);
-  // doubao-seedream 系列模型（含通过自定义代理使用的场景）：使用 volcengine 图片 API 规范
-  const isSeedream = isVolc || /seedream|doubao/i.test(model);
-  // OpenAI 原生 API（非 volcengine/seedream/agnes）：有参考图时切到 /images/edits 端点
-  // 因为 /images/generations 是纯文生图，OpenAI 未文档化 image 参数
-  const isOpenAINative = !isVolc && !isSeedream && !isAgnes;
-  // 解析参考图：本地路径/localhost URL → base64，公网 URL → 直接传
-  const rawRefs = Array.isArray(reference_image_urls) ? reference_image_urls.filter(Boolean) : [];
-  const resolvedRefs = rawRefs.map((r) => resolveImageRef(r, files_base_url, storage_local_path)).filter(Boolean);
-  // OpenAI 原生有参考图时自动切换到 edits 端点
-  const url = (isOpenAINative && resolvedRefs.length > 0)
-    ? baseUrl.replace(/\/images\/generations\/?$/, '/images/edits')
-    : baseUrl;
-  if (resolvedRefs.length > 0) {
-    log.info('Image API request with reference images', {
-      url: url.slice(0, 60), model, image_gen_id,
-      ref_count: resolvedRefs.length,
-      ref_types: resolvedRefs.map((r) => (r.startsWith('data:') ? 'base64' : 'url')),
-      endpoint_switched: baseUrl !== url ? `${baseUrl} → ${url}` : undefined,
-    });
-  }
-
-  // doubao-seedream-4-5+ 要求最低 3686400 像素，不足时等比放大；Agnes 需映射到官方支持尺寸
-  let effectiveSize = size;
-  if (isSeedream && size) effectiveSize = fixSeedreamSize(size);
-  else if (isAgnes && size) effectiveSize = fixAgnesImageSize(size);
-
-  // ── OpenAI 原生 API + 参考图：multipart/form-data 发到 /images/edits ──────
-  if (isOpenAINative && resolvedRefs.length > 0) {
-    log.info('OpenAI native edit request (multipart)', {
-      url: url.slice(0, 60), model, image_gen_id,
-      ref_count: resolvedRefs.length, size: effectiveSize,
-    });
-
-    let refBuffers;
-    try {
-      refBuffers = await Promise.all(resolvedRefs.map((r, i) =>
-        bufferFromRef(r, log).then(b => ({ ...b, name: 'image' }))
-      ));
-    } catch (e) {
-      log.error('Failed to prepare ref buffers for OpenAI edit', { image_gen_id, error: e.message });
-      return { error: '参考图处理失败: ' + e.message };
-    }
-
-    const fields = {
-      model,
-      prompt: effectivePrompt,
-      ...(effectiveSize ? { size: effectiveSize } : {}),
-      ...(quality ? { quality } : {}),
-    };
-
-    let raw;
-    let httpStatus;
-    try {
-      const out = await postMultipartWithTimeout(url, fields, refBuffers, config.api_key || '', IMAGE_HTTP_TIMEOUT_MS);
-      httpStatus = out.statusCode;
-      raw = out.raw;
-    } catch (e) {
-      log.error('OpenAI edit API network error', { image_gen_id, error: e.message, url: url.slice(0, 80) });
-      return { error: e.message && e.message.includes('timeout')
-        ? e.message
-        : ('图片生成网络请求失败: ' + e.message) };
-    }
-
-    if (httpStatus < 200 || httpStatus >= 300) {
-      log.error('OpenAI edit API failed', { status: httpStatus, body: raw.slice(0, 300) });
-      let errMsg = '图片生成请求失败: ' + httpStatus;
-      try {
-        const errJson = JSON.parse(raw);
-        const msg = errJson.error?.message || errJson.message || errJson.error;
-        if (msg) errMsg += ' - ' + (typeof msg === 'string' ? msg : JSON.stringify(msg).slice(0, 200));
-      } catch (_) {
-        if (raw && raw.length) errMsg += ' - ' + raw.slice(0, 200);
-      }
-      return { error: errMsg };
-    }
-
-    let data;
-    try { data = JSON.parse(raw); } catch (e) {
-      log.warn('OpenAI edit API response parse error', { image_gen_id, raw_preview: raw.slice(0, 200) });
-      return { error: '图片生成返回格式异常' };
-    }
-    const item = data.data && data.data[0];
-    let imageUrl = item && (item.url || item.image_url);
-    if (!imageUrl && item?.b64_json) {
-      imageUrl = `data:image/png;base64,${String(item.b64_json).replace(/\s/g, '')}`;
-    }
-    if (!imageUrl) {
-      log.warn('OpenAI edit API no image in response', { image_gen_id, response_keys: Object.keys(data || {}) });
-      return { error: '未返回图片地址' };
-    }
-    return { image_url: imageUrl };
-  }
-
-  // ── 通用 OpenAI 兼容 / Volcengine / Agnes 路径（JSON）──────────────────
-  const body = {
-    model,
-    prompt: effectivePrompt,
-    // doubao-seedream API 不使用 n，其他 OpenAI 兼容接口保留
-    ...(!isSeedream ? { n: 1 } : {}),
-    ...(effectiveSize ? { size: effectiveSize } : {}),
-    ...(quality ? { quality } : {}),
-    // volcengine 原生或 doubao-seedream 模型均需关闭水印（默认为 true）
-    ...((isVolc || isSeedream) ? { watermark: false } : {}),
-    // 多张参考图时加 negative_prompt，防止模型把参考图拼成左右分割的合图
-    // Doubao/Seedream 原生支持；通用 OpenAI-compat 接口大多也会接受该字段（不支持的会忽略）
-    ...(mergedNegativePrompt ? { negative_prompt: mergedNegativePrompt } : {}),
-    // 参考图字段：volcengine doubao-seedream API 规范使用 image（数组），见官方文档
-    ...(resolvedRefs.length > 0 && !isAgnes ? { image: resolvedRefs } : {}),
-    // Agnes Image 2.x：参考图放在 extra_body.image
-    ...(isAgnes && resolvedRefs.length > 0 ? { extra_body: { image: resolvedRefs, response_format: 'url' } } : {}),
+  // 同上：只支持 ComfyUI 与 OpenAI gpt-image-2，其它 api_protocol 明确报错（不要静默返回 undefined）
+  return {
+    error: `不支持的图片接口规范 api_protocol=${protocol}（本软件支持 ComfyUI 与 OpenAI gpt-image-2）`,
   };
-  log.info('Image API request', {
-    url: url.slice(0, 60),
-    model,
-    image_gen_id,
-    has_ref_images: resolvedRefs.length > 0,
-    size: effectiveSize,
-    original_size: size !== effectiveSize ? size : undefined,
-    is_agnes: isAgnes,
-  });
-  const openaiCompatHeaders = {
-    'Content-Type': 'application/json',
-    Authorization: 'Bearer ' + (config.api_key || ''),
-  };
-  let raw;
-  let httpStatus;
-  try {
-    const out = await postJSONWithTimeout(url, openaiCompatHeaders, body, IMAGE_HTTP_TIMEOUT_MS);
-    httpStatus = out.statusCode;
-    raw = out.raw;
-  } catch (e) {
-    log.error('Image API network error', { image_gen_id, error: e.message, url: url.slice(0, 80) });
-    return { error: e.message && e.message.includes('timeout')
-      ? e.message
-      : ('图片生成网络请求失败: ' + e.message) };
-  }
-  if (httpStatus < 200 || httpStatus >= 300) {
-    log.error('Image API failed', { status: httpStatus, body: raw.slice(0, 300) });
-    let errMsg = '图片生成请求失败: ' + httpStatus;
-    try {
-      const errJson = JSON.parse(raw);
-      const msg = errJson.error?.message || errJson.message || errJson.error;
-      if (msg) errMsg += ' - ' + (typeof msg === 'string' ? msg : JSON.stringify(msg).slice(0, 200));
-    } catch (_) {
-      if (raw && raw.length) errMsg += ' - ' + raw.slice(0, 200);
-    }
-    return { error: errMsg };
-  }
-  let data;
-  try {
-    data = JSON.parse(raw);
-  } catch (e) {
-    log.warn('Image API response parse error', { image_gen_id, raw_preview: raw.slice(0, 200) });
-    return { error: '图片生成返回格式异常' };
-  }
-  // 兼容多种返回格式：OpenAI 风格 data[].url / b64_json，部分厂商 data[].image_url 或 data.output 等
-  // Stable Diffusion WebUI（/sdapi/v1/txt2img|img2img）：顶层 images 为 PNG base64 字符串数组，无 data 数组
-  const item = data.data && data.data[0];
-  let imageUrl = item && (item.url || item.image_url);
-  if (!imageUrl && item?.b64_json) {
-    imageUrl = `data:image/png;base64,${String(item.b64_json).replace(/\s/g, '')}`;
-  }
-  if (!imageUrl && Array.isArray(data.images) && data.images.length > 0) {
-    const first = data.images[0];
-    if (typeof first === 'string' && first.length > 0) {
-      imageUrl = first.startsWith('data:') ? first : `data:image/png;base64,${first.replace(/\s/g, '')}`;
-    }
-  }
-  if (!imageUrl) {
-    log.warn('Image API no image URL in response', {
-      image_gen_id,
-      model,
-      response_keys: data ? Object.keys(data) : [],
-      data_preview: data ? JSON.stringify(data).slice(0, 500) : '',
-      has_data_array: !!(data.data && Array.isArray(data.data)),
-      first_item_keys: (data.data && data.data[0]) ? Object.keys(data.data[0]) : [],
-    });
-    return { error: '未返回图片地址' };
-  }
-  return { image_url: imageUrl };
+
+
 }
 
 /**
@@ -1948,10 +856,7 @@ function createAndGenerateImage(db, log, opts) {
           if (!Array.isArray(extras)) extras = [];
           if (oldPath && !extras.includes(oldPath)) extras.push(oldPath);
           const extraJson = extras.length ? JSON.stringify(extras) : null;
-          seedance2AssetGuards.markStaleOnCharacterMainImageDrift(db, log, { ...oldChar, id: charIdNum }, {
-            image_url: result.image_url,
-            local_path: localPath,
-          });
+
           db.prepare('UPDATE characters SET image_url = ?, local_path = ?, extra_images = ?, updated_at = ? WHERE id = ?').run(
             result.image_url,
             localPath,
@@ -2050,13 +955,10 @@ function rowToItem(r) {
   };
 }
 
-/** 分镜参考图上限（与 callGeminiImageApi 的 MAX_GEMINI_REF_IMAGES、可灵单图参考等对齐） */
+/** 分镜参考图上限 */
 function getStoryboardReferenceLimits(config, modelName) {
   const provider = (config?.provider || '').toLowerCase();
-  const protocol = (config?.api_protocol || '').toLowerCase() || inferProtocol(provider, modelName || config?.model);
-  if (protocol === 'kling') {
-    return { total: 1, maxCharacters: 1, maxObjects: 1 };
-  }
+  const protocol = (config?.api_protocol || '').toLowerCase() || inferImageProtocol(provider, modelName || config?.model);
   if (protocol === 'comfyui') {
     // Qwen-Image-Edit 三通道：image1..3 = 场景整图 / 全部角色拼图 / 全部道具拼图（工作流内 ImageStitch）
     // 每张原图独立全分辨率进入拼图：场景1 + 角色至多3 + 道具至多2
@@ -2114,18 +1016,20 @@ function refListHasCanonical(list, ref) {
 module.exports = {
   getDefaultImageConfig,
   callImageApi,
+  callOpenAIGptImageApi,
+  inferImageProtocol,
+  mapOpenAIImageSize,
+  resolveOpenAIImageBaseUrl,
   createAndGenerateImage,
   resolveAssetUserNegativeForApi,
   getStoryboardReferenceLimits,
   canAddStoryboardCharacterRef,
   canAddStoryboardObjectRef,
   refListHasCanonical,
-  fixAgnesImageSize,
-  isAgnesImageConfig,
   /** 图床 URL 缓存（image_proxy_cache），供 SD2 认证等复用 */
   getProxyCache,
-  getProxyCacheValidated,
   deleteProxyCache,
-  isProxyUrlAlive,
   setProxyCache,
 };
+
+// 图像配置选择优先级：显式 model > 显式默认 > 厂商偏好兜底（详见 getDefaultImageConfig）

@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { markDialogue } = require('../utils/h3DialogueMark');
 const { fixLegacySegmentText } = require('../utils/segmentTextNormalize');
+const { replacePictureMappingLines } = require('../utils/segmentRefBinding');
 
 /**
  * H3 音色参考音频的裁剪上限（秒）。
@@ -324,7 +325,7 @@ async function prepareReferenceAudios(referenceUrls, comfyuiInputDir, log, stora
         via = 'abs-path';
       } else {
         // 处理相对路径：优先 strip 掉 /static/ 或 /uploads/ 前缀，再按 storage 根目录解析，
-        // 兼容 seedance2_voice_asset.url 这类 /static/drama_X/characters/voice/xxx.mp3。
+        // 兼容音色参考音频那种 /static/drama_X/characters/voice/xxx.mp3 写法。
         const stripped = String(ref).replace(/^\/?(static|uploads)\//, '');
         if (storageLocalPath && stripped && fs.existsSync(path.join(storageLocalPath, stripped))) {
           fs.copyFileSync(path.join(storageLocalPath, stripped), destPath);
@@ -508,13 +509,13 @@ function applyQwenGroupingToUI(wf, grouped) {
  * - absoluteCapMs 兜底防止无限等待
  * @returns {Promise<object>} history item（status.completed 后返回）
  */
-async function waitForComfyJob(baseUrl, promptId, log, { runningBudgetMs, absoluteCapMs, tag }) {
+async function waitForComfyJob(baseUrl, promptId, log, { runningBudgetMs, absoluteCapMs, tag, pollIntervalMs = 5000 }) {
   const startTime = Date.now();
   let runningSince = null;
   let missCount = 0;
   let lastState = '';
   while (Date.now() - startTime < absoluteCapMs) {
-    await new Promise((r) => setTimeout(r, 5000));
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
     let hist = null;
     try {
       hist = await getJSON(baseUrl + '/history/' + promptId, 10000);
@@ -769,6 +770,7 @@ function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles, 
   const addNodes = {};
   const cap = Math.min(refImages.length, 9);
   const headerLines = [];
+  const pictureLines = [];   // 权威映射行（<Picture N> 行），提交前用来重建正文里的映射行块
   for (let i = 0; i < cap; i++) {
     const k = 'h3_ld_i' + i;
     addNodes[k] = { class_type: 'LoadImage', inputs: { image: refImages[i] } };
@@ -780,22 +782,32 @@ function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles, 
     let desc;
     if (useEnHeader) {
       if (/scene background|场景|scene/i.test(lbl)) {
-        desc = '<Picture ' + picNum + '>: scene and environment reference (the image may be a multi-view sheet or a multi-panel collage — extract only the unified space, lighting and atmosphere; do not reproduce its panels or side-by-side layout in the final shot)';
+        // 场景行也带上名字（labels 就是 `scene background for "X"`）：映射行必须自己说清「这是哪个场景」，
+        // 否则重建后的 1 号行没有名字，与正文里写对了名字的场景行指纹不一致、会被无谓重写。
+        desc = '<Picture ' + picNum + '>: ' + (name ? '"' + name + '" is the scene and environment reference' : 'scene and environment reference')
+          + ' (the image may be a multi-view sheet or a multi-panel collage — extract only the unified space, lighting and atmosphere; do not reproduce its panels or side-by-side layout in the final shot)';
       } else if (/character appearance|角色|character/i.test(lbl)) {
         desc = '<Picture ' + picNum + '>: appearance reference for the character "' + (name || ('Character ' + picNum)) + '" (if the image is a multi-view turnaround, keep only the face, hairstyle and costume; the finished shot must be one single natural camera view)';
+      } else if (/keyframe|关键帧|first frame|last frame/i.test(lbl)) {
+        // 经典/首尾帧镜头的本镜主图（含首/尾帧）：它画的就是成片要的画面，
+        // 之前没有对应分支会被当成「道具」，映射行写错。
+        desc = '<Picture ' + picNum + '>: keyframe still for this shot (match its composition, lighting and character blocking; deliver one continuous single camera view)';
       } else {
         desc = '<Picture ' + picNum + '>: appearance reference for the prop "' + (name || ('Prop ' + picNum)) + '" (if it is a multi-angle or composite image, keep only the prop\'s exterior shape)';
       }
     } else {
       if (/scene background|场景|scene/i.test(lbl)) {
-        desc = '<Picture ' + picNum + '>：场景环境参考（注意：该图为参考，可能是多视角/宫格拼图——只取其中统一的空间、光线与氛围语义，禁止照搬其分格/取景/并列布局）';
+        desc = '<Picture ' + picNum + '>：场景' + (name ? '「' + name + '」' : '') + '环境参考（注意：该图为参考，可能是多视角/宫格拼图——只取其中统一的空间、光线与氛围语义，禁止照搬其分格/取景/并列布局）';
       } else if (/character appearance|角色|character/i.test(lbl)) {
         desc = '<Picture ' + picNum + '>：角色「' + (name || '角色' + picNum) + '」外貌参考（若该图为同一人物多角度/四视图合成图，仅锁定其长相、发型、服装；成片取单一自然镜头，禁止复现其多视图/拼图布局）';
+      } else if (/keyframe|关键帧|first frame|last frame/i.test(lbl)) {
+        desc = '<Picture ' + picNum + '>：本镜关键帧参考（沿用其构图、光线与人物站位；成片为连续单一镜头）';
       } else {
         desc = '<Picture ' + picNum + '>：道具「' + (name || '物品' + picNum) + '」外观参考（若为多角度/合成图，仅锁定道具外形）';
       }
     }
     headerLines.push(desc);
+    pictureLines.push(desc);
   }
 
   // 参考音频：每段独立接 ref_audio_0..N（最多 3 段），<Audio j> 编号从 1 起
@@ -832,6 +844,34 @@ function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles, 
 
   Object.assign(apiPrompt, addNodes);
 
+  // ── 提交前：正文里已有的 <Picture N> 映射行，一律按**本次提交的参考图顺序**（labels）重建 ──
+  // 映射行是 AI 写的，实测会写错编号、把同一个名字写到两个号上（用户实测：第四集前三镜
+  // 「两个女生角色对调」—— ust 里的映射行与提交时按 characters[] 算出的槽位顺序不一致）。
+  // 只重写**文本**里的映射行：参考图的接入顺序与 ref_image_* 编号由 refImages/labels 决定，
+  // 是出片正确性的基础，这里一个字都不改。
+  // 保留：环境约束句、<Audio j> 行、detailed_description 之后的全部正文。
+  // labels 缺席（旧记录只有 URL 列表）时不动正文 —— 没有权威槽位可依据，沿用正文自带映射。
+  const labelsOk = cap > 0 && Array.isArray(labels) && labels.length >= cap
+    && labels.slice(0, cap).every((l) => String(l == null ? '' : l).trim());
+  let hadPictureMapping = false;
+  if (labelsOk) {
+    const rb = replacePictureMappingLines(boundPrompt, pictureLines);
+    hadPictureMapping = rb.had > 0;
+    if (rb.changed) {
+      boundPrompt = rb.text;
+      if (log && typeof log.info === 'function') {
+        log.info('[ComfyUI/H3] 映射行已按槽位表重建（以本次提交的参考图顺序为准）', {
+          replaced_lines: rb.replaced,
+          rebuilt_lines: rb.inserted,
+          count: rb.inserted,
+        });
+      }
+    }
+  } else if (cap > 0 && log && typeof log.warn === 'function'
+    && /^\s*<Picture\s+\d+>\s*[:：]/m.test(boundPrompt)) {
+    log.warn('[ComfyUI/H3] 参考图缺少 labels，跳过映射行重建（沿用正文自带的 <Picture N> 映射行）');
+  }
+
   // Ref2VA 官方六段结构：`subject_definitions` 里已经**逐条定义了** <Subject N> 与它的图片来源，
   // 我们再加一遍 `<Picture N>: appearance reference for …` 就是重复定义（而且会与 subject 语义打架）。
   // 这种情况下只保留一句「禁止复刻参考拼图宫格」的引导句。
@@ -839,7 +879,10 @@ function applyH3RefsToApi(apiPrompt, refImages, labels, promptText, audioFiles, 
   // 正文自己已经指明了「第几张图是什么」就不要再拼自动说明头（否则同一张图会被写两遍，编号还可能不一致）：
   //  · 六段结构：subject_definitions 里用 <Subject N> 是 <Picture N> … 定义
   //  · 精简格式（本机折中版）：段名前直接写 <Picture N>：场景/角色/道具参考 …
-  const mapsPicturesItself = /^\s*(?:<Picture\s+\d+>\s*[:：][^\n]*\n?)+/i.test(bodyText)
+  // hadPictureMapping：上面已按 labels 重建/确认过映射行（映射行不一定在正文最前面），
+  // 所以这里用它的存在性判断，避免再注入一次自动说明头造成同一张图被定义两遍。
+  const mapsPicturesItself = hadPictureMapping
+    || /^\s*(?:<Picture\s+\d+>\s*[:：][^\n]*\n?)+/i.test(bodyText)
     || /^\s*subject_definitions\s*[:：]/im.test(bodyText);
   if (mapsPicturesItself) {
     const gridLeadEn = '\n\nDo not reproduce the reference images\' multi-panel/grid layout, split screen or side-by-side panels in the delivered clip.\n';
@@ -963,6 +1006,64 @@ function applyH3GuideFramesToApi(apiPrompt, h3Id, guideFrames, log) {
   // 把下游 guider 改接到 guide 链尾
   apiPrompt[consumer].inputs[consumerKey] = prevCond;
   return notes.join(' + ') + ' → node ' + consumer + '.' + consumerKey;
+}
+
+/**
+ * 从 ComfyUI history 结果里取产出视频的 /view 地址。
+ * SaveVideo 的 filename_prefix 常含子目录（如 video/MiniMax_H3），/view 必须带 subfolder 才能取到文件。
+ */
+function buildComfyVideoViewUrl(baseUrl, result) {
+  let videoFilename = null;
+  let videoSubfolder = '';
+  const outs = (result && result.outputs) || {};
+  for (const key of Object.keys(outs)) {
+    const out = outs[key];
+    if (out.images && out.images.length > 0) { videoFilename = out.images[0].filename; videoSubfolder = out.images[0].subfolder || ''; break; }
+    if (out.gifs && out.gifs.length > 0) { videoFilename = out.gifs[0].filename; videoSubfolder = out.gifs[0].subfolder || ''; break; }
+    if (out.videos && out.videos.length > 0) { videoFilename = out.videos[0].filename; videoSubfolder = out.videos[0].subfolder || ''; break; }
+  }
+  if (!videoFilename) return null;
+  return baseUrl + "/view?filename=" + videoFilename + "&type=output" +
+    (videoSubfolder ? "&subfolder=" + encodeURIComponent(videoSubfolder) : "");
+}
+
+/**
+ * 软件重启后凭已持久化的 prompt_id 继续等待 ComfyUI 任务（只续轮询，不重新提交）。
+ * 这是「重启把在跑的任务判死、ComfyUI 却还在烧显卡」问题的正解。
+ */
+async function resumeComfyUIVideo(config, log, opts) {
+  const promptId = String((opts && opts.prompt_id) || '').trim();
+  if (!promptId) return { error: '缺少 ComfyUI prompt_id，无法恢复轮询' };
+  const baseUrl = (config.base_url || "http://127.0.0.1:8188").replace(/\/$/, "");
+  log.info('[ComfyUI/Video] 恢复轮询已提交的任务 prompt_id=' + promptId);
+  const result = await waitForComfyJob(baseUrl, promptId, log, {
+    runningBudgetMs: 30 * 60 * 1000,
+    absoluteCapMs: 4 * 3600 * 1000,
+    tag: '/Video',
+    pollIntervalMs: (opts && opts.poll_interval_ms) || 5000,
+  });
+  const videoUrl = buildComfyVideoViewUrl(baseUrl, result);
+  if (!videoUrl) return { error: 'ComfyUI 任务已完成但没有找到产出视频' };
+  log.info('[ComfyUI/Video] 恢复轮询完成: ' + videoUrl);
+  return { video_url: videoUrl };
+}
+
+/**
+ * 精准取消 ComfyUI 任务：运行中则中断、排队中则出队、已完成/未知 id 为 no-op（幂等）。
+ * 用 ComfyUI 自己的 /api/jobs/{id}/cancel，不会误伤别的任务。
+ */
+async function cancelComfyUIJob(config, log, promptId) {
+  const id = String(promptId || '').trim();
+  if (!id) return { ok: false, error: '缺少 prompt_id' };
+  const baseUrl = (config.base_url || "http://127.0.0.1:8188").replace(/\/$/, "");
+  try {
+    const resp = await postJSON(baseUrl + '/api/jobs/' + encodeURIComponent(id) + '/cancel', {}, 15000);
+    log.info('[ComfyUI/Video] 已取消任务 prompt_id=' + id, { response: resp });
+    return { ok: true, response: resp };
+  } catch (e) {
+    log.warn('[ComfyUI/Video] 取消任务失败（本地状态仍会标记为已取消）', { prompt_id: id, error: e.message });
+    return { ok: false, error: e.message };
+  }
 }
 
 async function callComfyUIVideoApi(config, log, opts) {
@@ -1189,6 +1290,15 @@ async function callComfyUIVideoApi(config, log, opts) {
     const promptId = submitResp.prompt_id;
     if (!promptId) throw new Error("ComfyUI submit returned no prompt_id");
     log.info("[ComfyUI/Video] Submitted prompt_id=" + promptId);
+    // 提交成功立刻回传 prompt_id：调用方会持久化到 provider_task_id，
+    // 这样软件重启后能凭它续轮询，而不是把仍在跑的任务判死（ComfyUI 那边不会因重启停下来）。
+    if (typeof opts.onSubmitted === 'function') {
+      try {
+        opts.onSubmitted(promptId);
+      } catch (e) {
+        log.warn('[ComfyUI/Video] onSubmitted 回调异常（不影响本次生成）', { prompt_id: promptId, error: e.message });
+      }
+    }
 
     const result = await waitForComfyJob(baseUrl, promptId, log, {
       runningBudgetMs: 30 * 60 * 1000,
@@ -1196,22 +1306,8 @@ async function callComfyUIVideoApi(config, log, opts) {
       tag: '/Video',
     });
 
-    let videoFilename = null;
-    let videoSubfolder = '';
-    const outs = result.outputs || {};
-    for (const key of Object.keys(outs)) {
-      const out = outs[key];
-      if (out.images && out.images.length > 0) { videoFilename = out.images[0].filename; videoSubfolder = out.images[0].subfolder || ''; break; }
-      if (out.gifs && out.gifs.length > 0) { videoFilename = out.gifs[0].filename; videoSubfolder = out.gifs[0].subfolder || ''; break; }
-      if (out.videos && out.videos.length > 0) { videoFilename = out.videos[0].filename; videoSubfolder = out.videos[0].subfolder || ''; break; }
-    }
-    if (!videoFilename) throw new Error("ComfyUI completed but no video found");
-
-    // SaveVideo 的 filename_prefix 常含子目录（如 video/MiniMax_H3），ComfyUI 输出对象的 subfolder 字段
-    // 记录该子目录；/view 必须带 subfolder 才能取到文件，否则 404。
-    const viewParams = "filename=" + videoFilename + "&type=output" +
-      (videoSubfolder ? "&subfolder=" + encodeURIComponent(videoSubfolder) : "");
-    const videoUrl = baseUrl + "/view?" + viewParams;
+    const videoUrl = buildComfyVideoViewUrl(baseUrl, result);
+    if (!videoUrl) throw new Error("ComfyUI completed but no video found");
     log.info("[ComfyUI/Video/" + workflowFile + "] Done: " + videoUrl);
     return { video_url: videoUrl };
   }
@@ -1222,4 +1318,7 @@ async function callComfyUIVideoApi(config, log, opts) {
   throw new Error('ComfyUI 视频配置未选择工作流：请在「AI 配置 → 视频服务」中选择工作流文件（settings.workflow）');
 }
 
-module.exports = { callComfyUIImageApi, callComfyUIVideoApi, parseSize, hasH3ReferenceNode, applyH3RefsToApi, applyH3GuideFramesToApi, prepareReferenceAudios };
+module.exports = { callComfyUIImageApi, callComfyUIVideoApi, resumeComfyUIVideo, cancelComfyUIJob, buildComfyVideoViewUrl, parseSize, hasH3ReferenceNode, applyH3RefsToApi, applyH3GuideFramesToApi, prepareReferenceAudios };
+
+// 经典/首尾帧镜头的主图标签（keyframe still for this shot）在此映射为「本镜关键帧参考」行，
+// 避免因没有匹配分支而被兜底写成「道具」参考。

@@ -296,7 +296,7 @@ test('§5 规范：台词期间镜头固定 + 只有说话人有口型', () => {
   const zh = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
   assert.match(zh, /台词期间镜头固定/);
   assert.match(zh, /不切镜、不推拉、不环绕、不升降/);
-  assert.match(zh, /要运镜就放在台词前后/);
+  assert.match(zh, /把运镜挪到\*\*台词说完之后\*\*/);
   assert.match(zh, /只有当前说话人/);
   assert.match(zh, /不得/);
   // 规范只维护一套：英文设置下是同一份中文文本
@@ -318,12 +318,24 @@ test('§5 规范：输出前必检五项齐全', () => {
   }
 });
 
-test('对白镜运镜规则可执行化：默认固定机位 + 必须写台词时间点 + 台词窗内禁运动', () => {
+/**
+ * 这条规则被实测推翻过一次：旧规范要求「必须在正文里写出台词开始的时间点（from the sixth second onward …）
+ * 并把运镜全部压在该时间点之前」—— 结果模型把台词排到第 3-7 秒才开口，成片前几秒只有动作与音效、
+ * 画面里说话人的嘴已经在动（用户报的「嘴说了一秒声音才出来」）。
+ * 现在改成：台词是第一拍的内容，运镜挪到台词说完之后。
+ */
+test('对白镜运镜规则可执行化：默认固定机位 + 台词尽早出现 + 运镜放台词之后', () => {
   const p = require('../src/services/promptI18n');
   const zh = p.getUniversalOmniMultiBeatFormatSpec({ app: { language: 'zh' }, style: { default_style_en: 'x' } });
-  assert.match(zh, /有台词的镜头默认固定机位/);
-  assert.match(zh, /必须在正文里写出台词开始的时间点/);
-  assert.match(zh, /禁止在台词时间窗内出现任何镜头运动词/);
+  assert.match(zh, /台词必须尽早出现/);
+  assert.match(zh, /台词就是\*\*第一拍的内容\*\*/);
+  assert.match(zh, /最多留 1 秒画面建立/);
+  assert.match(zh, /禁止\*\*把台词排到「第三秒起/);
+  assert.match(zh, /开口前不得有口型/);
+  assert.match(zh, /把运镜挪到\*\*台词说完之后\*\*/);
+  // 旧规则（教模型把台词往后排）必须消失
+  assert.equal(/必须在正文里写出台词开始的时间点/.test(zh), false, '旧规则必须删掉');
+  assert.equal(/from the sixth second onward/.test(zh), false, '旧英文示范必须删掉');
 });
 
 test('分镜生成 user prompt 里带「本集总时长下限」硬数字', () => {

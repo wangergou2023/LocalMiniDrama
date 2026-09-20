@@ -253,46 +253,134 @@ const KIND_HINT = {
 };
 
 /**
- * 精简格式的确定性修复：**补参考图映射行**。
+ * 映射行 = 段名前的一行 `<Picture N>：场景/角色/道具「名字」——…`。
+ * 正文里出现的 `<Picture N>`（如「环境、光影与陈设定性参考 <Picture 1>。」）是**内联引用**，
+ * 不是映射行 —— 判定必须限定「行首」，否则会把约束句和正文里的引用一起删掉。
+ */
+const PICTURE_MAPPING_LINE_RE = /^\s*<Picture\s+\d+>\s*[:：]/;
+
+/** 该行是否是参考图映射行（行首 `<Picture N>：…`） */
+function isPictureMappingLine(line) {
+  return PICTURE_MAPPING_LINE_RE.test(String(line == null ? '' : line));
+}
+
+/**
+ * 头部结束位置：第一个段落行（detailed_description / overall_soundscape / non_diegetic_music）。
+ * 映射行只可能出现在这之前；这之后出现的 `<Picture N>` 一律当正文，不删不改。
+ */
+function headerEndIndex(lines) {
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*(detailed_description|overall_soundscape|non_diegetic_music)\s*[:：]/i.test(lines[i])) return i;
+  }
+  return lines.length;
+}
+
+/** 按槽位表生成一行映射行（文案与 ref2vaFormat.buildRef2vaFallback 的兜底模板一致） */
+function mappingLineFor(slot) {
+  return `${slot.tag}：${slot.kind}「${slot.name}」——${KIND_HINT[slot.kind] || '沿用其外观与设定。'}`;
+}
+
+/**
+ * 映射行的**语义指纹**：编号 + 类型 + 名字。用来判断「这行指向的到底是哪张图」。
+ * 措辞不同（「其外貌、发型与服装来自该图」vs「外貌、发型与服装来自该图」）不算错，
+ * 只有编号/类型/名字对不上才需要重写 —— 那才是把参考图绑错人的原因。
+ */
+function mappingFingerprint(line) {
+  const s = String(line == null ? '' : line);
+  const num = (s.match(/<Picture\s+(\d+)>/) || [])[1] || '';
+  const kind = (s.match(/(场景|角色|道具|scene|character|prop)/i) || [])[1] || '';
+  const name = (s.match(/[「『"]([^」』"]+)[」』"]/) || [])[1] || '';
+  return `${num}|${kind.toLowerCase()}|${name}`;
+}
+
+/**
+ * **以槽位表为唯一真相，整块重建头部已有的 `<Picture N>：…` 映射行。**
+ *
+ * 为什么不只「补缺失行」：映射行是 AI 写的，实测会写错编号、把同一个名字写两遍
+ * （sb1091：`<Picture 2>：韩悠兰` + `<Picture 3>：韩悠兰`，而真实槽位 2=刘美云、3=韩悠兰），
+ * 只补缺失行会把这些错行原样留下 —— 参考图与人物错位，用户看到的就是「两个女生角色对调」。
+ * 槽位表（buildSlotsForStoryboard = 提交时的参考图顺序）才是唯一真相，所以整块重写。
+ *
+ * 不动的部分：段名前的 `<Audio j>` 行、环境约束句（含 `<Picture N>` 的那句）、
+ * 以及第一个段名之后的全部正文（含正文内联的 `<Picture N>` 引用）。
+ * 新块插在第一行被删映射行的位置 → 头部其余行的相对顺序也不变。
+ *
+ * @param {string} text
+ * @param {string[]} blockLines 权威映射行（顺序 = 槽位 / 参考图提交顺序）
+ * @returns {{text:string, had:number, replaced:number, inserted:number, changed:boolean}}
+ *          had = 头部原有映射行数；changed=false 时 text 原样返回（幂等）
+ */
+function replacePictureMappingLines(text, blockLines) {
+  const raw = String(text || '');
+  const block = (Array.isArray(blockLines) ? blockLines : [])
+    .map((l) => String(l == null ? '' : l))
+    .filter((l) => l.trim());
+  const lines = raw.split('\n');
+  const end = headerEndIndex(lines);
+  const at = [];
+  for (let i = 0; i < end; i++) if (isPictureMappingLine(lines[i])) at.push(i);
+  const res = { text: raw, had: at.length, replaced: 0, inserted: 0, changed: false };
+  if (!raw.trim() || !block.length || !at.length) return res;
+  // 已有映射行与权威块**语义一致**（编号、类型、名字逐行相同）→ 不动，保证幂等：
+  // 同一张图换个说法写不算错，没必要把别人写对的文本重写一遍。
+  const same = at.length === block.length
+    && at.every((li, k) => mappingFingerprint(lines[li]) === mappingFingerprint(block[k]));
+  if (same) return res;
+  const drop = new Set(at);
+  const kept = lines.filter((_, i) => !drop.has(i));
+  res.text = [...kept.slice(0, at[0]), ...block, ...kept.slice(at[0])].join('\n');
+  res.replaced = at.length;
+  res.inserted = block.length;
+  res.changed = true;
+  return res;
+}
+
+/**
+ * 精简格式的确定性修复：**按槽位表整块重建参考图映射行**。
  *
  * 精简格式里参考图全靠段名前的 `<Picture N>：场景/角色/道具「名字」——…` 映射行绑定，
- * 正文只写名字。实测模型会写正文却漏掉某一行映射（或第一行都没写），
- * 那样这个角色就拿不到参考图 —— 表现就是「片段描述里少了角色」。
+ * 正文只写名字。实测模型的映射行不可信：会漏行（「片段描述里少了角色」）、会写错编号、
+ * 会把同一个名字写到两个号上（sb1091 的重复）。槽位表就是「这次生成会送哪些参考图」的契约
+ * （场景 → 角色 → 道具，见 buildSlotsForStoryboard），因此映射行一律由它重写：
+ *   ① 头部已有映射行 → 全部删掉，按槽位顺序整块重写（顺序、编号、名字、重复一次性纠正）
+ *   ② 头部一行都没有 → 保持原行为，在第一个段名之前按槽位表补全
  *
- * 补的范围是**槽位表里所有还没被映射的槽位**：槽位表就是「这次生成会送哪些参考图」的契约
- * （场景 → 角色 → 道具，见 buildSlotsForStoryboard），映射行少了就等于那张参考图白送 ——
- * 用户看到的现象是「片段描述里少了角色」。不像旧内联写法那样需要顾及句子通顺，
- * 映射行是独立的头部条目，逐条补齐不会破坏正文。
- *
- * 越界的 <Picture N> 一律不动（不确定是模型指错还是槽位表缺图，宁可不改）。
+ * @param {string} text
+ * @param {Array} slots
+ * @param {{log?:object}} [opts] 传入 log 时就地记录「映射行已按槽位表重建 + 改动条数」
  */
-function repairLeanBinding(text, slots) {
+function repairLeanBinding(text, slots, opts = {}) {
   const raw = String(text || '');
-  const list = Array.isArray(slots) ? slots : [];
+  const list = (Array.isArray(slots) ? slots : []).filter((s) => s && s.name);
   const changes = [];
   if (!raw.trim() || !list.length) return { text: raw, changes };
 
-  const lines = raw.split('\n');
-  const mapped = new Set();
-  let firstSectionIdx = -1;
-  let lastMappingIdx = -1;
-  lines.forEach((l, i) => {
-    if (/^\s*(detailed_description|overall_soundscape|non_diegetic_music)\s*[:：]/i.test(l) && firstSectionIdx < 0) firstSectionIdx = i;
-    const m = l.match(/^\s*<Picture\s+(\d+)>\s*[:：]/);
-    if (m) { mapped.add(Number(m[1])); lastMappingIdx = i; }
-  });
-  const add = [];
-  for (const slot of list) {
-    if (!slot || !slot.name) continue;
-    if (mapped.has(Number(slot.index))) continue;
-    add.push(`${slot.tag}：${slot.kind}「${slot.name}」——${KIND_HINT[slot.kind] || '沿用其外观与设定。'}`);
-    changes.push(`补映射行 ${slot.tag}=${slot.kind}「${slot.name}」`);
-  }
-  if (!add.length) return { text: raw, changes };
+  const block = list.map(mappingLineFor);
+  const res = replacePictureMappingLines(raw, block);
+  const logRebuild = (replaced, inserted) => {
+    if (opts.log && typeof opts.log.info === 'function') {
+      opts.log.info('[参考图绑定] 映射行已按槽位表重建', {
+        replaced_lines: replaced,
+        rebuilt_lines: inserted,
+        count: inserted,          // 改动条数 = 重写/补出的映射行数
+        lines: block,
+      });
+    }
+  };
 
-  const at = lastMappingIdx >= 0 ? lastMappingIdx + 1 : (firstSectionIdx >= 0 ? firstSectionIdx : lines.length);
-  const out = [...lines.slice(0, at), ...add, ...lines.slice(at)].join('\n');
-  return { text: out, changes };
+  if (res.changed) {
+    changes.push(`映射行已按槽位表重建：原有 ${res.replaced} 行 → 重写为 ${res.inserted} 行`);
+    logRebuild(res.replaced, res.inserted);
+    return { text: res.text, changes };
+  }
+  if (res.had) return { text: raw, changes };   // 已与槽位表语义一致（编号/类型/名字）→ 幂等
+
+  // 头部一行映射行都没有（模型漏写）：保持原行为，在第一个段名之前补全
+  const lines = raw.split('\n');
+  const at = headerEndIndex(lines);
+  changes.push(`映射行已按槽位表重建：原有 0 行 → 补 ${block.length} 行`);
+  logRebuild(0, block.length);
+  return { text: [...lines.slice(0, at), ...block, ...lines.slice(at)].join('\n'), changes };
 }
 
 /**
@@ -306,8 +394,8 @@ function repairLeanBinding(text, slots) {
  * @returns {{text:string, changes:string[]}}
  */
 function repairSegmentRefBinding(ust, slots, opts = {}) {
-  // 精简格式不写内联引用（往正文里插 @图片N 反而会退回旧写法），但**缺的映射行必须补**
-  if (isLeanUst(ust)) return repairLeanBinding(String(ust || ''), slots);
+  // 精简格式不写内联引用（往正文里插 @图片N 反而会退回旧写法），但**映射行必须按槽位表重建**
+  if (isLeanUst(ust)) return repairLeanBinding(String(ust || ''), slots, opts);
   const raw = String(ust || '');
   const changes = [];
   if (!raw.trim() || !(slots || []).length) return { text: raw, changes };
@@ -367,4 +455,12 @@ function repairSegmentRefBinding(ust, slots, opts = {}) {
   return { text: changes.length ? lines.join('\n') : raw, changes };
 }
 
-module.exports = { buildSlotsForStoryboard, checkSegmentRefBinding, repairSegmentRefBinding, hasMediaRef, isLeanUst };
+module.exports = {
+  buildSlotsForStoryboard,
+  checkSegmentRefBinding,
+  repairSegmentRefBinding,
+  replacePictureMappingLines,
+  isPictureMappingLine,
+  hasMediaRef,
+  isLeanUst,
+};

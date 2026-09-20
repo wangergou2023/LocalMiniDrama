@@ -500,57 +500,11 @@
                       </el-button>
                       <el-button size="small" :loading="addingCharToMaterialId === char.id" :disabled="!hasAssetImage(char)" @click="onAddCharacterToMaterialLibrary(char)">
                         加入素材库
-                      </el-button><el-button
-                        size="small"
-                        :type="char.seedance2_asset?.status === 'active' ? 'success' : 'warning'"
-                        plain
-                        :loading="sd2CertifyingId === char.id"
-                        :disabled="!hasAssetImage(char)"
-                        @click="onSd2PrimaryAction(char)"
-                      >
-                        {{ sd2ActionLabel(char) }}
                       </el-button>
                     </div>
 
-                    <!-- 角色音色参考（Seedance 2.0 / MiniMax H3 均生效） -->
-                    <div class="sd2-voice-row" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                      <template v-if="char.seedance2_voice_asset?.status === 'active'">
-                        <!-- 音色参考已设置：显示试听 + 更换 -->
-                        <el-button
-                          size="small"
-                          type="success"
-                          plain
-                          @click="playSd2Voice(char)"
-                        >
-                          <el-icon><VideoPlay /></el-icon>
-                          <span style="margin-left:4px">试听</span>
-                        </el-button>
-                        <el-button
-                          size="small"
-                          type="primary"
-                          plain
-                          :loading="sd2VoiceUploadingId === char.id"
-                          @click="onSd2VoiceReplace(char)"
-                        >
-                          更换
-                        </el-button>
-                        <span
-                          style="font-size:11px;color:#67c23a"
-                          :title="'音色文件：' + (char.seedance2_voice_asset?.url || '')"
-                        >音色已设置：{{ voiceLabelFor(char) }}</span>
-                      </template>
-                      <template v-else>
-                        <el-button
-                          size="small"
-                          :type="char.seedance2_voice_asset?.status === 'stale' ? 'warning' : 'info'"
-                          plain
-                          :loading="sd2VoiceUploadingId === char.id"
-                          @click="onSd2VoicePrimaryAction(char)"
-                        >
-                          {{ sd2VoiceActionLabel(char) }}
-                        </el-button>
-                        <span v-if="char.seedance2_voice_asset?.status === 'stale'" style="font-size:11px;color:#e6a23c">需刷新</span>
-                      </template>
+                    <!-- 角色音色参考（内置音色库） -->
+                    <div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                       <el-button
                         size="small"
                         type="primary"
@@ -560,7 +514,6 @@
                         <el-icon><Collection /></el-icon>
                         <span style="margin-left:4px">内置音色库</span>
                       </el-button>
-                      <span style="font-size:10px;color:#909399">Seedance 2.0 / MiniMax H3 均生效</span>
                     </div>
                     <div v-if="getCharAffectedStoryboards(char.id).length" class="asset-storyboard-link">
                       <span class="asl-label">影响的分镜：</span>
@@ -859,9 +812,10 @@
           <el-checkbox v-model="storyboardUseFirstLastFrame" @change="onStoryboardUseFirstLastFrameChange">
             首尾帧参考图（经典模式双槽；图生前先走专业帧提示词模块 first/last，再生图；视频绑定 first/last_frame_url）
           </el-checkbox>
-          <el-checkbox v-model="storyboardUniversalOmni" @change="() => saveProjectSettings(false)">
+          <el-checkbox v-model="storyboardUniversalOmni" @change="onStoryboardUniversalOmniChange">
             全能分镜模式（每镜输出多子分镜段落式 universal_segment_text，与「生成全能提示词」同版式）
           </el-checkbox>
+          <span class="sb-config-hint">两者互斥：首尾帧＝经典双槽，全能分镜＝每镜多子分镜</span>
           <el-checkbox v-model="storyboardIncludeNarration" @change="() => saveProjectSettings(false)">
             生成分镜时生成解说旁白（narration，与对白分开，便于后期 TTS）
           </el-checkbox>
@@ -1079,9 +1033,9 @@
                   @change="() => onStoryboardSceneChange(sb.id)"
                 >
                   <el-option
-                    v-for="s in (scenes || [])"
+                    v-for="s in sceneSelectOptions"
                     :key="s.id"
-                    :label="s.location"
+                    :label="s.label || s.location"
                     :value="s.id"
                   />
                 </el-select>
@@ -1232,7 +1186,7 @@
                     <el-tooltip placement="top" :show-after="280" :show-arrow="false" popper-class="sb-universal-tooltip-popper">
                       <template #content>
                         <div class="sb-universal-tooltip">
-                          全能生视频链路（<strong>AI 配置 · 视频</strong> 中选接口规范：<code>kling_omni</code> 可灵 Omni、<code>volcengine_omni</code> 火山即梦 Seedance 2.0 多图参考、<code>minimax_h3</code> MiniMax H3 多模态参考；模型如 <code>kling-video-o1</code>、<code>doubao-seedance-2-0-260128</code>、<code>MiniMax-H3</code> 等以控制台为准）：此处为提交主提示词；只要本框有内容，生视频时<strong>只</strong>发送这段，不会拼接下方「视频提示词」里的动作/对话/旁白。参考图顺序一般为：场景 → 角色（多张）→ 物品（<strong>不含</strong>经典分镜中间主图）；请用 <strong>@图片1</strong>、<strong>@图片2</strong>…（<strong>@图片N 后建议加半角空格</strong>）对应参考图，勿用 @姓名 指图；有场景图时 <strong>@图片1</strong> 只表环境，人物从 <strong>@图片2</strong> 起。若场景参考是<strong>四宫格/多视角拼图</strong>，仅借空间与氛围，须在文案中写明<strong>单镜头完整画幅、禁止分屏宫格</strong>，避免成片模仿拼图布局。全能提示词下拉中「生成」会按<strong>本条分镜总时长</strong>与本集剧本、镜序、邻镜信息，自动决定子分镜数 M（第2行「由以下M个分镜…」），第4行起为「分镜1：T1秒:」…多行，且各段秒数之和等于本镜时长；第3行仍为环境/参考图约束；「生成」为<strong>流式输出</strong>到本框。若本框留空，则退回仅用「视频提示词」。
+                          全能生视频链路（<strong>AI 配置 · 视频</strong> 选 ComfyUI 本地工作流，即本地 MiniMax H3 多模态参考生视频）：此处为提交主提示词；只要本框有内容，生视频时<strong>只</strong>发送这段，不会拼接下方「视频提示词」里的动作/对话/旁白。参考图顺序一般为：场景 → 角色（多张）→ 物品（<strong>不含</strong>经典分镜中间主图）；请用 <strong>@图片1</strong>、<strong>@图片2</strong>…（<strong>@图片N 后建议加半角空格</strong>）对应参考图，勿用 @姓名 指图；有场景图时 <strong>@图片1</strong> 只表环境，人物从 <strong>@图片2</strong> 起。若场景参考是<strong>四宫格/多视角拼图</strong>，仅借空间与氛围，须在文案中写明<strong>单镜头完整画幅、禁止分屏宫格</strong>，避免成片模仿拼图布局。全能提示词下拉中「生成」会按<strong>本条分镜总时长</strong>与本集剧本、镜序、邻镜信息，自动决定子分镜数 M（第2行「由以下M个分镜…」），第4行起为「分镜1：T1秒:」…多行，且各段秒数之和等于本镜时长；第3行仍为环境/参考图约束；「生成」为<strong>流式输出</strong>到本框。若本框留空，则退回仅用「视频提示词」。
                         </div>
                       </template>
                       <el-icon class="sb-universal-hint-icon" tabindex="0" role="img" aria-label="片段说明">
@@ -1856,37 +1810,6 @@
       </template>
     </el-dialog>
 
-    <el-dialog
-      v-model="showCharSd2Cert"
-      title="SD2 认证详情"
-      width="min(720px, 92vw)"
-      destroy-on-close
-      class="sd2-cert-dialog"
-    >
-      <template v-if="charSd2CertPayload">
-        <el-descriptions :column="1" border size="small" class="sd2-cert-desc">
-          <el-descriptions-item label="素材 ID">
-            <span class="sd2-cert-value">{{ charSd2CertPayload.hub_asset_id || '—' }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="asset_url">
-            <code class="sd2-cert-value">{{ charSd2CertPayload.asset_url || '—' }}</code>
-          </el-descriptions-item>
-          <el-descriptions-item label="状态">
-            <span class="sd2-cert-value">{{ charSd2CertPayload.status || '—' }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="注册图片 URL">
-            <span class="sd2-cert-value">{{ charSd2CertPayload.source_image_url || '—' }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item v-if="charSd2CertPayload.sd2_provider" label="认证提供方">
-            <span class="sd2-cert-value">{{ charSd2CertPayload.sd2_provider }}</span>
-          </el-descriptions-item>
-        </el-descriptions>
-      </template>
-      <template #footer>
-        <el-button @click="showCharSd2Cert = false">关闭</el-button>
-      </template>
-    </el-dialog>
-
     <!-- 内置音色库弹窗 -->
     <el-dialog
       v-model="voiceBankVisible"
@@ -1897,7 +1820,7 @@
     >
       <div v-loading="voiceBankLoading" style="min-height:220px">
         <p style="font-size:12px;color:#909399;margin:0 0 10px">
-          选择一个人声音色应用到当前角色（Seedance 2.0 / MiniMax H3 均生效），可先试听再应用。
+          选择一个人声音色应用到当前角色（本地 MiniMax H3 生效），可先试听再应用。
         </p>
         <div v-if="voiceBankGroups.length" class="voice-bank-groups">
           <div v-for="g in voiceBankGroups" :key="g.lang" class="voice-bank-group">
@@ -2452,7 +2375,7 @@
             <el-radio-button value="classic">经典分镜</el-radio-button>
             <el-radio-button value="universal">全能模式</el-radio-button>
           </el-radio-group>
-          <div class="vp-mode-hint">全能模式：中间为片段描述；生视频时使用 <strong>AI 配置里当前启用的视频</strong>（支持 <code>kling_omni</code> 可灵 Omni、<code>volcengine_omni</code> 火山即梦 Seedance 2.0、<code>minimax_h3</code> MiniMax H3 等；模型以 AI 配置为准）并合并场景/角色/道具等参考图（不含经典分镜主图）。经典字段保留，可随时切回。</div>
+          <div class="vp-mode-hint">全能模式：中间为片段描述；生视频时使用 <strong>AI 配置里当前启用的本地 ComfyUI 视频工作流</strong>（MiniMax H3 多模态参考）并合并场景/角色/道具等参考图（不含经典分镜主图）。经典字段保留，可随时切回。</div>
         </el-form-item>
         <el-row :gutter="12">
           <el-col :span="6">
@@ -2597,7 +2520,6 @@
           </el-collapse-item>
         </el-collapse>
 
-
         <el-form-item label="动作">
           <el-input v-model="sbAction[videoParamsTarget.id]" type="textarea" :rows="2" placeholder="动作描述" />
         </el-form-item>
@@ -2722,6 +2644,9 @@ import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
 import { generationSettingsAPI } from '@/api/prompts'
 import { parseScriptIntoEpisodes, episodesListToPlainScript } from '@/utils/scriptEpisodes'
+import { resolveStoryboardModes, storyboardModeDropMessage, SB_MODE_UNIVERSAL, SB_MODE_FIRST_LAST } from '@/utils/storyboardModes'
+import { pickSceneById, buildSceneSelectOptions } from '@/utils/sceneOptions'
+import { buildClassicVideoRefs } from '@/utils/videoRefs'
 import { estimateVideoDurationSecFromCharLen, STORYBOARD_PLAN_SECONDS, DEFAULT_VIDEO_CLIP_DURATION } from '@/utils/scriptDurationEstimate'
 import { exportStoryboardSheet } from '@/utils/exportStoryboardSheet'
 import StylePickerButton from '@/components/StylePickerButton.vue'
@@ -2761,7 +2686,6 @@ function goCanvasMode() {
   const query = selectedEpisodeId.value ? { episode: String(selectedEpisodeId.value) } : {}
   router.push({ path: `/film/${dramaId.value}/canvas`, query })
 }
-
 
 const showAiConfigDialog = ref(false)
 watch(showAiConfigDialog, (open) => {
@@ -2907,6 +2831,18 @@ const videoWatermarkText = ref('')
 const dramaId = computed(() => store.dramaId)
 const characters = computed(() => store.characters)
 const scenes = computed(() => store.scenes)
+/** 场景下拉：本集场景 + 已被本集分镜绑定的跨集场景（后者标注属于第几集） */
+const sceneSelectOptions = computed(() =>
+  buildSceneSelectOptions({
+    episodeScenes: scenes.value,
+    allScenes: dramaAllScenes.value,
+    boundSceneIds: Object.values(sbSceneId.value),
+    episodeNumberOf: (episodeId) => {
+      const ep = (store.drama?.episodes || []).find((e) => Number(e.id) === Number(episodeId))
+      return ep ? ep.episode_number : null
+    },
+  })
+)
 const props = computed(() => store.props)
 const storyboards = computed(() => store.storyboards)
 const currentEpisode = computed(() => store.currentEpisode)
@@ -2996,8 +2932,7 @@ async function runConcurrently(items, concurrency, fn, options = {}) {
 const {
   showEditCharacter, editCharacterForm, editCharacterSaving, editCharacterPromptGenerating,
   extractingCharAppearance, extractingAnchors, addCharRefImage, addCharRefFileInput,
-  charactersGenerating, generatingCharIds, sd2CertifyingId, showCharSd2Cert, charSd2CertPayload,
-  sd2VoiceUploadingId,
+  charactersGenerating, generatingCharIds,
   voiceBankVisible, voiceBankLoading, voiceBankList, voiceBankGroups, voiceBankApplyingId, currentVoiceBankChar,
   showCharLibrary, charLibraryList, charLibraryLoading, charLibraryPage, charLibraryPageSize,
   charLibraryTotal, charLibraryKeyword, charLibraryTab,
@@ -3006,8 +2941,7 @@ const {
   editCharLibrarySaving, addingCharToLibraryId, addingCharToMaterialId, addingCharFromLibraryId,
   charRoleLabel, onGenerateCharacters: onGenerateCharactersRaw, openAddCharacter, stopCharacterPromptPoll, editCharacter,
   saveCharRefImageIfAny, submitEditCharacter, doGenerateCharacterPrompt, doExtractCharFromImage,
-  extractIdentityAnchors, clearCharRefImage, onCloseCharDialog, onDeleteCharacter, onGenerateCharacterImage, onSd2CertifyCharacter, onSd2CertifyRefresh, sd2ActionLabel, onSd2PrimaryAction, openCharSd2CertDialog,
-  onSd2VoicePrimaryAction, onSd2VoiceReplace, sd2VoiceActionLabel, playSd2Voice,
+  extractIdentityAnchors, clearCharRefImage, onCloseCharDialog, onDeleteCharacter, onGenerateCharacterImage,
   openVoiceBank, closeVoiceBank, applyVoiceBank, playVoiceBankAudio,
   loadVoiceBankList, voiceLabelFor,
   loadCharLibraryList, debouncedLoadCharLibrary, loadDramaAllCharList, debouncedLoadDramaAllCharList,
@@ -3111,8 +3045,6 @@ async function onExtractScenes() {
     throw e
   }
 }
-
-
 
 // 资源管理大面板及子区块折叠状态
 const resourcePanelCollapsed = ref(false)
@@ -3274,6 +3206,8 @@ async function cancelActiveTask(item) {
 const sbCharacterIds = ref({})  // sbId -> number[] 多选角色
 const sbPropIds = ref({})       // sbId -> number[] 多选物品
 const sbSceneId = ref({})
+/** 全剧场景（仅用于解析跨集绑定的场景/下拉补项，常规选项仍只显示本集） */
+const dramaAllScenes = ref([])
 const sbDialogue = ref({})
 const sbNarration = ref({})
 const sbShotType = ref({})
@@ -3375,7 +3309,7 @@ const storyboardCount = ref(null) // 分镜数量
 const videoDuration = ref(null) // 视频总长度
 /** 分镜生成时是否要求 AI 输出 narration（解说旁白） */
 const storyboardIncludeNarration = ref(false)
-/** 分镜生成是否使用全能模式（universal_segment_text，对接 Seedance / 可灵 Omni） */
+/** 分镜生成是否使用全能模式（universal_segment_text，对接本地 ComfyUI / MiniMax H3） */
 const storyboardUniversalOmni = ref(false)
 const storyboardUseFirstLastFrame = ref(false)
 const exportingStoryboardSheet = ref(false)
@@ -3754,12 +3688,36 @@ function sbMainVideoPlayerKey(sbId) {
   const src = assetVideoUrl(v)
   return `${v.id}:${v.updated_at || ''}:${src.slice(0, 160)}`
 }
+function onStoryboardUniversalOmniChange() {
+  applyStoryboardModeChange(
+    storyboardUniversalOmni.value ? SB_MODE_UNIVERSAL : null
+  )
+  saveProjectSettings(false)
+}
+
 function onStoryboardUseFirstLastFrameChange() {
+  applyStoryboardModeChange(
+    storyboardUseFirstLastFrame.value ? SB_MODE_FIRST_LAST : null
+  )
   if (storyboardUseFirstLastFrame.value && gridMode.value !== 'single') {
     gridMode.value = 'single'
     ElMessage.info('首尾帧模式已开启，序列图已切换为单张')
   }
   saveProjectSettings(false)
+}
+
+/** 把「全能分镜 / 首尾帧」互斥规则应用到两个开关上，并在关掉一方时提示用户 */
+function applyStoryboardModeChange(preferred) {
+  const modes = resolveStoryboardModes({
+    universalOmni: storyboardUniversalOmni.value,
+    useFirstLastFrame: storyboardUseFirstLastFrame.value,
+    preferred,
+  })
+  storyboardUniversalOmni.value = modes.universalOmni
+  storyboardUseFirstLastFrame.value = modes.useFirstLastFrame
+  const msg = storyboardModeDropMessage(modes.dropped)
+  if (msg) ElMessage.info(msg)
+  return modes
 }
 
 function uploadingSbImageSlot(sbId) {
@@ -4004,8 +3962,6 @@ function isSbGenerating(sbId) {
     || generatingSbVideoIds.has(sbId)
     || generatingUniversalSegmentIds.has(sbId)
 }
-
-
 
 function buildSbGenMeta(sb, resourceType, labelPrefix) {
   const num = sb?.storyboard_number ?? sb?.id
@@ -4799,9 +4755,26 @@ async function loadDrama() {
     storeVideoResolution.value = (d.metadata && d.metadata.video_resolution) ? d.metadata.video_resolution : '720p'
     videoClipDuration.value = (d.metadata && d.metadata.video_clip_duration) ? Number(d.metadata.video_clip_duration) : DEFAULT_VIDEO_CLIP_DURATION
     storyboardIncludeNarration.value = !!(d.metadata && d.metadata.storyboard_include_narration)
-    storyboardUniversalOmni.value = !!(d.metadata && d.metadata.storyboard_universal_omni)
-    storyboardUseFirstLastFrame.value = !!(d.metadata && d.metadata.storyboard_use_first_last_frame)
     lastFrameUseFirstLayoutLock.value = d.metadata?.last_frame_use_first_layout_lock !== false
+    // 全能分镜 与 首尾帧参考图 互斥：旧数据里可能两者同时为 true（此时首尾帧根本不生效）。
+    // 载入时保留全能分镜、关掉首尾帧并落库，避免「勾着但不生效」的状态继续存在。
+    // 全剧场景：给「分镜绑定的是别的剧集场景」时兜底解析用；失败不影响主流程
+    sceneAPI
+      .list(d.id)
+      .then((list) => {
+        dramaAllScenes.value = Array.isArray(list) ? list : (list?.items || list?.scenes || [])
+      })
+      .catch(() => {})
+    const sbModes = resolveStoryboardModes({
+      universalOmni: !!(d.metadata && d.metadata.storyboard_universal_omni),
+      useFirstLastFrame: !!(d.metadata && d.metadata.storyboard_use_first_last_frame),
+    })
+    storyboardUniversalOmni.value = sbModes.universalOmni
+    storyboardUseFirstLastFrame.value = sbModes.useFirstLastFrame
+    if (sbModes.dropped) {
+      ElMessage.warning('项目设置里「全能分镜模式」与「首尾帧参考图」同时开启，已保留全能分镜并关闭首尾帧（两者互斥）')
+      saveProjectSettings(false)
+    }
     if (storyboardUseFirstLastFrame.value && gridMode.value !== 'single') {
       gridMode.value = 'single'
     }
@@ -4904,11 +4877,28 @@ function onStoryboardPropChange(sbId) {
 }
 
 /** 当前分镜选中的场景对象（用于下方缩略图） */
+/**
+ * 经典/首尾帧镜头提交视频时的参考图：场景图在前、本镜主图在后（都带标签，
+ * 后端 applyH3RefsToApi 会据此逐张生成 <Picture N> 映射行）。
+ * 全能镜头走 omniRefs，不走这里；末帧不再当作参考图（它由 last_frame_url 作关键帧锚定）。
+ */
+function buildClassicSbVideoRefs(sb, absoluteUrl) {
+  const scene = getSbSelectedScene(sb.id)
+  const sceneUrl = scene && hasAssetImage(scene) ? toAbsoluteImageUrl(assetImageUrl(scene)) : ''
+  const { urls, labels } = buildClassicVideoRefs({
+    sceneImageUrl: sceneUrl,
+    sceneName: scene ? (scene.location || scene.name) : '',
+    ownFrameUrl: absoluteUrl,
+  })
+  return { refUrls: urls.length ? urls : undefined, refLabels: labels }
+}
+
 function getSbSelectedScene(sbId) {
   const sceneId = sbSceneId.value[sbId]
   if (sceneId == null) return null
-  const list = scenes.value ?? []
-  return list.find((s) => Number(s.id) === Number(sceneId)) || null
+  // 本集查不到时回退到全剧场景：老数据里分镜可能绑着别的剧集同地点的场景行，
+  // 不回退的话界面显示不出场景、全能模式也收不到场景参考图。
+  return pickSceneById(sceneId, scenes.value, dramaAllScenes.value)
 }
 
 /** 当前分镜选中的角色对象列表（用于下方缩略图） */
@@ -5653,7 +5643,6 @@ function onResourceImageFileChange(ev) {
   })
 }
 
-
 function getSbFirstFrameUrl(sb) {
   const img = storyboardUseFirstLastFrame.value ? getSbFirstImage(sb.id) : getSbImage(sb.id)
   if (img && (img.image_url || img.local_path)) return assetImageUrl(img)
@@ -6116,10 +6105,11 @@ function buildUniversalSegmentFieldOverrides(sb) {
     atmosphere: trimOrNull(sbAtmosphere.value[id] ?? sb.atmosphere),
     shot_type: trimOrNull(sbShotType.value[id] ?? sb.shot_type),
     movement: trimOrNull(sbMovement.value[id] ?? sb.movement),
+    // 情绪与强度决定表演幅度：不传的话后端写手拿不到「这一镜该演多强」
+    emotion: trimOrNull(sb.emotion),
+    emotion_intensity: sb.emotion_intensity ?? null,
   }
 }
-
-
 
 function onUniversalSegmentPromptMenu(sb, cmd) {
   if (cmd === 'generate') onGenerateUniversalSegmentPrompt(sb)
@@ -6206,16 +6196,15 @@ function buildSbVideoPromptForApi(sb, { preferClassicPrompt = false } = {}) {
  * MiniMax 官方多模态参考生视频（r2va）示例用「参考图1 / 参考图2 / 参考视频1」引用素材，
  * 编号从 1 起，对应 content 数组里 reference_image / reference_video 的提交顺序；
  * 不认 @图片N / <IMAGE_N> 这类占位符，不转换会被当成画面文字导致生成理解错乱。
- * 仅 minimax_h3 时启用，不影响 kling_omni / volcengine_omni / grok 的编排。
+ * 仅本地 MiniMax H3（minimax_h3）时启用，不影响其它编排。
  */
 function adaptPromptForVideoProvider(prompt, provider) {
   const p = String(provider || '').toLowerCase()
-  const isMiniMax = p === 'minimax_h3' || /minimax[-_]?h3/.test(p)
+  const isMiniMax = p === 'minimax' || p === 'minimax_h3' || /minimax[-_]?h3/.test(p)
   if (!isMiniMax) return prompt
   // @图片N -> 参考图N（按官方 r2va 示例），保留上下文避免粘连
   return String(prompt || '').replace(/@图片\s*(\d+)/g, (m, num) => `参考图${num}`)
 }
-
 
 /** 全能模式：与后端 buildUniversalSegmentUserPromptBundle 一致的参考槽位（逐张独立）。
  *  场景、每个角色、每个道具各占一个槽（@图片1、@图片2…），<Picture N> 与 ref_image_0..N 顺序一致。
@@ -6306,7 +6295,7 @@ function collectSbOmniReferenceAbsoluteUrls(sb) {
   return urls.slice(0, 10)
 }
 
-/** 非 Seedance2 全能降级：仅场景参考图（若有） */
+/** 全能模式降级（视频配置非本地 ComfyUI）：仅场景参考图（若有） */
 function collectSbSceneOnlyReferenceAbsoluteUrls(sb) {
   if (!sb?.id) return []
   const scene = getSbSelectedScene(sb.id)
@@ -6343,55 +6332,23 @@ async function getActiveVideoAiConfig() {
   return activeVideoAiConfigCache
 }
 
-function videoModelNameFromAiConfig(cfg) {
-  if (!cfg) return ''
-  const dm = (cfg.default_model || '').toString().trim()
-  if (dm) return dm
-  const m = cfg.model
-  if (Array.isArray(m) && m.length) return String(m[0]).trim()
-  return String(m || '').trim()
-}
-
 /**
- * Seedance 2.x 家族模型名判定（与后端 videoClient.isSeedance2FamilyModel 对齐）。
- * 含官方 doubao-seedance-2-0-* / jimeng-video-seedance-2.0，以及中转别名 mingiz-sd2、*-sd2 等。
+ * 全能分镜 + 当前视频配置是否可走多图参考。
+ * 只有本地 ComfyUI 视频工作流（含 MiniMax H3 r2v 参考生视频）支持多图参考。
  */
-function isSeedance2VideoModel(modelName) {
-  const m = String(modelName || '').toLowerCase().trim()
-  if (!m) return false
-  if (/seedance[-_]?2|seedance2/.test(m)) return true
-  if (/2[-_]0[-_]/.test(m)) return true
-  // 网关别名：mingiz-sd2、foo_sd2、sd2-bar
-  if (/(^|[-_./])sd2($|[-_./])/.test(m)) return true
-  return false
-}
-
-/** 全能分镜 + 当前视频配置是否可走多图参考（火山 Seedance 2.0、可灵 Omni、Agnes Video 等） */
+/**
+ * 全能模式（一镜一次生成 + 多图参考）只支持两条视频通道：
+ *   ① 本地/远程 ComfyUI（工作流里跑 MiniMax H3）
+ *   ② 云端 MiniMax H3（官方 V2 API，公司没显卡时用）
+ * 其它 api_protocol（已下线的火山/即梦/可灵…）一律不走全能模式，且提交时会明确报错而不是静默降级。
+ */
 function canUseUniversalOmniVideoApi(cfg) {
   if (!cfg) return false
   const proto = String(cfg.api_protocol || '').toLowerCase()
   const provider = String(cfg.provider || '').toLowerCase()
-  const model = videoModelNameFromAiConfig(cfg).toLowerCase()
-  if (proto === 'kling_omni') return true
-  // 选了 volcengine_omni 即表示走多图参考；模型名可能是 996 等网关别名（如 mingiz-sd2），勿再按 seedance 字样拦截
-  if (proto === 'volcengine_omni') return true
-  if (proto === 'agnes' || provider === 'agnes' || /agnes-video/.test(model)) {
-    return true
-  }
-  // ComfyUI 本地工作流（如 MiniMax H3 r2v 参考生视频 A03）同样支持多图参考
-  if (proto === 'comfyui') return true
-  // MiniMax H3 支持多模态参考生视频（reference_image 最多 9 张）：文档明确支持多图参考
-  if (proto === 'minimax_h3' || provider === 'minimax_h3' || /minimax[-_]?h3/.test(model)) {
-    return true
-  }
-  return false
-}
-
-async function confirmUniversalNonSeedance2Video() {
-  await ElMessageBox.confirm(
-    '你当前视频模型不支持多图参考，全能模式将降级：优先用分镜主图，否则仅传场景参考图。是否继续？',
-    '全能模式与模型不匹配',
-    { confirmButtonText: '继续', cancelButtonText: '取消', type: 'warning' }
+  return (
+    proto === 'comfyui' || provider === 'comfyui' ||
+    proto === 'minimax_h3' || provider === 'minimax' || provider === 'minimax_h3'
   )
 }
 
@@ -6574,31 +6531,35 @@ async function onBatchInferParams() {
 async function onGenerateSbVideo(sb) {
   if (!dramaId.value || !sb?.id || !sbCanSubmitVideo(sb)) return
   const universal = isSbUniversalMode(sb.id)
-  let universalOmniApi = universal
   // 提前取视频配置（提交处也要用来判断文案 provider 适配），避免只在 universal 分支内定义导致 use 时报未定义
   const videoCfg = await getActiveVideoAiConfig()
-  if (universal) {
-    if (!canUseUniversalOmniVideoApi(videoCfg)) {
-      try {
-        await confirmUniversalNonSeedance2Video()
-      } catch {
-        return
-      }
-      universalOmniApi = false
-    }
+  // 全能模式必须走 ComfyUI（本地或远程）。配置不对时**明确报错并中止**，不再静默降级 ——
+  // 静默降级会让用户以为提交成功了，实际送出去的参考图与预期完全不同（最难查的一类问题）。
+  if (universal && !canUseUniversalOmniVideoApi(videoCfg)) {
+    ElMessage.error(
+      `全能模式需要 ComfyUI 或云端 MiniMax H3 视频配置，当前是「${videoCfg?.name || '未配置'}」（provider=${videoCfg?.provider || '-'} / api_protocol=${videoCfg?.api_protocol || '-'}）。请到「AI 配置」改视频配置。`
+    )
+    return
   }
+  const universalOmniApi = universal
   const omniItems = universalOmniApi ? collectSbOmniReferenceItems(sb) : []
   const omniRefs = omniItems.map(i => i.url)
   const omniLabels = omniItems.map(i => omniRefLabel(i))
   const sceneOnlyRefs = universal && !universalOmniApi ? collectSbSceneOnlyReferenceAbsoluteUrls(sb) : []
   const hasClassicFrame = !!getSbFirstFrameUrl(sb)
+  // 经典/首尾帧镜头也带场景参考图（不依赖全能分镜模式）：帧图里虽有环境，
+  // 但中段运镜露出帧外区域、或同地点多镜之间，环境仍会漂移，多一张场景图让它收敛。
+  const sbSceneForClassic = universalOmniApi ? null : getSbSelectedScene(sb.id)
+  const classicSceneRefUrl = sbSceneForClassic && hasAssetImage(sbSceneForClassic)
+    ? toAbsoluteImageUrl(assetImageUrl(sbSceneForClassic))
+    : ''
   let hasAnyImage = false
   if (universalOmniApi) {
     hasAnyImage = omniRefs.length > 0
   } else if (universal) {
     hasAnyImage = hasClassicFrame || sceneOnlyRefs.length > 0
   } else {
-    hasAnyImage = hasClassicFrame
+    hasAnyImage = hasClassicFrame || !!classicSceneRefUrl
   }
   if (!hasAnyImage) {
     if (!universal) {
@@ -6635,6 +6596,7 @@ async function onGenerateSbVideo(sb) {
   try {
     let absoluteUrl = ''
     let referenceUrls = undefined
+    let refLabels = omniLabels
     if (universalOmniApi) {
       referenceUrls = omniRefs.length ? omniRefs : undefined
       absoluteUrl = omniRefs[0] || ''
@@ -6650,7 +6612,9 @@ async function onGenerateSbVideo(sb) {
     } else {
       const firstFrameUrl = await getMainImageUrlForVideo(sb)
       absoluteUrl = toAbsoluteImageUrl(firstFrameUrl)
-      referenceUrls = absoluteUrl ? [absoluteUrl] : undefined
+      const classicRefs = buildClassicSbVideoRefs(sb, absoluteUrl)
+      referenceUrls = classicRefs.refUrls
+      if (classicRefs.refLabels.length) refLabels = classicRefs.refLabels
     }
     const { first: vFirst, last: vLast } = sbVideoFirstLastUrls(sb, universalOmniApi, null)
     if (!universalOmniApi && vLast && referenceUrls && !referenceUrls.includes(vLast)) {
@@ -6665,7 +6629,7 @@ async function onGenerateSbVideo(sb) {
       first_frame_url: (vFirst || (universalOmniApi ? undefined : absoluteUrl)) || undefined,
       last_frame_url: vLast || undefined,
       reference_image_urls: referenceUrls,
-      reference_labels: omniLabels,
+      reference_labels: refLabels,
       reference_audio_urls: sbAudioRefUrls(sb),
       style: getSelectedStyle(),
       aspect_ratio: projectAspectRatio.value || '16:9',
@@ -6837,7 +6801,6 @@ async function refreshStoryboardsForEpisode(episodeId) {
 async function refreshStoryboardsOnly() {
   return refreshStoryboardsForEpisode(currentEpisodeId.value)
 }
-
 
 async function onGenerateStoryboard() {
   trackFilmCreateAction('generate_storyboard_click')
@@ -7107,12 +7070,11 @@ async function startBatchVideoGeneration() {
             }
           }
           const { first: vFirst, last: vLast } = sbVideoFirstLastUrls(sb, universal, contiguityFirstFrameUrl || undefined)
-          let refUrls = universal
+          const classicRefs = universal ? null : buildClassicSbVideoRefs(sb, vFirst || absoluteUrl)
+          const refUrls = universal
             ? (omniRefs.length ? omniRefs : undefined)
-            : (absoluteUrl ? [absoluteUrl] : undefined)
-          if (!universal && vLast && refUrls && !refUrls.includes(vLast)) {
-            refUrls = [...refUrls, vLast]
-          }
+            : classicRefs.refUrls
+          const refLabels = universal ? omniLabels : classicRefs.refLabels
           const res = await videosAPI.create({
             drama_id: dramaId.value,
             storyboard_id: sb.id,
@@ -7121,7 +7083,7 @@ async function startBatchVideoGeneration() {
             first_frame_url: vFirst,
             last_frame_url: vLast,
             reference_image_urls: refUrls,
-            reference_labels: omniLabels,
+            reference_labels: refLabels,
             reference_audio_urls: sbAudioRefUrls(sb),
             style: getSelectedStyle(),
             aspect_ratio: projectAspectRatio.value || '16:9',
@@ -7794,12 +7756,11 @@ async function runOneClickPipeline(textOnly = false) {
             const firstFrameUrl = await getMainImageUrlForVideo(sb)
             const absoluteUrl = universal ? (omniRefs[0] || '') : toAbsoluteImageUrl(firstFrameUrl)
             const { first: vFirst, last: vLast } = sbVideoFirstLastUrls(sb, universal, null)
-            let refUrls = universal
+            const classicRefs = universal ? null : buildClassicSbVideoRefs(sb, vFirst || absoluteUrl)
+            const refUrls = universal
               ? (omniRefs.length ? omniRefs : undefined)
-              : (absoluteUrl ? [absoluteUrl] : undefined)
-            if (!universal && vLast && refUrls && !refUrls.includes(vLast)) {
-              refUrls = [...refUrls, vLast]
-            }
+              : classicRefs.refUrls
+            const refLabels = universal ? omniLabels : classicRefs.refLabels
             const res = await videosAPI.create({
               drama_id: dramaIdVal,
               storyboard_id: sb.id,
@@ -7808,7 +7769,7 @@ async function runOneClickPipeline(textOnly = false) {
               first_frame_url: vFirst,
               last_frame_url: vLast,
               reference_image_urls: refUrls,
-            reference_labels: omniLabels,
+            reference_labels: refLabels,
             reference_audio_urls: sbAudioRefUrls(sb),
               style,
               aspect_ratio: projectAspectRatio.value || '16:9',
@@ -8128,12 +8089,11 @@ async function runRepairPipeline() {
             const firstFrameUrl = await getMainImageUrlForVideo(sb)
             const absoluteUrl = universal ? (omniRefs[0] || '') : toAbsoluteImageUrl(firstFrameUrl)
             const { first: vFirst, last: vLast } = sbVideoFirstLastUrls(sb, universal, null)
-            let refUrls = universal
+            const classicRefs = universal ? null : buildClassicSbVideoRefs(sb, vFirst || absoluteUrl)
+            const refUrls = universal
               ? (omniRefs.length ? omniRefs : undefined)
-              : (absoluteUrl ? [absoluteUrl] : undefined)
-            if (!universal && vLast && refUrls && !refUrls.includes(vLast)) {
-              refUrls = [...refUrls, vLast]
-            }
+              : classicRefs.refUrls
+            const refLabels = universal ? omniLabels : classicRefs.refLabels
             const res = await videosAPI.create({
               drama_id: dramaIdVal,
               storyboard_id: sb.id,
@@ -8142,7 +8102,7 @@ async function runRepairPipeline() {
               first_frame_url: vFirst,
               last_frame_url: vLast,
               reference_image_urls: refUrls,
-            reference_labels: omniLabels,
+            reference_labels: refLabels,
             reference_audio_urls: sbAudioRefUrls(sb),
               aspect_ratio: projectAspectRatio.value || '16:9',
               resolution: videoResolution.value || undefined,
@@ -8186,7 +8146,6 @@ async function runRepairPipeline() {
     addPipelineError('流程', e.message || String(e))
   }
 }
-
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onPreviewKeydown)
@@ -10766,12 +10725,6 @@ html.light .sb-narration-input :deep(.el-textarea__inner::placeholder) {
 
 /* 公共库弹窗 */
 .library-dialog .el-dialog__body { padding-top: 8px; }
-.sd2-cert-dialog .el-dialog__body { padding-top: 10px; }
-.sd2-cert-desc :deep(.el-descriptions__cell) {
-  white-space: normal;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-}
 /* 内置音色库弹窗 */
 .voice-bank-dialog .el-dialog__body { padding-top: 10px; }
 .voice-bank-dialog { max-width: 720px; }
@@ -10838,14 +10791,6 @@ html.light .sb-narration-input :deep(.el-textarea__inner::placeholder) {
   margin-top: 2px;
 }
 .voice-bank-item .vb-actions .el-button { flex: 1; }
-.sd2-cert-value {
-  display: inline-block;
-  max-width: 100%;
-  white-space: normal;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  line-height: 1.5;
-}
 .library-toolbar { margin-bottom: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .library-team-hint { font-size: 12px; color: var(--el-text-color-secondary); }
 .library-team-hint--warn { color: var(--el-color-warning); }

@@ -49,7 +49,11 @@ async function processPropExtraction(db, log, taskId, episodeId) {
   try {
     response = await aiClient.generateText(db, log, 'text', prompt, systemPrompt, {
       scene_key: 'prop_extraction',
-      max_tokens: 2000,
+      // 预算必须给足：本任务是「思考模式」项目下最吃 token 的一步之一。
+      // 实测 12000 时，思考一次就要 1.5 万字，预算被思考吃满 → 正文 0 字或写一半截断，
+      // 表现为「AI 返回内容为空」或道具列表缺项（排在后面的芯片等道具根本没输出）。
+      // 32000 下实测 18.6 秒稳定完成且 JSON 闭合。
+      max_tokens: 32000,
       temperature: 0.3,
     });
   } catch (err) {

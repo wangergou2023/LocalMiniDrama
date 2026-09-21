@@ -12,6 +12,22 @@ function getTaskStatus(db, log) {
 
 function getResourceTasks(db, log) {
   return (req, res) => {
+    // 批量优先：resource_ids=1,2,3 一次取回多个资源的任务。
+    // 前端任务同步原本为每个角色/道具/场景各打一次这个接口（实测 30 次/轮 × 4 秒定时器），
+    // 单秒峰值 61 次请求；批量参数让每轮只发 1 次。resource_id 单值形式保持兼容。
+    const rawIds = req.query.resource_ids;
+    if (rawIds != null && String(rawIds).trim() !== '') {
+      const ids = String(rawIds).split(',').map((s) => s.trim()).filter(Boolean);
+      if (ids.length > 2000) return response.badRequest(res, 'resource_ids 数量过多（上限 2000）');
+      try {
+        const tasks = taskService.getTasksByResources(db, ids);
+        return response.success(res, tasks);
+      } catch (err) {
+        log.errorw('Get resource tasks failed', { error: err.message, mode: 'batch', count: ids.length });
+        return response.internalError(res, err.message);
+      }
+    }
+
     const resourceId = req.query.resource_id;
     if (!resourceId) return response.badRequest(res, '缺少resource_id参数');
     try {

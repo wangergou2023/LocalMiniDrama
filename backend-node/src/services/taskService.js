@@ -25,6 +25,30 @@ function getTasksByResource(db, resourceId) {
   return rows.map(rowToTask);
 }
 
+/**
+ * 批量取多个 resource 的任务 —— 一次查询代替 N 次请求。
+ *
+ * 为什么需要它：前端 genStore.recoverPendingForEpisode 要为每个角色/道具/场景各查一次任务，
+ * 挂在 4 秒定时器上。实测某项目 5 角色 + 7 道具 + 18 场景 = 30 次/轮，日志里单秒峰值 61 次、
+ * 每分钟 500+ 次请求，全是同一个列表接口。改成一次 IN 查询后每轮只 1 次。
+ */
+function getTasksByResources(db, resourceIds) {
+  const ids = [...new Set((resourceIds || []).map((x) => String(x)).filter(Boolean))];
+  if (!ids.length) return [];
+  // SQLite 变量上限默认 999；分批查询，单批不超过 500 个，避免极端项目超限报错
+  const BATCH = 500;
+  const out = [];
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const chunk = ids.slice(i, i + BATCH);
+    const placeholders = chunk.map(() => '?').join(',');
+    const rows = db.prepare(
+      `SELECT * FROM async_tasks WHERE resource_id IN (${placeholders}) AND deleted_at IS NULL ORDER BY created_at DESC`
+    ).all(...chunk);
+    for (const row of rows) out.push(rowToTask(row));
+  }
+  return out;
+}
+
 function updateTaskStatus(db, taskId, status, progress, message) {
   const now = new Date().toISOString();
   let completedAt = null;
@@ -144,6 +168,7 @@ module.exports = {
   createTask,
   getTask,
   getTasksByResource,
+  getTasksByResources,
   updateTaskStatus,
   updateTaskError,
   updateTaskResult,

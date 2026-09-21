@@ -611,39 +611,51 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
         break
       }
 
-      const attachResourceTask = (resourceId, resourceType, label) => {
-        return taskAPI.listByResource(String(resourceId)).then((tasks) => {
-          for (const t of tasks || []) {
-            if (!isActiveTaskStatus(t.status)) continue
-            const meta = {
-              dramaId,
-              episodeId,
-              dramaTitle,
-              episodeNumber,
-              resourceType,
-              resourceId: Number(resourceId),
-              label,
-              taskId: t.id,
-            }
-            _recoverAttachTask(t.id, meta, () => callbacks.onDramaRefresh?.(), pollOpts)
-          }
-        }).catch(() => {})
+      // 资源图任务：一次批量取回，代替"每个资源各打一次接口"。
+      // 旧写法对 5 角色 + 7 道具 + 18 场景并发发 30 个请求，而本函数挂在 4 秒定时器上，
+      // 实测日志里单秒峰值 61 次、每分钟 500+ 次请求全是这一个列表接口。现在每轮只 1 次。
+      const resourceTargets = new Map()
+      for (const id of charIdSet) {
+        const c = characters.find((x) => Number(x.id) === Number(id))
+        resourceTargets.set(String(id), {
+          resourceType: GEN_RESOURCE.CHAR_IMAGE,
+          label: `${epLabel} 角色图: ${c?.name || id}`,
+        })
+      }
+      for (const id of propIdSet) {
+        const p = props.find((x) => Number(x.id) === Number(id))
+        resourceTargets.set(String(id), {
+          resourceType: GEN_RESOURCE.PROP_IMAGE,
+          label: `${epLabel} 道具图: ${p?.name || id}`,
+        })
+      }
+      for (const id of sceneIdSet) {
+        const s = scenes.find((x) => Number(x.id) === Number(id))
+        resourceTargets.set(String(id), {
+          resourceType: GEN_RESOURCE.SCENE_IMAGE,
+          label: `${epLabel} 场景图: ${s?.location || id}`,
+        })
       }
 
-      await Promise.all([
-        ...[...charIdSet].map((id) => {
-          const c = characters.find((x) => Number(x.id) === Number(id))
-          return attachResourceTask(id, GEN_RESOURCE.CHAR_IMAGE, `${epLabel} 角色图: ${c?.name || id}`)
-        }),
-        ...[...propIdSet].map((id) => {
-          const p = props.find((x) => Number(x.id) === Number(id))
-          return attachResourceTask(id, GEN_RESOURCE.PROP_IMAGE, `${epLabel} 道具图: ${p?.name || id}`)
-        }),
-        ...[...sceneIdSet].map((id) => {
-          const s = scenes.find((x) => Number(x.id) === Number(id))
-          return attachResourceTask(id, GEN_RESOURCE.SCENE_IMAGE, `${epLabel} 场景图: ${s?.location || id}`)
-        }),
-      ])
+      if (resourceTargets.size) {
+        const resourceTasks = await taskAPI.listByResources([...resourceTargets.keys()]).catch(() => [])
+        for (const t of resourceTasks || []) {
+          if (!isActiveTaskStatus(t.status)) continue
+          const target = resourceTargets.get(String(t.resource_id))
+          if (!target) continue
+          const meta = {
+            dramaId,
+            episodeId,
+            dramaTitle,
+            episodeNumber,
+            resourceType: target.resourceType,
+            resourceId: Number(t.resource_id),
+            label: target.label,
+            taskId: t.id,
+          }
+          _recoverAttachTask(t.id, meta, () => callbacks.onDramaRefresh?.(), pollOpts)
+        }
+      }
 
       await reconcileRunningTasks(reconcileAssets)
     } catch (e) {

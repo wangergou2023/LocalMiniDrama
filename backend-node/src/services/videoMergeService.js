@@ -437,16 +437,50 @@ async function processVideoMerge(db, log, mergeId, baseUrl) {
     try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
   }
 
-  const finalMergedUrl = mergedRelativePath || mergedUrlFallback;
+  // 拼接没产出文件，就绝不能报成功。
+  // 旧行为是把第一条片段的 URL 当成成品写进 episodes.video_url 并标成 completed ——
+  // 界面上显示「合成成功」，成片却只有第一条片段的长度：实测应为 129 秒的宣传片，
+  // 成片只有 10 秒（第 1 镜那一条），且 error_msg 为 null，完全看不出去哪儿查。
+  if (!mergedRelativePath) {
+    const reason = ffmpegAvailable
+      ? `视频拼接失败：ffmpeg 未产出合成文件（输入 ${localPaths.length} 段），详情见后端日志。`
+      : `视频拼接失败：找不到 ffmpeg（当前解析为 "${getFfmpegPath()}"）。`
+        + `请把 ffmpeg 与 ffprobe 放到 backend-node/tools/ffmpeg/ 目录下（Linux 下文件名不带 .exe），或设置环境变量 FFMPEG_PATH。`;
+    db.prepare(
+      'UPDATE video_merges SET status = ?, merged_url = ?, duration = ?, completed_at = ?, error_msg = ? WHERE id = ?'
+    ).run('failed', mergedUrlFallback, Math.round(totalDuration) || null, now, reason, mergeId);
+    // 不动 episodes.video_url：保留原有成片，避免把「第一条片段」冒充成新的成片
+    db.prepare('UPDATE episodes SET status = ?, updated_at = ? WHERE id = ?').run('failed', now, episodeId);
+    if (taskId) taskService.updateTaskError(db, taskId, reason);
+    log.error('Video merge failed (no merged file produced)', {
+      merge_id: mergeId,
+      episode_id: episodeId,
+      has_ffmpeg: ffmpegAvailable,
+      ffmpeg_path: getFfmpegPath(),
+      local_video_count: localPaths.length,
+      reason,
+    });
+    return;
+  }
+
+  // 成片地址必须是能直接播的绝对 URL。mergedRelativePath 是相对路径，直接写进
+  // episodes.video_url / merged_url 前端播不了 —— 此前没暴露，是因为 ffmpeg 缺失时
+  // 走的 first-clip 回退写进去的恰好是绝对 URL。
+  // 注意 baseUrl 本身就带 /static（形如 http://host:5679/static，resolveVideoToLocalPath
+  // 也按这个约定判断），所以不能再补一次，否则写出 /static/static/... 同样播不了。
+  const staticBase = String(baseUrl || '').replace(/\/$/, '');
+  const finalMergedUrl = staticBase
+    ? (staticBase.endsWith('/static')
+        ? `${staticBase}/${mergedRelativePath}`
+        : `${staticBase}/static/${mergedRelativePath}`)
+    : `/static/${mergedRelativePath}`;
+
   db.prepare(
     'UPDATE video_merges SET status = ?, merged_url = ?, duration = ?, completed_at = ?, error_msg = ? WHERE id = ?'
   ).run('completed', finalMergedUrl, Math.round(totalDuration) || null, now, null, mergeId);
   db.prepare('UPDATE episodes SET video_url = ?, status = ?, updated_at = ? WHERE id = ?').run(finalMergedUrl, 'completed', now, episodeId);
   if (taskId) {
     taskService.updateTaskResult(db, taskId, { merge_id: mergeId, video_url: finalMergedUrl, duration: Math.round(totalDuration) });
-  }
-  if (!mergedRelativePath) {
-    log.info('Video merge completed (first-clip fallback)', { merge_id: mergeId, episode_id: episodeId });
   }
 }
 

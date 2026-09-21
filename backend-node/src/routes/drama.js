@@ -224,14 +224,34 @@ function getExampleDramaDir() {
 function listExamples(log) {
   return (_req, res) => {
     const fs = require('fs');
+    const path = require('path');
     const dir = getExampleDramaDir();
     if (!dir) return response.success(res, []);
     try {
       const files = fs.readdirSync(dir).filter(f => f.endsWith('.zip'));
-      const items = files.map(f => {
-        const name = f.replace(/\.zip$/, '');
-        return { filename: f, name };
-      });
+      const items = [];
+      let skipped = 0;
+      for (const f of files) {
+        // 跳过 Git LFS 指针：仓库里示例 zip 走 LFS，没装 git-lfs 时它们只是 ~130 字节的
+        // 指针文本，列出来点了必然失败（旧行为报「ZIP 文件损坏」，让人以为文件坏了）。
+        // 只读文件头 200 字节判断，不整份读入。
+        let isPointer = false;
+        try {
+          const fd = fs.openSync(path.join(dir, f), 'r');
+          try {
+            const head = Buffer.alloc(200);
+            const n = fs.readSync(fd, head, 0, 200, 0);
+            isPointer = !!dramaImportService.parseLfsPointer(head.subarray(0, n));
+          } finally {
+            fs.closeSync(fd);
+          }
+        } catch (_) { /* 读不到就照常列出，交给导入时报错 */ }
+        if (isPointer) { skipped++; continue; }
+        items.push({ filename: f, name: f.replace(/\.zip$/, '') });
+      }
+      if (skipped) {
+        log.warn('List examples: 跳过 Git LFS 指针文件（真实示例内容未下载，需 git lfs pull）', { skipped, dir });
+      }
       response.success(res, items);
     } catch (err) {
       log.error('List examples failed', { error: err.message });
@@ -259,6 +279,12 @@ function importExample(db, cfg, log) {
       response.created(res, result);
     } catch (err) {
       log.error('Import example failed', { error: err.message });
+      // LFS 指针 / 格式错误属于"用户可修"的问题，返回 400 让界面直接显示可操作提示，
+      // 而不是 500（旧行为：界面只能看到一个笼统的"导入示例失败"）。
+      if (err.message && (err.message.includes('格式') || err.message.includes('缺少')
+        || err.message.includes('损坏') || err.message.includes('LFS'))) {
+        return response.badRequest(res, err.message);
+      }
       response.internalError(res, err.message || '导入示例失败');
     }
   };

@@ -15,10 +15,42 @@ function ensureDir(dir) {
 }
 
 /**
+ * 识别 Git LFS 指针文件。
+ *
+ * 仓库里 example_drama/*.zip 与 项目截图/*.mp4 走 Git LFS（见 .gitattributes）。没装 git-lfs 时
+ * 检出的只是 ~130 字节的指针文本（首行 `version https://git-lfs.github.com/spec/v1`），
+ * 并不是真 ZIP。旧代码把它直接丢给 AdmZip，报成「ZIP 文件损坏」，让人以为是文件坏了 ——
+ * 实际是内容从未下载。有了这个判断才能给出可操作的提示。
+ *
+ * @returns {{oid: string|null, size: number|null}|null}
+ */
+function parseLfsPointer(buffer) {
+  if (!buffer || buffer.length === 0 || buffer.length > 1024) return null;
+  let text;
+  try {
+    text = Buffer.isBuffer(buffer) ? buffer.toString('utf8') : String(buffer);
+  } catch (_) {
+    return null;
+  }
+  if (!/^version https:\/\/git-lfs\.github\.com\/spec\/v1/.test(text)) return null;
+  const oid = (text.match(/^oid sha256:([0-9a-f]{64})/m) || [])[1] || null;
+  const sizeRaw = (text.match(/^size (\d+)/m) || [])[1];
+  return { oid, size: sizeRaw ? Number(sizeRaw) : null };
+}
+
+/**
  * 解析 ZIP Buffer，返回 project.json 内容和媒体文件 Map
  * @returns {{ data: object, files: Map<string,Buffer> }}
  */
 function parseZip(zipBuffer) {
+  const lfs = parseLfsPointer(zipBuffer);
+  if (lfs) {
+    const mb = lfs.size ? `，真实文件 ${(lfs.size / 1048576).toFixed(1)} MB` : '';
+    throw new Error(
+      `该文件是 Git LFS 指针而非真实 ZIP${mb}。请先安装 git-lfs（apt install git-lfs）并执行 git lfs pull 下载示例内容，或改用「导入项目」上传本地项目 ZIP。`
+    );
+  }
+
   let zip;
   try {
     zip = new AdmZip(zipBuffer);
@@ -456,4 +488,4 @@ function _doImport(db, storagePath, files, data, d, title, metaStr, now, log) {
   return { drama_id: dramaId, title };
 }
 
-module.exports = { importDrama, parseZip };
+module.exports = { importDrama, parseZip, parseLfsPointer };

@@ -9,9 +9,29 @@ const path = require('path');
 const { randomUUID } = require('crypto');
 
 /**
+ * 拼 MiniMax T2A 的提交地址。
+ *
+ * 官方当前形态（见 https://platform.minimax.io/docs/api-reference/speech-t2a-http）：
+ *   POST https://api.minimaxi.com/v1/t2a_v2     Authorization: Bearer <token>
+ * 旧形态是 https://api.minimax.chat/v1/t2a_v2?GroupId=xxx（JWT key + GroupId 查询参数）。
+ *
+ * 之前这里把旧地址写死，导致用新版 sk-api- Key 的账号一律失败（403/404），而且填了
+ * base_url 也完全不生效。现在：优先用配置的 base_url；只填域名时自动补 /v1；
+ * GroupId 仅在显式填写时才拼上（向后兼容旧账号）。
+ */
+function buildMinimaxTtsUrl(baseUrl, groupId) {
+  let root = String(baseUrl || '').trim().replace(/\/+$/, '');
+  if (/\/t2a_v2$/i.test(root)) root = root.replace(/\/t2a_v2$/i, '');
+  if (!root) root = 'https://api.minimaxi.com/v1';
+  else if (!/\/v\d+$/i.test(root)) root += '/v1';
+  const q = groupId ? '?GroupId=' + encodeURIComponent(groupId) : '';
+  return `${root}/t2a_v2${q}`;
+}
+
+/**
  * 使用 MiniMax T2A v2 合成语音
  */
-async function synthesizeWithMinimax(text, voiceId, apiKey, groupId, model) {
+async function synthesizeWithMinimax(text, voiceId, apiKey, groupId, model, baseUrl) {
   const body = JSON.stringify({
     model: model || 'speech-02-hd',
     text,
@@ -29,7 +49,7 @@ async function synthesizeWithMinimax(text, voiceId, apiKey, groupId, model) {
       channel: 1,
     },
   });
-  const url = `https://api.minimax.chat/v1/t2a_v2?GroupId=${groupId}`;
+  const url = buildMinimaxTtsUrl(baseUrl, groupId);
   return new Promise((resolve, reject) => {
     const reqOpts = {
       method: 'POST',
@@ -46,12 +66,19 @@ async function synthesizeWithMinimax(text, voiceId, apiKey, groupId, model) {
       res.on('data', (chunk) => chunks.push(chunk));
       res.on('end', () => {
         if (res.statusCode !== 200) {
-          reject(new Error(`MiniMax TTS HTTP ${res.statusCode}: ${Buffer.concat(chunks).toString()}`));
+          reject(new Error(`MiniMax TTS HTTP ${res.statusCode}: ${Buffer.concat(chunks).toString().slice(0, 500)}`));
           return;
         }
-        const data = JSON.parse(Buffer.concat(chunks).toString());
-        if (data.base_resp?.status_code !== 0) {
-          reject(new Error(`MiniMax TTS error: ${data.base_resp?.status_msg || 'unknown'}`));
+        let data;
+        try {
+          data = JSON.parse(Buffer.concat(chunks).toString());
+        } catch (e) {
+          reject(new Error(`MiniMax TTS 返回非 JSON: ${Buffer.concat(chunks).toString().slice(0, 300)}`));
+          return;
+        }
+        // 新版响应可能不含 base_resp，只在它存在且非 0 时才判定失败
+        if (data.base_resp && Number(data.base_resp.status_code) !== 0) {
+          reject(new Error(`MiniMax TTS error: ${data.base_resp.status_msg || 'unknown'}`));
           return;
         }
         const audioHex = data.data?.audio;
@@ -142,10 +169,10 @@ async function synthesize(db, log, { text, storyboard_id, config, storage_base, 
       voiceId || 'female-shaonv',
       ttsConfig.api_key,
       groupId,
-      ttsModel || 'speech-02-hd'
+      ttsModel || 'speech-02-hd',
+      ttsConfig.base_url
     );
   } else if (provider === 'openai' || ttsConfig.base_url) {
-    console.log('==c sxy synthesizeWithOpenai', text, voiceId, ttsConfig.api_key, ttsConfig.base_url, ttsModel, finalSpeed);
     audioBuffer = await synthesizeWithOpenai(
       text,
       voiceId || 'alloy',

@@ -347,13 +347,6 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
   } else if (settingsMaxTokens != null) {
     finalMaxTokens = settingsMaxTokens;
   }
-  // 思考模式下思考 token 占预算：预算太小会"只思考、不出正文"，统一抬到下限
-  if (finalMaxTokens != null && finalMaxTokens < MIN_TOKENS_WITH_THINKING && isThinkingEnabled(config, model)) {
-    log.warn('AI generateText: 思考模式下 max_tokens 过小，已上调', {
-      requested: finalMaxTokens, raised_to: MIN_TOKENS_WITH_THINKING, model,
-    });
-    finalMaxTokens = MIN_TOKENS_WITH_THINKING;
-  }
   // 确保不低于调用方声明的最低需求
   if (min_max_tokens != null) {
     const minVal = Number(min_max_tokens);
@@ -365,6 +358,16 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
       }
       finalMaxTokens = minVal;
     }
+  }
+  // 思考模式下思考 token 占预算：预算太小会"只思考、不出正文"，统一抬到下限。
+  // 必须放在 min_max_tokens 之后：调用方（如 storyGenerationService）只传 min_max_tokens、
+  // 不传 max_tokens 时，finalMaxTokens 到这里之前仍是 null，`finalMaxTokens != null` 为假，
+  // 整条判断被跳过 → 2000 预算被思考令牌吃光、正文 0 字，抛「AI 返回内容为空」。
+  if (finalMaxTokens != null && finalMaxTokens < MIN_TOKENS_WITH_THINKING && isThinkingEnabled(config, model)) {
+    log.warn('AI generateText: 思考模式下 max_tokens 过小，已上调', {
+      requested: finalMaxTokens, raised_to: MIN_TOKENS_WITH_THINKING, model,
+    });
+    finalMaxTokens = MIN_TOKENS_WITH_THINKING;
   }
 
   let body = {
@@ -380,11 +383,15 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
   body = applyDeepSeekChatOptions(config, body);
   const startMs = Date.now();
   log.info('AI generateText request', { url: url.slice(0, 60), model, max_tokens: finalMaxTokens ?? '(model default)', json_mode, stream: true });
+  // 进度日志节流：每积累约 500 字符记一次。
+  // 旧写法 `receivedLen % 500 < 20` 在 500..519 这 20 个连续取值上全部成立，等于每 500 字打 20 行，
+  // 实测日志里 30% 都是这一行（2325/7708），把真正的报错埋掉了。
+  let lastProgressLogAt = 0;
   const res = await postJSONStream(url, { Authorization: 'Bearer ' + (config.api_key || '') }, body, 60000, (receivedLen, event, accumulated) => {
     if (event === 'first_token') {
       log.info('AI stream first token', { model, ttft_ms: Date.now() - startMs });
-    } else if (receivedLen > 0 && receivedLen % 500 < 20) {
-      // 每积累约 500 字符记录一次进度
+    } else if (receivedLen - lastProgressLogAt >= 500) {
+      lastProgressLogAt = receivedLen;
       log.info('AI stream progress', { model, received_chars: receivedLen, elapsed_ms: Date.now() - startMs });
     }
     // 调用者提供的流式回调（如分镜增量解析），传入当前已积累的完整文本
@@ -453,13 +460,6 @@ async function streamGenerateText(db, log, serviceType, userPrompt, systemPrompt
   } else if (settingsMaxTokens != null) {
     finalMaxTokens = settingsMaxTokens;
   }
-  // 思考模式下思考 token 占预算：预算太小会"只思考、不出正文"（实测 2400 → 连续 3 次空返回）
-  if (finalMaxTokens != null && finalMaxTokens < MIN_TOKENS_WITH_THINKING && isThinkingEnabled(config, model)) {
-    log.warn('AI streamGenerateText: 思考模式下 max_tokens 过小，已上调', {
-      requested: finalMaxTokens, raised_to: MIN_TOKENS_WITH_THINKING, model,
-    });
-    finalMaxTokens = MIN_TOKENS_WITH_THINKING;
-  }
   if (min_max_tokens != null) {
     const minVal = Number(min_max_tokens);
     if (finalMaxTokens == null || finalMaxTokens < minVal) {
@@ -468,6 +468,15 @@ async function streamGenerateText(db, log, serviceType, userPrompt, systemPrompt
       }
       finalMaxTokens = minVal;
     }
+  }
+  // 思考模式下思考 token 占预算：预算太小会"只思考、不出正文"（实测 2400 → 连续 3 次空返回）。
+  // 必须放在 min_max_tokens 之后，否则只传 min_max_tokens 的调用方会让 finalMaxTokens 停在 null，
+  // 整条判断被跳过 —— 与 generateText 同一处顺序错误，会让「生成分镜」也空返回。
+  if (finalMaxTokens != null && finalMaxTokens < MIN_TOKENS_WITH_THINKING && isThinkingEnabled(config, model)) {
+    log.warn('AI streamGenerateText: 思考模式下 max_tokens 过小，已上调', {
+      requested: finalMaxTokens, raised_to: MIN_TOKENS_WITH_THINKING, model,
+    });
+    finalMaxTokens = MIN_TOKENS_WITH_THINKING;
   }
 
   let body = {

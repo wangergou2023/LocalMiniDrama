@@ -3,3 +3,9 @@ dist/
 data/
 *.db
 .env
+
+# 本地 Linux ffmpeg/ffprobe 二进制：各 60~76MB，按 tools/ffmpeg/README.md 自行放置，不入库。
+# 注意 ffmpeg.exe（Windows 构建用的那个）早已被跟踪，故这里只精确忽略这两个文件名。
+tools/ffmpeg/ffmpeg
+tools/ffmpeg/ffprobe
+

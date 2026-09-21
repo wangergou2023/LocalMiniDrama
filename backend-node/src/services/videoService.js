@@ -525,6 +525,34 @@ function resolveLastFrameForSubmit({ hasRefs, isUniversalShot, lastFrameUrl }) {
   return lastFrameUrl;
 }
 
+/**
+ * 把 fetch/undici 的深层失败原因摊平成可直接落日志的字段。
+ *
+ * 为什么需要：Node 的 fetch 在 TCP/TLS 层失败时只抛出 `TypeError: fetch failed`，
+ * 真正的原因（ECONNRESET / ETIMEDOUT / UND_ERR_SOCKET / 证书错误 …）藏在 `err.cause` 里。
+ * 只记 err.message 的话，日志里永远只有一个没有信息量的空壳，没法定位是网络抖动、
+ * 请求体过大被重置，还是证书/代理问题。cause 可能是 Error、字符串，也可能再嵌套一层，
+ * 所以逐层摊平（最多 3 层），字段名用 cause / cause_2 / cause_3 区分。
+ */
+function describeFetchCause(err) {
+  const out = {};
+  let cur = err && err.cause;
+  for (let depth = 0; cur && depth < 3; depth++) {
+    const tag = depth === 0 ? '' : '_' + (depth + 1);
+    if (typeof cur === 'string') {
+      out['cause' + tag] = cur;
+      break;
+    }
+    out['cause' + tag] = cur.message || String(cur);
+    if (cur.code) out['cause_code' + tag] = cur.code;
+    if (cur.errno) out['cause_errno' + tag] = cur.errno;
+    if (cur.syscall) out['cause_syscall' + tag] = cur.syscall;
+    if (cur.address) out['cause_address' + tag] = cur.address + (cur.port ? ':' + cur.port : '');
+    cur = cur.cause;
+  }
+  return out;
+}
+
 async function processVideoGeneration(db, log, videoGenId) {
   if (activeVideoPolls.has(videoGenId)) {
     log.info('Video generation already in progress, skip duplicate', { videoGenId });
@@ -689,7 +717,12 @@ async function processVideoGeneration(db, log, videoGenId) {
     const now2 = new Date().toISOString();
     setVideoGenFailed(db, videoGenId, err.message, now2);
     if (row && row.task_id) taskService.updateTaskError(db, row.task_id, err.message);
-    log.error('Video generation error', { id: videoGenId, error: err.message });
+    // 带上 err.cause：只看 err.message 的话，网络层失败永远只显示 "fetch failed"。
+    log.error('Video generation error', {
+      id: videoGenId,
+      error: err.message,
+      ...describeFetchCause(err),
+    });
   } finally {
     activeVideoPolls.delete(videoGenId);
   }

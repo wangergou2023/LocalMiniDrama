@@ -395,7 +395,7 @@ async function resolveDefaultNarratorVoiceReferenceUrl(db, log, storageLocalPath
     if (result && result.local_path) {
       narratorVoiceRefCache.set(cacheKey, result.local_path);
       log?.info?.('[视频][音色] 已生成 TTS 默认旁白参考音频', {
-        video_gen_id,
+        video_gen_id: videoGenId,
         voice_id: voiceId,
         local_path: String(result.local_path).slice(0, 120),
       });
@@ -403,7 +403,7 @@ async function resolveDefaultNarratorVoiceReferenceUrl(db, log, storageLocalPath
     }
   } catch (e) {
     log?.warn?.('[视频][音色] 生成 TTS 默认旁白参考音频失败', {
-      video_gen_id,
+      video_gen_id: videoGenId,
       error: e && e.message ? e.message : String(e),
     });
   }
@@ -644,7 +644,12 @@ async function callMinimaxH3VideoApi(config, log, opts) {
     body.ratio = 'adaptive';
   }
 
-  // POST 请求摘要（url / model / 有无首尾帧 / 参考图数量 / 有无音色参考），不打印完整 body 以免日志过大
+  // POST 请求摘要（url / model / 有无首尾帧 / 参考图数量 / 有无音色参考 / 请求体大小），
+  // 不打印完整 body 以免日志过大。
+  //
+  // body_bytes 是排查「fetch failed」的关键线索：参考图走的是原图 PNG base64 内嵌，实测单次请求
+  // 可达 5MB，大 body 上传中途被重置时日志里只剩一个空壳 "fetch failed"，完全看不出与体积有关。
+  const payload = JSON.stringify(body);
   log.info('[MiniMaxH3] Video POST 摘要', {
     video_gen_id,
     url,
@@ -655,6 +660,7 @@ async function callMinimaxH3VideoApi(config, log, opts) {
     has_last_frame: !!lastForApi,
     reference_count: useFirstLast ? 0 : Math.min(refs.length, 9),
     has_voice_reference: hasVoiceReference,
+    body_bytes: Buffer.byteLength(payload),
   });
 
   const resHttp = await fetch(url, {
@@ -663,7 +669,7 @@ async function callMinimaxH3VideoApi(config, log, opts) {
       'Content-Type': 'application/json',
       Authorization: 'Bearer ' + (config.api_key || ''),
     },
-    body: JSON.stringify(body),
+    body: payload,
   });
   const raw = await resHttp.text();
   log.info('[MiniMaxH3] raw response', { video_gen_id, status: resHttp.status, raw: raw.slice(0, 1000) });
@@ -1109,6 +1115,7 @@ module.exports = {
   getDefaultVideoConfig,
   callVideoApi,
   collectActiveCharacterVoiceRefs,
+  resolveDefaultNarratorVoiceReferenceUrl,
   pollVideoTask,
   normalizeAspectRatioForApi,
   isPlausibleHttpVideoUrl,

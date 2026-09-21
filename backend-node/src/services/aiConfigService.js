@@ -102,9 +102,12 @@ function createConfig(db, log, req) {
   }
   const baseUrl = req.base_url || (isOpenAIImage ? 'https://api.openai.com/v1' : '');
   const defaultModel = req.default_model != null ? String(req.default_model).trim() || null : null;
+  // 「旁白参考音色」(service_type='tts')：voice_id / group_id 存正式列，ttsService 直接读。
+  const voiceId = req.voice_id != null ? String(req.voice_id).trim() || null : null;
+  const groupId = req.group_id != null ? String(req.group_id).trim() || null : null;
   const info = db.prepare(
-    `INSERT INTO ai_service_configs (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, priority, is_default, is_active, settings, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
+    `INSERT INTO ai_service_configs (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, priority, is_default, is_active, settings, voice_id, group_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`
   ).run(
     req.service_type || 'text',
     req.provider || '',
@@ -119,6 +122,8 @@ function createConfig(db, log, req) {
     req.priority ?? 0,
     req.is_default ? 1 : 0,
     req.settings || null,
+    voiceId,
+    groupId,
     now,
     now
   );
@@ -178,6 +183,15 @@ function updateConfig(db, log, id, req) {
     updates.push('settings = ?');
     params.push(req.settings);
   }
+  // 「旁白参考音色」专用（其余类型不传这两个字段，不受影响）
+  if (req.voice_id !== undefined) {
+    updates.push('voice_id = ?');
+    params.push(req.voice_id != null ? String(req.voice_id).trim() || null : null);
+  }
+  if (req.group_id !== undefined) {
+    updates.push('group_id = ?');
+    params.push(req.group_id != null ? String(req.group_id).trim() || null : null);
+  }
   if (typeof req.is_default === 'boolean') {
     updates.push('is_default = ?');
     params.push(req.is_default ? 1 : 0);
@@ -219,6 +233,8 @@ function rowToConfig(r) {
     is_default: !!r.is_default,
     is_active: r.is_active == null ? true : !!r.is_active,
     settings: r.settings,
+    voice_id: r.voice_id || '',
+    group_id: r.group_id || '',
     created_at: r.created_at,
     updated_at: r.updated_at,
   };

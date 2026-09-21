@@ -13,7 +13,7 @@ function routes(db, log, cfg) {
   return {
     /** 为单条分镜生成 TTS：对白 → audio_local_path；旁白 → narration_audio_local_path（body.tts_kind === 'narration'） */
     extract: async (req, res) => {
-      const { storyboard_id, text, tts_kind } = req.body || {};
+      const { storyboard_id, text, tts_kind, config_id } = req.body || {};
       if (!text && !storyboard_id) return response.badRequest(res, '请提供 storyboard_id 或 text');
       const kind = String(tts_kind || 'dialogue').toLowerCase() === 'narration' ? 'narration' : 'dialogue';
       let ttsText = text;
@@ -36,9 +36,17 @@ function routes(db, log, cfg) {
       }
       try {
         const ttsService = require('../services/ttsService');
+        // config_id：AI 配置页「试听」用，指定要试听的那一行配置（不传则用默认 TTS 配置）。
+        let ttsConfig;
+        if (config_id) {
+          const aiConfigService = require('../services/aiConfigService');
+          ttsConfig = aiConfigService.getConfig(db, Number(config_id));
+          if (!ttsConfig) return response.badRequest(res, '指定的语音配置不存在');
+        }
         const result = await ttsService.synthesize(db, log, {
           text: ttsText,
           storyboard_id: storyboard_id || null,
+          config: ttsConfig,
           storage_base: getStoragePath(),
         });
         if (storyboard_id && result.local_path) {

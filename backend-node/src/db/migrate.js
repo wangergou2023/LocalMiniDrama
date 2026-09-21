@@ -296,6 +296,13 @@ function ensureAllColumns(database) {
     { name: 'is_default',     type: 'INTEGER DEFAULT 0' },
     { name: 'is_active',      type: 'INTEGER DEFAULT 1' },
     { name: 'settings',       type: 'TEXT' },
+    // 「旁白参考音色」(service_type='tts') 专用：voice_id 是音色标识（MiniMax 官方音色 / 克隆音色 /
+    // OpenAI 音色名），group_id 是 MiniMax 旧版 T2A 接口的 GroupId。
+    // ttsService.synthesize() 里的 `voice_id || ttsConfig.voice_id || ttsSettings.voice_id`
+    // 与 `ttsConfig.group_id || ttsSettings.group_id` 一直在读这两列，但表里从未建过，
+    // 导致只能塞进 settings JSON —— 界面上无法配置，这里补上正式列。
+    { name: 'voice_id',       type: 'TEXT' },
+    { name: 'group_id',       type: 'TEXT' },
     { name: 'created_at',     type: 'TEXT' },
     { name: 'updated_at',     type: 'TEXT' },
     { name: 'deleted_at',     type: 'TEXT' },

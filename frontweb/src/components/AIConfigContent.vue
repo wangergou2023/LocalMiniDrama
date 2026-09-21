@@ -75,6 +75,7 @@
                     <Picture v-else-if="row.service_type === 'image'" />
                     <Film v-else-if="row.service_type === 'storyboard_image'" />
                     <VideoCamera v-else-if="row.service_type === 'video'" />
+                    <Microphone v-else-if="row.service_type === 'tts'" />
                   </el-icon>
                   {{ serviceTypeLabel(row.service_type) }}
                 </span>
@@ -86,9 +87,10 @@
                 <span v-else class="no-default">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="180" fixed="right">
+            <el-table-column label="操作" width="215" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary" size="small" @click="openTest(row)">测试</el-button>
+                <el-button v-if="row.service_type === 'tts'" link type="primary" size="small" @click="openVoicePreview(row)">试听</el-button>
+                <el-button v-else link type="primary" size="small" @click="openTest(row)">测试</el-button>
                 <el-button link type="primary" size="small" @click="onRowEdit(row)">{{ vendorLock.enabled ? '修改Key' : '编辑' }}</el-button>
                 <el-button v-if="!vendorLock.enabled" link type="danger" size="small" @click="onDelete(row)">删除</el-button>
               </template>
@@ -242,7 +244,9 @@
                     <b>文本/对话</b>：用于 AI 生成故事剧本<br>
                     <b>文本生成图片</b>：角色、场景、道具的图片生成（不支持参考图）<br>
                     <b>分镜图片生成</b>：生成分镜图片，支持传入角色参考图<br>
-                    <b>视频生成</b>：根据分镜图生成视频片段
+                    <b>视频生成</b>：根据分镜图生成视频片段<br>
+                    <b>旁白参考音色</b>：只合成<b>一句 14 字的音色样本</b>，作为整个项目旁白的音色参考交给视频模型；<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;全片解说由视频模型照这个音色念出，<b>不合成整段旁白</b>。全项目只合成一次并缓存。
                   </div>
                 </template>
                 <el-icon class="tip-icon"><QuestionFilled /></el-icon>
@@ -254,6 +258,7 @@
             <el-option label="文本生成图片" value="image" />
             <el-option label="分镜图片生成" value="storyboard_image" />
             <el-option label="视频生成" value="video" />
+            <el-option label="旁白参考音色" value="tts" />
           </el-select>
         </el-form-item>
         <el-form-item prop="provider">
@@ -291,7 +296,7 @@
           </el-select>
         </el-form-item>
         <!-- 接口规范：仅图片/分镜/视频类型显示，预设厂商自动填充；自定义厂商必选 -->
-        <el-form-item v-if="form.service_type !== 'text'">
+        <el-form-item v-if="form.service_type !== 'text' && form.service_type !== 'tts'">
           <template #label>
             <span class="form-label-tip">接口规范
               <el-icon class="tip-icon" style="cursor:pointer;color:#409eff" @click="showProtocolHelp = true"><QuestionFilled /></el-icon>
@@ -302,6 +307,46 @@
             <el-option label="OpenAI 官方图像 gpt-image-2（/images/generations，带参考图自动改 /images/edits）" value="openai_image" />
             <el-option label="MiniMax H3（官方 V2：/v2/video_generation，模型 MiniMax-H3）" value="minimax_h3" />
           </el-select>
+        </el-form-item>
+
+        <!-- 旁白参考音色：音色标识（+ MiniMax 旧版 T2A 接口的 GroupId） -->
+        <el-form-item v-if="form.service_type === 'tts'">
+          <template #label>
+            <span class="form-label-tip">音色 ID
+              <el-tooltip placement="top" :show-arrow="true" popper-class="cfg-tip-popper">
+                <template #content>
+                  <div class="cfg-tip-content">
+                    旁白要使用的音色标识。系统会用它合成<b>一句 14 字的样本</b>，交给视频模型作为全片旁白的音色参考。<br>
+                    <b>MiniMax</b>：官方音色如 <code>female-shaonv</code>、<code>male-qn-qingse</code>，或你自己克隆出来的 voice_id<br>
+                    <b>OpenAI 兼容</b>：如 <code>alloy</code>、<code>nova</code>、<code>shimmer</code><br>
+                    留空则用厂商默认音色（MiniMax <code>female-shaonv</code> / OpenAI <code>alloy</code>）。
+                  </div>
+                </template>
+                <el-icon class="tip-icon"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </span>
+          </template>
+          <el-input
+            v-model="form.voice_id"
+            placeholder="如 female-shaonv / male-qn-qingse（MiniMax），alloy / nova（OpenAI）"
+            clearable
+          />
+        </el-form-item>
+        <el-form-item v-if="form.service_type === 'tts' && (form.provider || '').toLowerCase() === 'minimax'">
+          <template #label>
+            <span class="form-label-tip">GroupId
+              <el-tooltip placement="top" popper-class="cfg-tip-popper">
+                <template #content>
+                  <div class="cfg-tip-content">
+                    MiniMax <b>旧版</b> T2A 接口（<code>api.minimax.chat/v1/t2a_v2</code>）要求 URL 上带 GroupId。<br>
+                    若你的 Key 走新版 <code>api.minimaxi.com</code>，此项可留空。
+                  </div>
+                </template>
+                <el-icon class="tip-icon"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </span>
+          </template>
+          <el-input v-model="form.group_id" placeholder="MiniMax 旧版 T2A 接口的 GroupId，可留空" clearable />
         </el-form-item>
 
         <!-- 接口规范帮助 Dialog -->
@@ -390,7 +435,7 @@
         </el-form-item>
 
         <!-- 端点配置：视频必填（自定义厂商）；图片/分镜在使用代理或特殊厂商时填写 -->
-        <template v-if="form.service_type !== 'text'">
+        <template v-if="form.service_type !== 'text' && form.service_type !== 'tts'">
           <el-form-item>
             <template #label>
               <span class="form-label-tip">提交端点
@@ -687,6 +732,28 @@
       </template>
     </el-dialog>
 
+    <!-- 旁白参考音色·试听 -->
+    <el-dialog v-model="voicePreviewVisible" title="试听旁白参考音色" width="480px">
+      <p class="vp-desc">
+        下面这句就是要交给视频模型的<b>音色样本</b>（全片旁白会照它念）。<br>
+        实际生成视频时这句样本会被缓存复用，不会重复合成。
+      </p>
+      <el-alert type="info" :closable="false" show-icon class="vp-sample">
+        <template #title>样本文案</template>
+        {{ VOICE_PREVIEW_TEXT }}
+      </el-alert>
+      <p v-if="voicePreviewLoading" class="vp-status">正在合成…</p>
+      <template v-else-if="voicePreviewUrl">
+        <audio :src="voicePreviewUrl" controls autoplay style="width: 100%; margin-top: 8px" />
+        <p class="vp-status vp-ok">合成成功。请确认音色是否符合预期，不满意就改「音色 ID」后重新试听。</p>
+      </template>
+      <el-alert v-else-if="voicePreviewError" type="error" :title="voicePreviewError" show-icon :closable="false" />
+      <template #footer>
+        <el-button @click="voicePreviewVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="voicePreviewLoading" @click="runVoicePreview">重新试听</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 一键换Key（锁定模式） -->
     <el-dialog v-model="bulkKeyVisible" title="一键换Key" width="440px" :close-on-click-modal="false">
       <el-alert
@@ -718,8 +785,9 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, QuestionFilled, Download, Upload, Delete, ChatDotRound, Picture, Film, VideoCamera, Key } from '@element-plus/icons-vue'
+import { Plus, QuestionFilled, Download, Upload, Delete, ChatDotRound, Picture, Film, VideoCamera, Key, Microphone } from '@element-plus/icons-vue'
 import { aiAPI } from '@/api/ai'
+import { audioAPI } from '@/api/audio'
 import { generationSettingsAPI } from '@/api/prompts'
 import PromptEditor from '@/components/PromptEditor.vue'
 import SceneModelMap from '@/components/SceneModelMap.vue'
@@ -808,6 +876,9 @@ const form = ref({
   megapixels: 0.5,
   // turbo 加速：'' = 跟随工作流，true/false = 强制开关
   turbo: '',
+  // 「旁白参考音色」专用
+  voice_id: '',
+  group_id: '',
 })
 const presetModelPick = ref('')
 const workflowList = ref([])
@@ -889,6 +960,11 @@ const providerConfigs = {
   video: [
     { id: 'comfyui', name: 'ComfyUI', models: ['LTX 2.3'] },
     { id: 'minimax', name: 'MiniMax', models: ['MiniMax-H3'] }
+  ],
+  // 「旁白参考音色」：provider 决定走哪条 TTS 接口（ttsService 按 provider 分发，不看 api_protocol）
+  tts: [
+    { id: 'minimax', name: 'MiniMax（T2A v2）', models: ['speech-2.8-hd', 'speech-2.8-turbo', 'speech-02-hd', 'speech-02-turbo', 'speech-01-hd', 'speech-01-turbo'] },
+    { id: 'openai', name: 'OpenAI 兼容（/audio/speech）', models: ['tts-1', 'tts-1-hd', 'gpt-4o-mini-tts'] }
   ],
 }
 
@@ -1117,6 +1193,9 @@ function onProviderChange(providerId) {
     form.value.api_protocol = 'openai_image'
   } else if (st === 'video' && (providerId === 'minimax' || providerId === 'minimax_h3')) {
     form.value.api_protocol = 'minimax_h3'
+  } else if (st === 'tts') {
+    // 旁白参考音色：ttsService 按 provider 分发（minimax→T2A v2 / openai→/audio/speech），不使用 api_protocol
+    form.value.api_protocol = ''
   } else {
     form.value.api_protocol = providerProtocolMap[providerId] || (st === 'text' ? '' : 'openai')
   }
@@ -1131,6 +1210,7 @@ function serviceTypeLabel(t) {
     image: '文本生成图片',
     storyboard_image: '分镜图片生成',
     video: '视频',
+    tts: '旁白参考音色',
   }
   return map[t] || t
 }
@@ -1179,6 +1259,8 @@ function resetForm() {
     workflow: '',
     megapixels: 0.5,
     turbo: '',
+    voice_id: '',
+    group_id: '',
   }
   formRef.value?.resetFields?.()
 }
@@ -1224,6 +1306,8 @@ function openEdit(row) {
     workflow,
     megapixels,
     turbo,
+    voice_id: row.voice_id || '',
+    group_id: row.group_id || '',
   }
   dialogVisible.value = true
 }
@@ -1279,6 +1363,9 @@ async function submit() {
       priority: form.value.priority,
       is_default: form.value.is_default,
       ...(settings !== undefined ? { settings } : {}),
+      // 「旁白参考音色」专用：其余类型始终提交，值为空字符串（后端会归一化成 null）
+      voice_id: form.value.service_type === 'tts' ? (form.value.voice_id || '') : '',
+      group_id: form.value.service_type === 'tts' ? (form.value.group_id || '') : '',
     }
     if (editingId.value) {
       await aiAPI.update(editingId.value, payload)
@@ -1336,6 +1423,42 @@ async function openTest(row) {
     testResult.value = false
     testError.value = e?.message || '请求失败'
   }
+}
+
+/** 「旁白参考音色」试听用的固定样本文案 —— 与 videoClient.resolveDefaultNarratorVoiceReferenceUrl 保持一致 */
+const VOICE_PREVIEW_TEXT = '大家好，下面开始介绍本产品。'
+const voicePreviewVisible = ref(false)
+const voicePreviewLoading = ref(false)
+const voicePreviewUrl = ref('')
+const voicePreviewError = ref('')
+const voicePreviewRow = ref(null)
+
+async function runVoicePreview() {
+  const row = voicePreviewRow.value
+  if (!row) return
+  voicePreviewLoading.value = true
+  voicePreviewUrl.value = ''
+  voicePreviewError.value = ''
+  try {
+    const res = await audioAPI.extract({ text: VOICE_PREVIEW_TEXT, config_id: row.id })
+    // 合成文件落在 storage 下，后端返回 /static/... 相对路径
+    if (res?.url) {
+      // 加时间戳避免命中浏览器对该 URL 的旧缓存
+      voicePreviewUrl.value = res.url + (res.url.includes('?') ? '&' : '?') + 't=' + Date.now()
+    } else {
+      voicePreviewError.value = '合成成功但没有返回音频地址'
+    }
+  } catch (e) {
+    voicePreviewError.value = e?.message || '试听失败'
+  } finally {
+    voicePreviewLoading.value = false
+  }
+}
+
+function openVoicePreview(row) {
+  voicePreviewRow.value = row
+  voicePreviewVisible.value = true
+  runVoicePreview()
 }
 
 async function onDelete(row) {
@@ -1556,9 +1679,33 @@ onMounted(() => {
   color: #f97316;
   border-color: rgba(249, 115, 22, 0.25);
 }
+/* 旁白参考音色 — 青色 */
+.type-tts {
+  background: rgba(6, 182, 212, 0.12);
+  color: #06b6d4;
+  border-color: rgba(6, 182, 212, 0.25);
+}
 .no-default {
   color: #9ca3af;
   font-size: 13px;
+}
+/* 旁白参考音色·试听弹窗 */
+.vp-desc {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--el-text-color-regular, #606266);
+}
+.vp-sample {
+  margin-bottom: 4px;
+}
+.vp-status {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--el-text-color-secondary, #909399);
+}
+.vp-ok {
+  color: var(--el-color-success, #67c23a);
 }
 code {
   background: var(--el-fill-color, #f0f2f5);

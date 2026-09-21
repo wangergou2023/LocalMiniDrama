@@ -191,6 +191,15 @@ function getStoryboardsForEpisode(db, episodeId) {
     if (r.scene_id != null) {
       const sceneRow = db.prepare('SELECT * FROM scenes WHERE id = ? AND deleted_at IS NULL').get(r.scene_id);
       if (sceneRow) background = rowToScene(sceneRow);
+      // 场景的 image_url 可能是 data:image/png;base64,... 的整张图（生成接口回传 b64_json 时被直接落库），
+      // 单张就有 2.6~3.6MB。原样挂进分镜列表会让本接口每次响应约 30MB，前端一拉分镜就卡死
+      // （实测 /episodes/1/storyboards = 30,717,400 字节，其中 28MB 是 10 份重复的 base64 场景图）。
+      // 前端取图一律走 local_path 拼 /static/（见 utils/mediaUrl.js 的 assetImageUrl），
+      // 故这里换成等价的静态地址即可，不要外发图片本体。
+      if (background && typeof background.image_url === 'string' && background.image_url.startsWith('data:')) {
+        const lp = background.local_path && String(background.local_path).trim();
+        background.image_url = lp ? `/static/${lp.replace(/^\//, '')}` : null;
+      }
     }
     return {
       id: r.id,

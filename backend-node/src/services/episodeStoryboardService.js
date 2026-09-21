@@ -1596,6 +1596,35 @@ async function runAdjacentContinuity(db, log, episodeIdNum) {
 }
 
 /**
+ * 统计剧本里**真正要朗读**的字数（画外音 / 旁白 / 解说 / 角色台词），**不含画面描述**。
+ *
+ * 为什么需要它（实测 cw020&cw080 宣传片）：算「本集总时长下限」时若用剧本全文字数，
+ * 场面描写（"深蓝影棚的黑色玻璃桌面上，一排真无线耳机向画面深处等距排列…"）也被当成要朗读的内容。
+ * 该片剧本全文 1521 字里只有 524 字有声音，全文却推算出 344 秒下限 ——
+ * 而 10 镜 × 单镜上限 15 秒 = 150 秒 是物理天花板，下限根本到不了。
+ * 模型夹在「用户设的总时长 100 秒」和「不得低于 344 秒」之间，只能把镜数从 8 加到 11、
+ * 总时长交到 146.5 秒 —— 两个要求都没满足。
+ */
+function countSpokenChars(scriptContent) {
+  const SPOKEN_PREFIX = /^\s*(画外音|旁白|解说|独白|内心独白|Narrator|VO)\s*[：:]\s*/i;
+  // 「角色名：台词」；前缀限 8 字以内且不含标点，避免把「深色极简的微距底面，以…」这类描写行当成台词
+  const NAME_PREFIX = /^\s*([^\s：:，。；、！？""''（）()]{1,8})\s*[：:]\s*\S/;
+  // 这些前缀是场次/画面标记，不是台词
+  const SCENE_LIKE = /^\s*(内景|外景|场景|地点|时间|画面|镜头|景别|机位|运镜|背景|前景|音效|音乐|BGM)\s*[：:]/i;
+  let chars = 0;
+  for (const raw of String(scriptContent || '').split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    let text = null;
+    if (SPOKEN_PREFIX.test(line)) text = line.replace(SPOKEN_PREFIX, '');
+    else if (!SCENE_LIKE.test(line) && NAME_PREFIX.test(line)) text = line.replace(NAME_PREFIX, '');
+    if (text == null) continue;
+    chars += text.replace(/\s+/g, '').length;
+  }
+  return chars;
+}
+
+/**
  * 分镜数量未指定时，按**剧本朗读时长 ÷ 规划单镜秒数**推导一个目标数。
  *
  * 为什么需要它（实测 drama7 ep21）：`generateStoryboard` 的 storyboard_count 是可选参数，
@@ -1805,16 +1834,34 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   // 剧情完整性：把「本集总时长下限」算成硬数字给模型。
   // 只写在系统规范里太抽象（实测总时长在 153~184 秒之间飘，剧本朗读时长是 198 秒），
   // 这里直接给出下限秒数与差值，模型才有个可对齐的靶子。
+  //
+  // ⚠️ 字数只用**要朗读的字**（countSpokenChars），不含画面描述；并且按**物理上限**封顶。
+  // 旧实现按剧本全文算，把场面描写也当朗读内容：该片全文 1521 字推出 344 秒下限，
+  // 而 10 镜 × 单镜 15 秒 = 150 秒 是天花板，下限永远到不了 —— 模型只能加镜数、
+  // 总时长交一半，用户设的 8 镜 / 100 秒两个要求全落空。
   let durationFloorHint = '';
   try {
-    const scriptChars = String(scriptContent || '').replace(/\s+/g, '').length;
+    const totalChars = String(scriptContent || '').replace(/\s+/g, '').length;
+    const spokenChars = countSpokenChars(scriptContent);
+    // 剧本没有朗读标记（纯散文剧本）时退回全文，保持旧行为
+    const scriptChars = spokenChars >= Math.max(20, totalChars * 0.2) ? spokenChars : totalChars;
     const scriptSec = Math.round(scriptChars / 4.2);
     if (scriptSec > 0) {
-      const sumDur = (arr) => arr.reduce((a, b) => a + (Number(b && b.duration) || 0), 0);
-      const minSec = Math.round(scriptSec * 0.95);   // 允许 5% 弹性，低于这个值就是压缩了剧情
+      // 物理上限：镜头数 × 单镜最长秒数。取项目「每段最大秒数」，没配就用 H3 硬上限 15.08 秒（362 帧）。
+      const maxShotSec = Number(videoClipDuration) > 0 ? Number(videoClipDuration) : 15.08;
+      const physicalMax = Number(effectiveStoryboardCount) > 0
+        ? Math.floor(Number(effectiveStoryboardCount) * maxShotSec)
+        : null;
+      let minSec = Math.round(scriptSec * 0.95);   // 允许 5% 弹性，低于这个值就是压缩了剧情
+      if (physicalMax && minSec > physicalMax) minSec = physicalMax;
+      const ceilingNote = physicalMax
+        ? (promptI18n.isEnglish(cfg)
+            ? ` (This episode's ${effectiveStoryboardCount} shots × ${maxShotSec}s ceiling = ${physicalMax}s is the physical maximum for this episode.)`
+            : `（本集 ${effectiveStoryboardCount} 个镜头 × 单镜上限 ${maxShotSec} 秒 = ${physicalMax} 秒，是本集物理上能到达的最大总时长。）`)
+        : '';
       durationFloorHint = promptI18n.isEnglish(cfg)
-        ? `\n\n[TOTAL LENGTH FLOOR — HARD] The script is ${scriptChars} characters ≈ ${scriptSec}s of speech at 4.2 chars/s. The sum of all shot durations in this episode MUST be at least ${minSec}s (95% of that). If the shot list you produced sums to less, ADD SHOTS or LENGTHEN shots — never compress or drop script content, and never drop a line of dialogue.`
-        : `\n\n【本集总时长下限 —— 硬性】本集剧本 ${scriptChars} 字 ≈ ${scriptSec} 秒朗读时长（4.2 字/秒）。你输出的所有镜头 duration 之和**不得低于 ${minSec} 秒**（朗读时长的 95%）。如果加起来不够，就**增加分镜或加长单镜** —— 严禁压缩、省略剧本内容，严禁丢任何一句台词。`;
+        ? `\n\n[TOTAL LENGTH FLOOR — HARD] This episode has ${scriptChars} characters that are actually SPOKEN ≈ ${scriptSec}s of speech at 4.2 chars/s (narration/dialogue only; visual description does not count). The sum of all shot durations in this episode MUST be at least ${minSec}s (95% of that).${ceilingNote} If the shot list you produced sums to less, LENGTHEN shots — never compress or drop script content, and never drop a line of narration or dialogue.`
+        : `\n\n【本集总时长下限 —— 硬性】本集**需要朗读**的文字 ${scriptChars} 字 ≈ ${scriptSec} 秒朗读时长（4.2 字/秒；只算画外音/旁白/台词，画面描述不发声、不计入）。你输出的所有镜头 duration 之和**不得低于 ${minSec} 秒**（朗读时长的 95%）。${ceilingNote}如果加起来不够，就**加长单镜** —— 严禁压缩、省略剧本内容，严禁丢任何一句旁白或台词。`;
     }
   } catch (_) { /* 取不到剧本就不加这条 */ }
 

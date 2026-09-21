@@ -100,7 +100,7 @@ function fitAudioToSlot(inputPath, slotSec, outPath, log) {
   if (d < slotSec - eps) {
     const pad = slotSec - d;
     return runFfmpeg(
-      ['-y', '-i', inputPath, '-af', `apad=pad_dur=${pad}`, '-t', String(slotSec), '-c:a', 'libmp3lame', '-q:a', '4', outPath],
+      ['-y', '-i', inputPath, '-af', `apad`, '-t', String(slotSec), '-c:a', 'libmp3lame', '-q:a', '4', outPath],
       log,
       'fit_pad'
     );
@@ -164,7 +164,7 @@ function alignNarrationToVideoDuration(narrMp3, videoDur, outPath, log) {
   if (n < videoDur - eps) {
     const pad = videoDur - n;
     return runFfmpeg(
-      ['-y', '-i', narrMp3, '-af', `apad=pad_dur=${pad}`, '-t', String(videoDur), '-c:a', 'libmp3lame', '-q:a', '4', outPath],
+      ['-y', '-i', narrMp3, '-af', `apad`, '-t', String(videoDur), '-c:a', 'libmp3lame', '-q:a', '4', outPath],
       log,
       'align_pad'
     );

@@ -129,7 +129,7 @@ function fitAudioToSlot(inputPath, slotSec, outPath, log) {
   if (d < slotSec - eps) {
     const pad = slotSec - d;
     return runFfmpeg(
-      ['-y', '-i', inputPath, '-af', `apad=pad_dur=${pad}`, '-t', String(slotSec), '-c:a', 'libmp3lame', '-q:a', '4', outPath],
+      ['-y', '-i', inputPath, '-af', `apad`, '-t', String(slotSec), '-c:a', 'libmp3lame', '-q:a', '4', outPath],
       log,
       'fit_pad'
     );
@@ -190,7 +190,7 @@ function alignAudioToVideoDuration(inMp3, videoDur, outPath, log) {
   if (n < videoDur - eps) {
     const pad = videoDur - n;
     return runFfmpeg(
-      ['-y', '-i', inMp3, '-af', `apad=pad_dur=${pad}`, '-t', String(videoDur), '-c:a', 'libmp3lame', '-q:a', '4', outPath],
+      ['-y', '-i', inMp3, '-af', `apad`, '-t', String(videoDur), '-c:a', 'libmp3lame', '-q:a', '4', outPath],
       log,
       'align_pad'
     );
@@ -464,10 +464,14 @@ async function runMergedEpisodePostProcess(db, log, opts) {
         });
       }
 
-      // [1:a]=TTS 对白/旁白，[bed]=原生环境音。amix 必须 normalize=0，
-      // 否则 ffmpeg 会按输入数自动衰减（两条轨各 −6 dB），把 TTS 一起压小。
+      // [1:a]=TTS 对白/旁白，[bed]=原生环境音。不能让 ffmpeg 按输入数自动衰减
+      // （两条轨各 −6 dB，会把 TTS 一起压小），所以混完补 volume=2 抵消掉。
+      // 不用 amix 的 normalize=0：该选项 2021 年才加入，旧版 ffmpeg（如 4.1）会直接
+      // 报 "Option 'normalize' not found" 并使整个滤镜图初始化失败，
+      // 导致字幕/对白烧录被整体跳过（合成看着成功，成片却没有字幕）。
+      // 两条轨都铺满全片，衰减恒为 1/2，故 volume=2 与 normalize=0 等价，且新旧版本通吃。
       const aChain = bedChain
-        ? `${bedChain};[1:a][bed]amix=inputs=2:duration=first:normalize=0[aout]`
+        ? `${bedChain};[1:a][bed]amix=inputs=2:duration=first,volume=2[aout]`
         : '';
       const filters = [filterComplex, aChain].filter(Boolean).join(';');
 

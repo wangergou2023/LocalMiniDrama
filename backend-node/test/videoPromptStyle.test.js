@@ -47,12 +47,18 @@ test('大小写不同也算已包含（避免重复）', () => {
   assert.equal(injectStyleIntoVideoPrompt(withUpper, STYLE), withUpper);
 });
 
-test('非六段结构退回旧行为：贴末尾，且不产生空提示词', () => {
+test('非六段结构（经典自由文本）不再追加风格 —— 界面所见即实际发送', () => {
+  // 2026-09-22 需求变更：经典自由文本（「场景：…动作：…=VideoRatio: 16:9」）不再自动贴风格。
+  // 旧行为 `prompt + '. Style: ' + style` 会让界面显示的提示词与实际发送的不一致
+  // （实测分镜#280 末尾被贴上整段晶圆风格，用户无从判断到底发了什么）。
   const out = injectStyleIntoVideoPrompt('一只猴子在云上翻跟头。', STYLE);
-  assert.equal(out, `一只猴子在云上翻跟头。. Style: ${STYLE}`);
-  assert.equal(injectStyleIntoVideoPrompt('', STYLE), `Style: ${STYLE}`);
+  assert.equal(out, '一只猴子在云上翻跟头。', '自由文本应原样返回，不得追加风格');
+  assert.equal(injectStyleIntoVideoPrompt('', STYLE), '', '空文本仍返回空，不产生 "Style: …"');
   assert.equal(injectStyleIntoVideoPrompt('原文', ''), '原文');
-  assert.equal(injectStyleIntoVideoPrompt(null, STYLE), `Style: ${STYLE}`);
+  assert.equal(injectStyleIntoVideoPrompt(null, STYLE), '');
+  // 正文里若残留旧写法留下的尾巴，仍应被摘掉
+  const legacy = `一只猴子在云上翻跟头。. Style: ${STYLE}`;
+  assert.equal(injectStyleIntoVideoPrompt(legacy, STYLE), '一只猴子在云上翻跟头。', '旧尾巴应被摘掉');
 });
 
 test('实际提交过的坏提示词会被纠正到 §5', () => {

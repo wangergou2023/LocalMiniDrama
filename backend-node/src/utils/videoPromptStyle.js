@@ -27,10 +27,13 @@ function injectStyleIntoVideoPrompt(prompt, style) {
   const s = String(style == null ? '' : style).trim();
   if (!s) return raw;
   if (styleInsideSection(raw, s)) return raw;
-  // 旧写法留下的「. Style: …」尾巴先摘掉，再放到 §5 段首，避免同时存在两处
+  // 旧写法留下的「. Style: …」尾巴先摘掉，再放到 §5 段首，避免同时存在两处。
+  // 注意：**只有真摘掉尾巴时才做收尾清理** —— 否则纯粹的经典自由文本会被多删一个句号，
+  // 与「界面所见即实际发送」的要求不符（实测：'…翻跟头。' 被改成 '…翻跟头'）。
   let p = raw;
-  const tailRe = new RegExp(`[\\s.。]*Style:[ \\t]*${escapeRe(s)}[ \\t]*$`, 'i');
-  if (tailRe.test(p)) p = p.replace(tailRe, '').replace(/[\s.。]+$/, '');
+  // 前导只吃空白与英文句点，**不吃中文句号** —— 否则「…翻跟头。. Style: X」会把句子结尾的「。」一起摘掉
+  const tailRe = new RegExp(`[\\s.]*Style:[ \\t]*${escapeRe(s)}[ \\t]*$`, 'i');
+  if (tailRe.test(p)) p = p.replace(tailRe, '').replace(/[\s.]+$/, '');
   const m = /(^|\n)(detailed_description:[ \t]*)/.exec(p);
   if (!m) {
     // 非六段结构（经典自由文本，如「场景：…动作：…=VideoRatio: 16:9」）：

@@ -141,8 +141,13 @@ describe('治木讷：情绪进提示词 + field_overrides 生效', () => {
 
   it('EMOTION / EMOTION_INTENSITY 进提示词，field_overrides 覆盖库里的值', (t) => {
     if (!db) return t.skip('无本地数据库');
-    const row = db.prepare('SELECT id FROM storyboards WHERE deleted_at IS NULL ORDER BY id DESC LIMIT 1').get();
-    if (!row) return t.skip('库里没有分镜');
+    // 取一条【确实带情绪】的分镜做样本。
+    // 原来取 `ORDER BY id DESC LIMIT 1`（最新一条），一旦最新那条没有情绪数据
+    // （例如刚导入的历史项目 #303），断言就会误报失败 —— 与代码无关，纯数据依赖。
+    const row = db.prepare(
+      "SELECT id FROM storyboards WHERE deleted_at IS NULL AND emotion IS NOT NULL AND TRIM(emotion) <> '' ORDER BY id DESC LIMIT 1"
+    ).get();
+    if (!row) return t.skip('库里没有带情绪的分镜');
     const a = buildUniversalSegmentUserPromptBundle(db, row.id, {}, {});
     assert.ok(a.userPrompt.includes('EMOTION:'), '提示词里必须带 EMOTION');
     assert.ok(a.userPrompt.includes('EMOTION_INTENSITY:'), '提示词里必须带 EMOTION_INTENSITY');

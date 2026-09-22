@@ -41,6 +41,8 @@
             <el-icon><Download /></el-icon>导入项目
           </el-button>
           <input ref="importFileInput" type="file" accept=".zip" style="display:none" @change="onImportFile" />
+          <!-- 素材库导入素材包（.zip）：四项素材库共用一个 input，靠 libraryPendingKind 区分 -->
+          <input ref="libraryFileRef" type="file" accept=".zip,application/zip" style="display:none" @change="onLibraryFileChosen" />
           <el-button type="primary" class="btn-new" @click="goNewProject">
             <el-icon><Plus /></el-icon>新建项目
           </el-button>
@@ -158,6 +160,8 @@
     <el-dialog v-model="showCharLibrary" title="素材库 · 角色" width="720px" destroy-on-close class="library-dialog" @open="loadCharLibraryList">
       <div class="library-toolbar">
         <el-input v-model="charLibraryKeyword" placeholder="搜索名称或描述" clearable style="width: 200px" @input="debouncedLoadCharLibrary()" />
+        <el-button size="small" plain @click="onExportLibrary('character')">导出素材</el-button>
+        <el-button size="small" plain :loading="libraryImporting === 'character'" @click="onPickLibraryFile('character')">导入素材</el-button>
       </div>
       <div v-loading="charLibraryLoading" class="library-list">
         <div v-for="item in charLibraryList" :key="item.id" class="library-item">
@@ -212,6 +216,8 @@
     <el-dialog v-model="showSceneLibrary" title="素材库 · 场景" width="720px" destroy-on-close class="library-dialog" @open="loadSceneLibraryList">
       <div class="library-toolbar">
         <el-input v-model="sceneLibraryKeyword" placeholder="搜索地点或描述" clearable style="width: 200px" @input="debouncedLoadSceneLibrary()" />
+        <el-button size="small" plain @click="onExportLibrary('scene')">导出素材</el-button>
+        <el-button size="small" plain :loading="libraryImporting === 'scene'" @click="onPickLibraryFile('scene')">导入素材</el-button>
       </div>
       <div v-loading="sceneLibraryLoading" class="library-list">
         <div v-for="item in sceneLibraryList" :key="item.id" class="library-item">
@@ -267,6 +273,8 @@
     <el-dialog v-model="showPropLibrary" title="素材库 · 道具" width="720px" destroy-on-close class="library-dialog" @open="loadPropLibraryList">
       <div class="library-toolbar">
         <el-input v-model="propLibraryKeyword" placeholder="搜索名称或描述" clearable style="width: 200px" @input="debouncedLoadPropLibrary()" />
+        <el-button size="small" plain @click="onExportLibrary('prop')">导出素材</el-button>
+        <el-button size="small" plain :loading="libraryImporting === 'prop'" @click="onPickLibraryFile('prop')">导入素材</el-button>
       </div>
       <div v-loading="propLibraryLoading" class="library-list">
         <div v-for="item in propLibraryList" :key="item.id" class="library-item">
@@ -294,6 +302,8 @@
     <el-dialog v-model="showSbLibrary" title="素材库 · 分镜" width="720px" destroy-on-close class="library-dialog" @open="loadSbLibraryList">
       <div class="library-toolbar">
         <el-input v-model="sbLibraryKeyword" placeholder="搜索标题或旁白" clearable style="width: 220px" @input="debouncedLoadSbLibrary()" />
+        <el-button size="small" plain @click="onExportLibrary('storyboard')">导出素材</el-button>
+        <el-button size="small" plain :loading="libraryImporting === 'storyboard'" @click="onPickLibraryFile('storyboard')">导入素材</el-button>
       </div>
       <div v-loading="sbLibraryLoading" class="library-list">
         <div v-for="item in sbLibraryList" :key="item.id" class="library-item">
@@ -386,6 +396,7 @@ import { characterLibraryAPI } from '@/api/characterLibrary'
 import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
 import { storyboardLibraryAPI } from '@/api/storyboardLibrary'
+import libraryTransferAPI from '@/api/libraryTransfer'
 import AIConfigContent from '@/components/AIConfigContent.vue'
 import { uploadAPI } from '@/api/upload'
 import { aiAPI } from '@/api/ai'
@@ -480,11 +491,57 @@ const charLibraryLoading = ref(false)
 const charLibraryPage = ref(1)
 const charLibraryPageSize = ref(20)
 const charLibraryTotal = ref(0)
+/** 正在导入素材包的类型（用于按钮 loading）：'' | 'character' | 'scene' | 'prop' | 'storyboard' */
+const libraryImporting = ref('')
+/** 待导入的素材库类型 + 隐藏的 file input（四项共用一个 input） */
+const libraryPendingKind = ref('')
+const libraryFileRef = ref(null)
+
 const charLibraryKeyword = ref('')
 const showEditCharLibrary = ref(false)
 const editCharLibraryForm = ref(null)
 const editCharLibrarySaving = ref(false)
 let charLibraryKeywordTimer = null
+
+/** 素材库「导出素材」：浏览器直接下载由后端生成的 zip */
+function onExportLibrary(kind) {
+  const a = document.createElement('a')
+  a.href = libraryTransferAPI.exportUrl(kind)
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  setTimeout(() => document.body.removeChild(a), 0)
+  ElMessage.success('已开始导出，请留意浏览器下载')
+}
+
+/** 素材库「导入素材」：选一个之前导出的 .zip */
+function onPickLibraryFile(kind) {
+  libraryPendingKind.value = kind
+  const el = libraryFileRef.value
+  if (el) { el.value = ''; el.click() }
+}
+
+/** 选好文件后真正上传；重复导入同一份文件会按判重跳过，不会把库翻倍 */
+async function onLibraryFileChosen(e) {
+  const file = e?.target?.files?.[0]
+  const kind = libraryPendingKind.value
+  if (!file || !kind) return
+  libraryImporting.value = kind
+  try {
+    const res = await libraryTransferAPI.importZip(kind, file)
+    const added = Number(res?.added || 0)
+    const skipped = Number(res?.skipped || 0)
+    const failed = Number(res?.failed || 0)
+    ElMessage.success(`导入完成：新增 ${added} 条，跳过重复 ${skipped} 条${failed ? `，失败 ${failed} 条` : ''}`)
+    const reload = { character: loadCharLibraryList, scene: loadSceneLibraryList, prop: loadPropLibraryList, storyboard: loadSbLibraryList }[kind]
+    if (reload) await reload()
+  } catch (err) {
+    ElMessage.error(err?.message || '导入失败')
+  } finally {
+    libraryImporting.value = ''
+    libraryPendingKind.value = ''
+  }
+}
 
 async function loadCharLibraryList() {
   charLibraryLoading.value = true

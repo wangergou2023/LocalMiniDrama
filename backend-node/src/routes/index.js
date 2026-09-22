@@ -10,6 +10,7 @@ const characterLibraryRoutes = require('./characterLibrary');
 const sceneLibraryRoutes = require('./sceneLibrary');
 const propLibraryRoutes = require('./propLibrary');
 const storyboardLibraryRoutes = require('./storyboardLibrary');
+const { libraryTransferRoutes } = require('./libraryTransfer');
 const characterRoutes = require('./characters');
 const uploadModule = require('./upload');
 const sceneRoutes = require('./scenes');
@@ -39,6 +40,7 @@ function setupRouter(cfg, db, log) {
   const sceneLibrary = sceneLibraryRoutes(db, cfg, log);
   const propLibrary = propLibraryRoutes(db, cfg, log);
   const storyboardLibrary = storyboardLibraryRoutes(db, cfg, log);
+  const libraryTransfer = libraryTransferRoutes(db, cfg, log);
   const characters = characterRoutes(db, cfg, log, uploadService);
   const uploadHandlers = uploadModule.routes(cfg, log, db);
   const scenes = sceneRoutes(db, log, cfg);
@@ -170,6 +172,10 @@ function setupRouter(cfg, db, log) {
   r.get('/storyboard-library/:id', storyboardLibrary.get);
   r.put('/storyboard-library/:id', storyboardLibrary.update);
   r.delete('/storyboard-library/:id', storyboardLibrary.delete);
+
+  // ---------- 素材库导入 / 导出（角色 / 场景 / 道具 / 分镜 共用一套）----------
+  r.get('/library/:kind/export', libraryTransfer.exportLibrary);
+  r.post('/library/:kind/import', uploadModule.multerZipSingle, libraryTransfer.importLibrary);
 
   // ---------- characters ----------
   r.get('/characters/:id', characters.getOne);

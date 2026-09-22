@@ -21,6 +21,19 @@ const upload = multer({
   },
 });
 
+// 素材库导入用的 zip 上传：素材包常有几十 MB，单独给一份限制与过滤器
+const zipMaxSize = 1024 * 1024 * 1024; // 1GB
+const zipUpload = multer({
+  storage: memoryStorage,
+  limits: { fileSize: zipMaxSize },
+  fileFilter: (req, file, cb) => {
+    const ct = file.mimetype || 'application/octet-stream';
+    const isZip = /zip/i.test(ct) || /\.zip$/i.test(file.originalname || '');
+    if (!isZip) return cb(new Error('只支持 .zip 素材包（请使用「导出素材」生成的文件）'));
+    cb(null, true);
+  },
+});
+
 const allowedVideoTypes = [
   'video/mp4',
   'video/webm',
@@ -97,5 +110,6 @@ module.exports = {
   upload,
   multerSingle: upload.single('file'),
   multerVideoSingle: videoUpload.single('file'),
+  multerZipSingle: zipUpload.single('file'),
   MAX_IMAGE_SIZE_MB: MAX_SIZE_MB,
 };

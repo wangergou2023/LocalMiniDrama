@@ -1613,7 +1613,10 @@
               <span v-if="videoSubtitle" class="video-option-hint">开启后，合成整集时会检测解说旁白：若有文案则自动生成 SRT、按分镜时长合成旁白语音（过长加速 / 过短补静音）、与成片对齐后烧录字幕并混音。</span>
             </div>
           </el-form-item>
-          <el-form-item label="对白烧录">
+          <!-- 「对白烧录」只在整集确实有对白配音时显示。
+               宣传片没有对白 → 这个开关永远用不上（实测库里对白配音 0 个、旁白配音 12 个），
+               摆在界面上只会让人以为是坏了。功能保留（短剧场景仍需要），只是不再空占位置。 -->
+          <el-form-item v-if="hasAnyDialogueAudio" label="对白烧录">
             <div class="video-option-row">
               <el-switch v-model="videoBurnDialogue" />
               <span v-if="videoBurnDialogue" class="video-option-hint">开启后，将把各镜「配音」生成的对白 TTS 按分镜时长对齐并混入整集成片（无对白音频的分镜为静音）。可与「字幕」旁白同时开启，两条音轨会叠混。</span>
@@ -3002,6 +3005,14 @@ const videoQuality = ref('high')
 const videoSubtitle = ref(false)
 /** 合成整集时把各镜对白 TTS（audio_local_path）按分镜时长对齐并混入成片 */
 const videoBurnDialogue = ref(false)
+/**
+ * 整集是否存在至少一条「对白配音」—— 决定合成对话框里要不要显示「对白烧录」。
+ * 宣传片没有对白（实测对白配音 0 个 / 旁白配音 12 个），开关摆出来只会让人以为是坏的；
+ * 有对白的短剧里它会照常出现。
+ */
+const hasAnyDialogueAudio = computed(() =>
+  (store.storyboards || []).some((sb) => !!sbDialogueAudioRelPath(sb))
+)
 /**
  * 合成时是否屏蔽各镜视频自带的声音（默认开）。
  *

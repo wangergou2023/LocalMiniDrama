@@ -4658,10 +4658,22 @@ async function onGenerateSbImage(sb) {
       ElMessage.warning('保存分镜角色失败，请稍后重试')
       return
     }
+    // 带上「当前场景」的图作为参考：否则改了分镜的场景 / 换了场景图，出图完全不受影响
+    // （实测证据：出图请求里 scene_id 与 reference_images 都是空的，新场景图根本没参与出图）
+    let sbSceneRefImages = undefined
+    const sbSceneRow = sb.scene_id
+      ? (store.scenes || []).find((s) => Number(s.id) === Number(sb.scene_id))
+      : null
+    if (sbSceneRow) {
+      const sceneUrl = assetImageUrl(sbSceneRow)
+      if (sceneUrl) sbSceneRefImages = [sceneUrl]
+    }
     const res = await imagesAPI.create({
       storyboard_id: sb.id,
       drama_id: dramaId.value,
       prompt: sb.polished_prompt || sb.image_prompt || sb.description || '',
+      scene_id: sb.scene_id || undefined,
+      reference_images: sbSceneRefImages,
       model: undefined,
       style: getSelectedStyle(),
       frame_type: gridMode.value !== 'single' ? gridMode.value : undefined,

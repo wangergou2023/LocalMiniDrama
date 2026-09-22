@@ -1629,18 +1629,6 @@
               <span v-if="videoBurnDialogue" class="video-option-hint">开启后，将把各镜「配音」生成的对白 TTS 按分镜时长对齐并混入整集成片（无对白音频的分镜为静音）。可与「字幕」旁白同时开启，两条音轨会叠混。</span>
             </div>
           </el-form-item>
-          <el-form-item label="旁白不交给 H3">
-            <div class="video-option-row">
-              <el-switch v-model="videoNoSpeech" />
-              <span class="video-option-hint">
-                开启（默认）：出视频时先把提示词里的<span style="color:#e6a23c">旁白/台词去掉</span>再提交 ——
-                H3 拿不到要念的词，就不会生成人声，只出环境音与音效；旁白统一由合成时的 TTS 配音
-                （音色可控、全片一致）。
-                关闭：提示词原样提交，H3 会自己念旁白 —— 但因为「参考音频与首帧互斥」，
-                它每镜随机配嗓音，叠上 TTS 会变成两层人声。
-              </span>
-            </div>
-          </el-form-item>
           <el-form-item label="屏蔽原声">
             <div class="video-option-row">
               <el-switch v-model="videoMuteNativeAudio" />
@@ -3033,15 +3021,6 @@ const hasAnyDialogueAudio = computed(() =>
  * 打开后成片只保留旁白/对白 TTS（后端 merge_options.keep_native_audio = false）。
  */
 const videoMuteNativeAudio = ref(true)
-/**
- * 出视频时是否把「旁白/台词」从提示词里去掉（默认开）。
- *
- * 打开后 H3 拿不到要念的台词 → 不生成人声，只出环境音与音效；
- * 旁白由合成时的 TTS 统一配音（音色可控、全片一致）。
- * 原因：H3 的「参考音频」与「首帧/尾帧」互斥（实测 400），单图模式无法指定音色，
- * 每条视频的旁白音色是随机的，叠上 TTS 后就是两层人声、听起来又快又糊。
- */
-const videoNoSpeech = ref(true)
 /**
  * 是否宣传片项目。
  * 宣传片统一只用「标准模式」（经典图生视频）：不用首尾帧、也不用全能分镜 ——
@@ -6476,7 +6455,10 @@ function buildSbVideoPromptForApi(sb, { preferClassicPrompt = false } = {}) {
   else if (isSbUniversalMode(sb.id)) out = seg || vp
   else out = vp
   // 「H3 不念旁白」开关（默认开）：占位符替换要在剥离之后做，避免误伤
-  return videoNoSpeech.value ? stripSpeechFromVideoPrompt(out) : out
+  // 出视频前【始终】清掉提示词里遗留的旁白句（只删旁白，保留 <d> 角色台词）。
+  // 「要不要让 H3 出声」这个选择已移到 高级设置 → 「视频提示词·无人声规则」（留空即关闭），
+  // 由后端在提交时统一追加，界面上不再单设开关。
+  return stripSpeechFromVideoPrompt(out)
 }
 
 /**

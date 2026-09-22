@@ -501,7 +501,54 @@
                       <el-button size="small" :loading="addingCharToMaterialId === char.id" :disabled="!hasAssetImage(char)" @click="onAddCharacterToMaterialLibrary(char)">
                         加入素材库
                       </el-button>
+                      <el-button size="small" @click="openImportFromLibrary('character', char)">
+                        从素材库导入
+                      </el-button>
                     </div>
+
+    <!-- 从素材库导入：手动挑一项应用到当前资产（不依赖名字完全匹配） -->
+    <el-dialog v-model="importLib.visible" :title="importLibMeta.title" width="760px" append-to-body>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+        <el-input v-model="importLib.keyword" placeholder="搜索名称/描述" clearable style="width:220px" @keyup.enter="loadImportLibList" />
+        <el-button size="small" @click="loadImportLibList">搜索</el-button>
+        <el-checkbox v-model="importLib.withFields">同时导入描述/提示词（不改名字）</el-checkbox>
+        <span style="margin-left:auto;color:#6b7280;font-size:12px">
+          导入到：{{ importLib.target ? (importLib.target.name || importLib.target.location || '') : '' }}
+        </span>
+      </div>
+      <div v-loading="importLib.loading" style="max-height:52vh;overflow:auto">
+        <div v-if="!importLib.loading && !importLib.list.length" style="color:#6b7280;font-size:13px;padding:16px 0">
+          素材库里没有可导入的项。先在别处把资产「加入素材库」，这里就会出现。
+        </div>
+        <div
+          v-for="it in importLib.list"
+          :key="it.id"
+          style="display:flex;align-items:center;gap:12px;padding:8px;border-bottom:1px solid #f0f0f0"
+        >
+          <img
+            v-if="it.local_path || it.image_url"
+            :src="assetImageUrl(it)"
+            style="width:72px;height:54px;object-fit:cover;border-radius:4px;flex-shrink:0"
+            alt=""
+          />
+          <div v-else style="width:72px;height:54px;background:#f3f4f6;border-radius:4px;flex-shrink:0" />
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              {{ importLibMeta.label(it) || '（未命名）' }}
+            </div>
+            <div style="font-size:12px;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              {{ importLibMeta.sub(it) || '' }}
+            </div>
+          </div>
+          <el-button size="small" type="primary" :loading="importLib.applyingId === it.id" @click="doImportFromLibrary(it)">
+            导入到这条
+          </el-button>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="importLib.visible = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
                     <!-- 角色音色参考（内置音色库） -->
                     <div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -609,6 +656,9 @@
                       </el-button>
                       <el-button size="small" :loading="addingPropToMaterialId === prop.id" :disabled="!hasAssetImage(prop)" @click="onAddPropToMaterialLibrary(prop)">
                         加入素材库
+                      </el-button>
+                      <el-button size="small" @click="openImportFromLibrary('prop', prop)">
+                        从素材库导入
                       </el-button></div>
                     <div v-if="getPropAffectedStoryboards(prop.id).length" class="asset-storyboard-link">
                       <span class="asl-label">影响的分镜：</span>
@@ -710,6 +760,9 @@
                       </el-button>
                       <el-button size="small" :loading="addingSceneToMaterialId === scene.id" :disabled="!hasAssetImage(scene)" @click="onAddSceneToMaterialLibrary(scene)">
                         加入素材库
+                      </el-button>
+                      <el-button size="small" @click="openImportFromLibrary('scene', scene)">
+                        从素材库导入
                       </el-button></div>
                     <div v-if="getSceneAffectedStoryboards(scene.id).length" class="asset-storyboard-link">
                       <span class="asl-label">影响的分镜：</span>
@@ -2707,6 +2760,80 @@ watch(storyType, () => {
   storyStyle.value = ''
 })
 const storyGenerating = ref(false)
+
+// ── 从素材库导入（手动挑一项，应用到当前这条资产；不依赖名字完全匹配）──
+const importLib = reactive({
+  visible: false,
+  type: '',          // character | scene | prop
+  target: null,      // 当前要应用到的资产对象
+  keyword: '',
+  withFields: false, // 是否连同描述/提示词一起导入（默认只导入图片）
+  loading: false,
+  applyingId: null,
+  list: [],
+})
+const IMPORT_LIB_META = {
+  character: {
+    title: '从角色素材库导入',
+    fetch: (kw) => characterLibraryAPI.list({ page_size: 200, keyword: kw || undefined }),
+    apply: (targetId, libId, wf) => characterAPI.imageFromLibrary(targetId, libId, wf),
+    label: (i) => i.name,
+    sub: (i) => i.description,
+  },
+  scene: {
+    title: '从场景素材库导入',
+    fetch: (kw) => sceneLibraryAPI.list({ page_size: 200, keyword: kw || undefined }),
+    apply: (targetId, libId, wf) => sceneAPI.imageFromLibrary(targetId, libId, wf),
+    label: (i) => i.location,
+    sub: (i) => i.prompt || i.time,
+  },
+  prop: {
+    title: '从道具素材库导入',
+    fetch: (kw) => propLibraryAPI.list({ page_size: 200, keyword: kw || undefined }),
+    apply: (targetId, libId, wf) => propAPI.imageFromLibrary(targetId, libId, wf),
+    label: (i) => i.name,
+    sub: (i) => i.description || i.prompt,
+  },
+}
+const importLibMeta = computed(() => IMPORT_LIB_META[importLib.type] || IMPORT_LIB_META.prop)
+
+async function loadImportLibList() {
+  importLib.loading = true
+  try {
+    const res = await importLibMeta.value.fetch(importLib.keyword.trim())
+    importLib.list = res?.items ?? []
+  } catch (e) {
+    importLib.list = []
+    ElMessage.error(e.message || '读取素材库失败')
+  } finally {
+    importLib.loading = false
+  }
+}
+
+function openImportFromLibrary(type, target) {
+  importLib.type = type
+  importLib.target = target
+  importLib.keyword = ''
+  importLib.withFields = false
+  importLib.list = []
+  importLib.visible = true
+  loadImportLibList()
+}
+
+async function doImportFromLibrary(item) {
+  if (!importLib.target) return
+  importLib.applyingId = item.id
+  try {
+    await importLibMeta.value.apply(importLib.target.id, item.id, importLib.withFields)
+    ElMessage.success(`已从素材库导入「${importLibMeta.value.label(item) || ''}」`)
+    importLib.visible = false
+    await loadDrama()
+  } catch (e) {
+    ElMessage.error(e.message || '导入失败')
+  } finally {
+    importLib.applyingId = null
+  }
+}
 /** 剧本工作台：create 创作 | select 选择预览 */
 const scriptWorkbenchMode = ref('create')
 const showSelectScriptDialog = ref(false)

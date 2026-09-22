@@ -103,6 +103,26 @@ function addToLibrary(db, log) {
   };
 }
 
+// 从素材库导入：手动挑一项，把它的图片应用到这个道具上（不再要求名字完全一致）
+function imageFromLibrary(db, log) {
+  return (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return response.badRequest(res, '无效的ID');
+    const body = req.body || {};
+    if (body.library_id == null) return response.badRequest(res, '缺少 library_id');
+    const out = propLibraryService.applyLibraryItemToProp(db, log, id, body.library_id, {
+      withFields: !!body.with_fields,
+    });
+    if (!out.ok) {
+      if (out.error === 'library item not found') return response.notFound(res, '道具库项不存在');
+      if (out.error === 'prop not found') return response.notFound(res, '道具不存在');
+      if (out.error === 'unauthorized') return response.forbidden(res, '无权限');
+      return response.badRequest(res, out.error);
+    }
+    response.success(res, { message: '已从素材库导入' });
+  };
+}
+
 function addToMaterialLibrary(db, log) {
   return (req, res) => {
     const id = parseInt(req.params.id, 10);
@@ -176,6 +196,7 @@ module.exports = function propRoutes(db, log, cfg) {
     associateProps: associateProps(db, log),
     addToLibrary: addToLibrary(db, log),
     addToMaterialLibrary: addToMaterialLibrary(db, log),
+    imageFromLibrary: imageFromLibrary(db, log),
     extractPropFromImage: extractPropFromImage(db, log, cfg),
   };
 };

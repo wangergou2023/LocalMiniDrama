@@ -35,6 +35,13 @@ export const characterAPI = {
   addToMaterialLibrary(characterId) {
     return request.post(`/characters/${characterId}/add-to-material-library`, {})
   },
+  /** 从素材库导入：手动挑一项，把它的图片（可选描述）应用到本角色，不靠名字匹配 */
+  imageFromLibrary(characterId, libraryId, withFields = false) {
+    return request.put(`/characters/${characterId}/image-from-library`, {
+      library_id: libraryId,
+      with_fields: !!withFields,
+    })
+  },
   addToTeamLibrary(characterId, body = {}) {
     return request.post(`/characters/${characterId}/add-to-team-library`, body)
   },

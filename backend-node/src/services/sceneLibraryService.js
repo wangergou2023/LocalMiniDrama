@@ -85,6 +85,34 @@ function getLibraryItem(db, id) {
   return row ? rowToItem(row) : null;
 }
 
+/**
+ * 把素材库里某一项的图片应用到本项目的某个场景上（用户手动挑，不再依赖名字完全一致）。
+ *
+ * 默认**只覆盖图片**（image_url / local_path）；opts.withFields 时一并复制 prompt。
+ * **不动 location**：场景名是剧本与分镜在引用的标识，改名会让引用对不上。
+ */
+function applyLibraryItemToScene(db, log, sceneId, libraryItemId, opts = {}) {
+  const item = getLibraryItem(db, libraryItemId);
+  if (!item) return { ok: false, error: 'library item not found' };
+  const row = db
+    .prepare('SELECT id, drama_id FROM scenes WHERE id = ? AND deleted_at IS NULL')
+    .get(Number(sceneId));
+  if (!row) return { ok: false, error: 'scene not found' };
+  const drama = db.prepare('SELECT id FROM dramas WHERE id = ? AND deleted_at IS NULL').get(row.drama_id);
+  if (!drama) return { ok: false, error: 'unauthorized' };
+  const now = new Date().toISOString();
+  const sets = ['image_url = ?', 'local_path = ?', 'updated_at = ?'];
+  const vals = [item.image_url || null, item.local_path || null, now];
+  if (opts.withFields && item.prompt != null) {
+    sets.push('prompt = ?');
+    vals.push(item.prompt);
+  }
+  vals.push(Number(sceneId));
+  db.prepare(`UPDATE scenes SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+  log.info('Library item applied to scene', { scene_id: sceneId, library_item_id: libraryItemId });
+  return { ok: true };
+}
+
 function updateLibraryItem(db, log, id, req) {
   const row = db.prepare('SELECT id FROM scene_libraries WHERE id = ? AND deleted_at IS NULL').get(Number(id));
   if (!row) return null;
@@ -194,4 +222,5 @@ module.exports = {
   deleteLibraryItem,
   addSceneToLibrary,
   addSceneToMaterialLibrary,
+  applyLibraryItemToScene,
 };

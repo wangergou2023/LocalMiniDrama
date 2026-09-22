@@ -190,6 +190,7 @@ function setupRouter(cfg, db, log) {
   r.post('/props/:id/generate-prompt', prop.generatePropPrompt);
   r.post('/props/:id/add-to-library', prop.addToLibrary);
   r.post('/props/:id/add-to-material-library', prop.addToMaterialLibrary);
+  r.put('/props/:id/image-from-library', prop.imageFromLibrary);
   r.post('/props/:id/extract-from-image', prop.extractPropFromImage);
 
   // ---------- vision: 从图片提取描述（不依赖已有实体 ID）----------
@@ -236,6 +237,7 @@ function setupRouter(cfg, db, log) {
   r.post('/scenes', scenes.create);
   r.post('/scenes/:scene_id/generate-four-view-image', scenes.generateFourViewImage);
   r.post('/scenes/:scene_id/add-to-library', scenes.addToLibrary);
+  r.put('/scenes/:scene_id/image-from-library', scenes.imageFromLibrary);
   r.post('/scenes/:scene_id/add-to-material-library', scenes.addToMaterialLibrary);
   r.post('/scenes/:scene_id/extract-from-image', scenes.extractFromImage);
 

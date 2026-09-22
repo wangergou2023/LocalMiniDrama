@@ -33,6 +33,13 @@ export const propAPI = {
   addToMaterialLibrary(id) {
     return request.post(`/props/${id}/add-to-material-library`, {})
   },
+  /** 从素材库导入：手动挑一项，把它的图片（可选描述/提示词）应用到本道具，不靠名字匹配 */
+  imageFromLibrary(id, libraryId, withFields = false) {
+    return request.put(`/props/${id}/image-from-library`, {
+      library_id: libraryId,
+      with_fields: !!withFields,
+    })
+  },
   extractFromImage(id) {
     return request.post(`/props/${id}/extract-from-image`, {})
   },

@@ -183,7 +183,7 @@ function deleteLibraryItem(db, log, id) {
   return true;
 }
 
-function applyLibraryItemToCharacter(db, log, characterId, libraryItemId) {
+function applyLibraryItemToCharacter(db, log, characterId, libraryItemId, opts = {}) {
   const item = getLibraryItem(db, libraryItemId);
   if (!item) return { ok: false, error: 'library item not found' };
   const charRow = db
@@ -193,12 +193,15 @@ function applyLibraryItemToCharacter(db, log, characterId, libraryItemId) {
   const drama = db.prepare('SELECT id FROM dramas WHERE id = ? AND deleted_at IS NULL').get(charRow.drama_id);
   if (!drama) return { ok: false, error: 'unauthorized' };
   const now = new Date().toISOString();
-  db.prepare('UPDATE characters SET image_url = ?, local_path = ?, updated_at = ? WHERE id = ?').run(
-    item.image_url || null,
-    item.local_path || null,
-    now,
-    Number(characterId)
-  );
+  // 默认只覆盖图片；opts.withFields 时一并复制描述（**不动 name**：角色名是剧本/分镜在引用的标识）
+  const sets = ['image_url = ?', 'local_path = ?', 'updated_at = ?'];
+  const vals = [item.image_url || null, item.local_path || null, now];
+  if (opts.withFields && item.description != null) {
+    sets.push('description = ?');
+    vals.push(item.description);
+  }
+  vals.push(Number(characterId));
+  db.prepare(`UPDATE characters SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
   log.info('Library item applied to character', { character_id: characterId, library_item_id: libraryItemId });
   return { ok: true };
 }

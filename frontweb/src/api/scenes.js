@@ -28,6 +28,13 @@ export const sceneAPI = {
   addToMaterialLibrary(sceneId) {
     return request.post(`/scenes/${sceneId}/add-to-material-library`, {})
   },
+  /** 从素材库导入：手动挑一项，把它的图片（可选提示词）应用到本场景，不靠名字匹配 */
+  imageFromLibrary(sceneId, libraryId, withFields = false) {
+    return request.put(`/scenes/${sceneId}/image-from-library`, {
+      library_id: libraryId,
+      with_fields: !!withFields,
+    })
+  },
   addToTeamLibrary(sceneId, body = {}) {
     return request.post(`/scenes/${sceneId}/add-to-team-library`, body)
   },

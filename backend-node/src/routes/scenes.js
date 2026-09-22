@@ -127,6 +127,30 @@ function routes(db, log, cfg) {
         response.internalError(res, err.message);
       }
     },
+    // 从素材库导入：手动挑一项，把它的图片应用到这个场景上（不再要求名字完全一致）
+    imageFromLibrary: (req, res) => {
+      try {
+        const body = req.body || {};
+        if (body.library_id == null) return response.badRequest(res, '缺少 library_id');
+        const out = sceneLibraryService.applyLibraryItemToScene(
+          db,
+          log,
+          req.params.scene_id,
+          body.library_id,
+          { withFields: !!body.with_fields }
+        );
+        if (!out.ok) {
+          if (out.error === 'library item not found') return response.notFound(res, '场景库项不存在');
+          if (out.error === 'scene not found') return response.notFound(res, '场景不存在');
+          if (out.error === 'unauthorized') return response.forbidden(res, '无权限');
+          return response.badRequest(res, out.error);
+        }
+        response.success(res, { message: '已从素材库导入' });
+      } catch (err) {
+        log.error('scenes image-from-library', { error: err.message });
+        response.internalError(res, err.message);
+      }
+    },
     addToMaterialLibrary: (req, res) => {
       try {
         const out = sceneLibraryService.addSceneToMaterialLibrary(db, log, req.params.scene_id);

@@ -175,9 +175,12 @@ function routes(db, cfg, log, uploadService) {
     },
     imageFromLibrary: (req, res) => {
       try {
-        const libraryId = (req.body || {}).library_id;
+        const body = req.body || {};
+        const libraryId = body.library_id;
         if (libraryId == null) return response.badRequest(res, '缺少 library_id');
-        const out = characterLibraryService.applyLibraryItemToCharacter(db, log, req.params.id, libraryId);
+        const out = characterLibraryService.applyLibraryItemToCharacter(db, log, req.params.id, libraryId, {
+          withFields: !!body.with_fields,
+        });
         if (!out.ok) {
           if (out.error === 'library item not found') return response.notFound(res, '角色库项不存在');
           if (out.error === 'character not found') return response.notFound(res, '角色不存在');

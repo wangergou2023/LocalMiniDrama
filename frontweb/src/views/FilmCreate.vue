@@ -4651,14 +4651,14 @@ async function onGenerateSbImage(sb) {
     }
     // 带上「当前场景」的图作为参考：否则改了分镜的场景 / 换了场景图，出图完全不受影响
     // （实测证据：出图请求里 scene_id 与 reference_images 都是空的，新场景图根本没参与出图）
+    // 生「首帧图片」时把「场景 → 角色 → 物品」都作为参考图提交（与全能模式共用同一套收集逻辑与顺序）。
+    // 之前这里只带了场景图，物品/角色（比如两枚芯片）只能靠文字描述，模型会自由发挥 → 该出现的东西不出现。
     let sbSceneRefImages = undefined
-    const sbSceneRow = sb.scene_id
-      ? (store.scenes || []).find((s) => Number(s.id) === Number(sb.scene_id))
-      : null
-    if (sbSceneRow) {
-      const sceneUrl = assetImageUrl(sbSceneRow)
-      if (sceneUrl) sbSceneRefImages = [sceneUrl]
-    }
+    try {
+      const refItems = collectSbOmniReferenceItems(sb) || []
+      const refUrls = refItems.map((i) => i.url).filter(Boolean)
+      if (refUrls.length) sbSceneRefImages = refUrls.slice(0, 10)
+    } catch (_) {}
     const res = await imagesAPI.create({
       storyboard_id: sb.id,
       drama_id: dramaId.value,

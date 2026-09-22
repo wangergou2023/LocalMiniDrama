@@ -9,10 +9,8 @@
  */
 const {
   appendSourceIdFilters,
-  findExistingLibraryItem,
   insertLibraryItem,
   normalizeSourceId,
-  updateLibraryItem: updateExistingLibraryItem,
 } = require('./libraryDedup');
 
 const TABLE = 'storyboard_libraries';
@@ -190,7 +188,13 @@ function storyboardLibraryFields(sb, image, now) {
   };
 }
 
-/** 把某个分镜加入「分镜参考图」素材库（全局）。分镜没有图则拒绝。 */
+/**
+ * 把某个分镜加入「分镜参考图」素材库（全局）。分镜没有图则拒绝。
+ *
+ * 这一库**允许重复**：同一个分镜（或同一张图）点几次就存几条，不做复用/覆盖。
+ * 需求是「素材库支持重复」—— 素材本来就是拿来翻着挑的，多存几条比被悄悄合并掉好。
+ * （其余三类库仍保留各自的 source_id/图片判重复用逻辑，不受影响。）
+ */
 function addStoryboardToMaterialLibrary(db, log, storyboardId) {
   const sb = db
     .prepare('SELECT * FROM storyboards WHERE id = ? AND deleted_at IS NULL')
@@ -200,18 +204,6 @@ function addStoryboardToMaterialLibrary(db, log, storyboardId) {
   if (!image) return { ok: false, error: '该分镜还没有图' };
   const now = new Date().toISOString();
   const fields = storyboardLibraryFields(sb, image, now);
-  const existing = findExistingLibraryItem(db, TABLE, {
-    dramaId: null,
-    sourceType: 'storyboard',
-    sourceId: sb.id,
-    imageUrl: image.image_url,
-    localPath: image.local_path,
-  });
-  if (existing) {
-    updateExistingLibraryItem(db, TABLE, existing.id, fields);
-    log.info('Storyboard library item reused', { storyboard_id: storyboardId, library_item_id: existing.id });
-    return { ok: true, item: getLibraryItem(db, String(existing.id)), duplicated: true };
-  }
   const info = insertLibraryItem(db, TABLE, { ...fields, created_at: now });
   log.info('Storyboard added to material library', { storyboard_id: storyboardId, library_item_id: info.lastInsertRowid });
   return { ok: true, item: getLibraryItem(db, String(info.lastInsertRowid)), duplicated: false };

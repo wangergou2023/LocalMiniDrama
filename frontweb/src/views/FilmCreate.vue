@@ -2822,9 +2822,8 @@ async function onAddSbToMaterialLibrary(sb) {
   if (!sb) return
   sbLibAddingId.value = sb.id
   try {
-    const res = await storyboardsAPI.addToMaterialLibrary(sb.id)
-    const dup = res && res.duplicated
-    ElMessage.success(dup ? '这张图已在素材库里，已更新' : '已加入分镜参考图素材库')
+    await storyboardsAPI.addToMaterialLibrary(sb.id)
+    ElMessage.success('已加入分镜参考图素材库')
   } catch (e) {
     ElMessage.error(e.message || '加入失败')
   } finally {

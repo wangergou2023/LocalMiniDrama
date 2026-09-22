@@ -6422,6 +6422,10 @@ function stripSpeechFromVideoPrompt(prompt) {
     .replace(/\s{2,}/g, ' ')
     .replace(/^[；，。]+/, '')
     .trim()
+  // 库里已经把旁白清掉了（26 个分镜全清），但还得明确告诉模型「别出声」——
+  // 否则它可能自己编一段人声。这句是最后一道保险，永远附在末尾。
+  const noSpeech = '。本镜画面内不出现任何人声与说话动作（画外解说由后期统一配音），只保留环境音与音效。'
+  return p.includes('不出现任何人声') ? p : (p.replace(/[。；]\s*$/, '') + noSpeech)
 }
 
 function buildSbVideoPromptForApi(sb, { preferClassicPrompt = false } = {}) {

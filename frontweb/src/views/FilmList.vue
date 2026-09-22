@@ -18,7 +18,7 @@
             <el-icon><Box /></el-icon>素材道具
           </el-button>
           <el-button class="btn-library" @click="showSbLibrary = true">
-            <el-icon><PictureFilled /></el-icon>分镜参考图
+            <el-icon><PictureFilled /></el-icon>素材分镜
           </el-button>
         </div>
         <!-- 右侧操作区 -->
@@ -290,8 +290,8 @@
       </div>
       <template #footer><el-button @click="showPropLibrary = false">关闭</el-button></template>
     </el-dialog>
-        <!-- 素材库 · 分镜参考图：把满意的分镜图存下来复用 -->
-    <el-dialog v-model="showSbLibrary" title="素材库 · 分镜参考图" width="720px" destroy-on-close class="library-dialog" @open="loadSbLibraryList">
+        <!-- 素材库 · 分镜：把满意的分镜图存下来复用（按钮文案与其他三个库统一为「素材X」） -->
+    <el-dialog v-model="showSbLibrary" title="素材库 · 分镜" width="720px" destroy-on-close class="library-dialog" @open="loadSbLibraryList">
       <div class="library-toolbar">
         <el-input v-model="sbLibraryKeyword" placeholder="搜索标题或旁白" clearable style="width: 220px" @input="debouncedLoadSbLibrary()" />
       </div>
@@ -641,7 +641,7 @@ function debouncedLoadSbLibrary() {
   sbLibraryKeywordTimer = setTimeout(() => { sbLibraryPage.value = 1; loadSbLibraryList() }, 300)
 }
 async function onDeleteSbLibraryItem(item) {
-  try { await ElMessageBox.confirm(`确定删除分镜参考图「${(item.name || '未命名').slice(0, 20)}」吗？`, '删除确认', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }) } catch { return }
+  try { await ElMessageBox.confirm(`确定删除素材分镜「${(item.name || '未命名').slice(0, 20)}」吗？`, '删除确认', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }) } catch { return }
   try { await storyboardLibraryAPI.delete(item.id); ElMessage.success('已删除'); loadSbLibraryList() } catch (e) { ElMessage.error(e.message || '删除失败') }
 }
 

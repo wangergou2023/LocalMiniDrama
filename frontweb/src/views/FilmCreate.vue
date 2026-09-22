@@ -1436,7 +1436,7 @@
               </template>
             </div>
 
-                <!-- 分镜参考图素材库：满意的图存起来，或从这里挑一张设为本镜主图 -->
+                <!-- 素材分镜（素材库）：满意的图存起来，或从这里挑一张设为本镜主图 -->
                 <div class="sb-lib-actions">
                   <el-button
                     size="small"
@@ -2818,7 +2818,7 @@ const IMPORT_LIB_META = {
     sub: (i) => i.description || i.prompt,
   },
   storyboard: {
-    title: '从分镜参考图素材库导入',
+    title: '从分镜素材库导入',
     fetch: (kw) => storyboardLibraryAPI.list({ page_size: 200, keyword: kw || undefined }),
     apply: (targetId, libId, wf) => storyboardsAPI.imageFromLibrary(targetId, libId, wf),
     label: (i) => i.name,
@@ -2834,7 +2834,7 @@ async function onAddSbToMaterialLibrary(sb) {
   sbLibAddingId.value = sb.id
   try {
     await storyboardsAPI.addToMaterialLibrary(sb.id)
-    ElMessage.success('已加入分镜参考图素材库')
+    ElMessage.success('已加入素材分镜')
   } catch (e) {
     ElMessage.error(e.message || '加入失败')
   } finally {

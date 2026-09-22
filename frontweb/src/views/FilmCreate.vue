@@ -2357,23 +2357,14 @@
         <div class="sb-prompt-section-title">🖼 图片提示词</div>
         <el-form-item label="">
           <div style="width:100%">
-            <div style="font-size:12px; color:#6b7280; margin-bottom:4px;">原始提示词（分镜生成时写入，仅供参考）</div>
+            <div style="font-size:12px; color:#6b7280; margin-bottom:4px;">
+              <b>填这一个框就行</b>：出图时原样使用这段文字（不再自动追加风格、不再被 AI 重写）
+            </div>
             <el-input
               v-model="sbPromptImageText"
               type="textarea"
-              :rows="4"
-              placeholder="分镜生成时由 AI 写入的原始描述"
-            />
-          </div>
-        </el-form-item>
-        <el-form-item label="">
-          <div style="width:100%">
-            <div style="font-size:12px; color:#6b7280; margin-bottom:4px;">通用优化提示词（仅更新本字段，不影响首尾帧/关键帧专用提示词）</div>
-            <el-input
-              v-model="sbPromptPolishedText"
-              type="textarea"
-              :rows="5"
-              placeholder="点击「立即生成」润色通用优化提示词（仅更新本字段，不影响首尾帧专用提示词）"
+              :rows="8"
+              placeholder="写清画面即可：主体、材质、光线、构图、景别、环境。出图直接用这段文本。"
             />
           </div>
         </el-form-item>
@@ -6568,9 +6559,12 @@ async function onSaveSbPromptDialog() {
   sbPromptSaving.value = true
   try {
     const normalizedVideo = (sbPromptVideoText.value || '').replace(/\s+/g, ' ').trim()
+    const imageText = sbPromptImageText.value.trim() || null
     await storyboardsAPI.update(sb.id, {
-      image_prompt: sbPromptImageText.value.trim() || null,
-      polished_prompt: sbPromptPolishedText.value.trim() || null,
+      image_prompt: imageText,
+      // 同步写 polished_prompt：出图时优先用它。两个字段保持一致，
+      // 才能做到「界面上填的那段」就是「实际出图用的那段」。
+      polished_prompt: imageText,
       video_prompt: normalizedVideo || null,
     })
     await loadDrama()
@@ -6586,11 +6580,12 @@ async function onSaveSbPromptDialog() {
 async function onSaveSbImagePrompt(sb) {
   if (!sb?.id) return
   try {
+    const text = (editingSbImagePromptText.value || '').toString().trim() || null
     await storyboardsAPI.update(sb.id, {
-      image_prompt: (editingSbImagePromptText.value || '').toString().trim() || null,
-      // 出图时优先用 storyboards.polished_prompt，只改 image_prompt 会被它盖住（改了不生效）。
-      // 这里手动保存的图片提示词应当立即生效，所以把 polished_prompt 一并清空。
-      polished_prompt: null,
+      image_prompt: text,
+      // 出图时优先用 storyboards.polished_prompt：同步写一份，保证「界面填的」=「出图用的」。
+      // （只写 image_prompt 会被旧 polished_prompt 盖住 → 表现就是「改了不生效」）
+      polished_prompt: text,
     })
     await loadDrama()
     editingSbImagePromptId.value = null

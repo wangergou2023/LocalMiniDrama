@@ -62,10 +62,30 @@ const PROMPT_META = [
   },
 ];
 
+// 页签归属：决定这条提示词显示在「高级设置（短剧提示词）」还是「高级设置（宣传片提示词）」里。
+//   drama  = 只有短剧链路用（剧本扩写、角色提取）
+//   promo  = 只有宣传片链路用（宣传片大纲）
+//   shared = 两条链路共用（分镜拆解、场景/道具提取、各帧图像提示词等）—— 两个页签都会显示，
+//            编辑的是同一条覆盖，改哪边都一样生效
+const PROMPT_GROUP = {
+  story_expansion_system: 'drama',
+  character_extraction: 'drama',
+  promo_video_system: 'promo',
+  universal_multi_beat_format: 'shared',
+  storyboard_system: 'shared',
+  storyboard_user_suffix: 'shared',
+  scene_extraction: 'shared',
+  prop_extraction: 'shared',
+  first_frame_prompt: 'shared',
+  key_frame_prompt: 'shared',
+  last_frame_prompt: 'shared',
+};
+
 // default_body 和 locked_suffix 从 promptI18n 动态读取，确保与运行时提示词始终一致
 function getPromptDefinitions() {
   return PROMPT_META.map((m) => ({
     ...m,
+    group: PROMPT_GROUP[m.key] || 'shared',
     default_body: promptI18n.getDefaultPromptBody(m.key),
     locked_suffix: promptI18n.getLockedSuffix(m.key),
   }));
@@ -83,6 +103,7 @@ function routes(db, log) {
           key: d.key,
           label: d.label,
           description: d.description,
+          group: d.group,
           default_body: d.default_body,
           locked_suffix: d.locked_suffix,
           current_body: overrideMap[d.key] || null,

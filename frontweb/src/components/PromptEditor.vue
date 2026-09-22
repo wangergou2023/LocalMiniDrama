@@ -7,7 +7,7 @@
         <div class="left-sidebar">
           <div class="sidebar-menu">
             <div
-              v-for="p in prompts"
+              v-for="p in visiblePrompts"
               :key="p.key"
               :class="['menu-item', { active: currentKey === p.key }]"
               @click="selectPrompt(p.key)"
@@ -21,6 +21,13 @@
                   class="menu-tag"
                 >已自定义</el-tag>
                 <el-tag v-else type="info" size="small" class="menu-tag">默认</el-tag>
+                <el-tag
+                  v-if="p.group === 'shared'"
+                  type="success"
+                  effect="plain"
+                  size="small"
+                  class="menu-tag"
+                >共用</el-tag>
               </div>
               <div v-if="isDirty[p.key]" class="dirty-indicator" />
             </div>
@@ -103,37 +110,31 @@ import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Edit, Lock } from '@element-plus/icons-vue'
 import { promptsAPI } from '@/api/prompts'
+import { usePromptOverrides } from '@/composables/usePromptOverrides'
 
-const loading = ref(false)
-const prompts = ref([])
-const editState = ref({})
-const isDirty = ref({})
+// 本页签显示哪一类：'drama' = 短剧专有、'promo' = 宣传片专有、'all' = 全部；
+// 前两者都会带上「两条链路共用」的项。选中项 currentKey 由各自实例自己持有。
+const props = defineProps({
+  group: { type: String, default: 'all' },
+})
+
+// 列表与编辑内容在模块作用域共享：两个页签改的是同一份数据，不会互相覆盖
+const { loading, prompts, editState, isDirty, loadOnce } = usePromptOverrides()
+
 const savingKey = ref(null)
 const resettingKey = ref(null)
 const currentKey = ref(null)
 
-const currentPrompt = computed(() => {
-  return prompts.value.find((p) => p.key === currentKey.value)
+// 本页签要显示的清单 = 该链路专有项 + 两条链路共用项
+const visiblePrompts = computed(() => {
+  const g = props.group
+  if (!g || g === 'all') return prompts.value
+  return prompts.value.filter((p) => p.group === g || p.group === 'shared')
 })
 
-async function load() {
-  loading.value = true
-  try {
-    const data = await promptsAPI.list()
-    prompts.value = data.prompts || []
-    for (const p of prompts.value) {
-      editState.value[p.key] = p.current_body || p.default_body
-    }
-    // 默认选中第一个
-    if (prompts.value.length > 0) {
-      currentKey.value = prompts.value[0].key
-    }
-  } catch (_) {
-    ElMessage.error('加载提示词失败')
-  } finally {
-    loading.value = false
-  }
-}
+const currentPrompt = computed(() => {
+  return visiblePrompts.value.find((p) => p.key === currentKey.value) || null
+})
 
 function selectPrompt(key) {
   currentKey.value = key
@@ -183,7 +184,18 @@ async function reset(p) {
   }
 }
 
-onMounted(() => load())
+onMounted(async () => {
+  try {
+    await loadOnce()
+  } catch (_) {
+    ElMessage.error('加载提示词失败')
+    return
+  }
+  // 默认选中本页签清单里的第一个
+  if (visiblePrompts.value.length > 0) {
+    currentKey.value = visiblePrompts.value[0].key
+  }
+})
 </script>
 
 <style scoped>

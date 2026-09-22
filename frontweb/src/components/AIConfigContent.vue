@@ -98,9 +98,14 @@
           </el-table>
         </div>
       </el-tab-pane>
-      <el-tab-pane label="高级设置（提示词）" name="prompts">
+      <el-tab-pane label="高级设置（短剧提示词）" name="promptsDrama">
         <div class="tab-content">
-          <PromptEditor />
+          <PromptEditor group="drama" />
+        </div>
+      </el-tab-pane>
+      <el-tab-pane label="高级设置（宣传片提示词）" name="promptsPromo">
+        <div class="tab-content">
+          <PromptEditor group="promo" />
         </div>
       </el-tab-pane>
       <el-tab-pane label="高级设置（业务场景）" name="sceneModelMap">

@@ -604,7 +604,17 @@ async function callMinimaxH3VideoApi(config, log, opts) {
         content.push({ type: 'image_url', image_url: { url: refUrl }, role: 'reference_image' });
       }
     }
-    // 人声音色参考（多模态参考生视频：可直接与 reference_image 组合；与首尾帧互斥）
+  }
+
+  // 人声音色参考（独立注入：**不能**写在上面「参考图」分支里）
+  //
+  // 原来这段写在 `else if (refs.length)` 里，而上面是 `if (首帧/尾帧) … else if (参考图) …` ——
+  // 于是「同时提交首帧 + 参考图」的请求会走首帧分支，把参考图和音色**一起丢掉**：
+  // 实测 分镜#274 的请求日志为 {"has_first_frame":true,"reference_count":0,"has_voice_reference":false}，
+  // 而音色其实已经解析成功（日志「已回退为 TTS 默认旁白音色参考」），即「找到了却没发出去」，
+  // 结果每条视频的旁白音色都是 H3 随机配的，同一条片子音色不一致。
+  // 现在把它移出分支：无论走首帧还是走参考图，音色参考都会照常提交。
+  {
     let voiceUrl = (voice_reference_url || '').toString().trim();
     if (voiceUrl) {
       // 本地相对路径/本地 URL → 读文件转 base64（MiniMax 云端访问不到本机 localhost，须内嵌）

@@ -1176,7 +1176,16 @@ async function processImageGeneration(db, log, imageGenId) {
     }
     log.info('[图生] Step3 尺寸', { id: imageGenId, size: imageSize, elapsed: elapsed() });
 
-    // ── Step 3.5: 分镜 prompt 文本AI二次优化（单帧分镜；优先用 image_polish 模型，无则 fallback 默认文本模型）──
+    // ── Step 3.5: 分镜 prompt 文本AI二次优化 ── **已关闭（按需求）**
+    //
+    // 关闭原因：分镜生成那一步（routes/storyboards 的 image_polish）已经把画面提示词写好，
+    // 出图时再用文本 AI 重写一遍，有两个实测问题：
+    //   1) 重写结果会写回 storyboards.polished_prompt，把人工改过的提示词覆盖掉；
+    //   2) 重写时会把项目风格的词重复写进正文（实测「晶圆微距 / 硅表面纳米级电路纹理 /
+    //      电子显微镜质感」被写到 5 遍，而无尘车间只出现 3 次 → 模型按多数派把背景画成了晶圆）。
+    // 现在只保留「分镜已有 polished_prompt 就直接用」的逻辑；没有就用请求里的 prompt 原样出图。
+    // 需要恢复自动润色时，把下面这个常量改成 true 即可（润色代码本身完整保留）。
+    const ENABLE_IMAGE_PROMPT_AI_POLISH = false;
     let finalPrompt = row.prompt;
     const isSingleStoryboard = row.storyboard_id && row.frame_type !== 'quad_grid' && row.frame_type !== 'nine_grid';
     if (isSingleStoryboard && row.prompt) {
@@ -1201,7 +1210,8 @@ async function processImageGeneration(db, log, imageGenId) {
         const skipAIPolishForFrame = isFrameSpecial;
 
         // 只要系统中有任意可用的文本模型配置，均执行优化（image_polish 专用映射为可选增强）
-        const anyTextConfig = !alreadyPolished && !skipAIPolishForFrame && db.prepare(
+        // 注：ENABLE_IMAGE_PROMPT_AI_POLISH=false 时整段润色不执行（见上方说明）
+        const anyTextConfig = ENABLE_IMAGE_PROMPT_AI_POLISH && !alreadyPolished && !skipAIPolishForFrame && db.prepare(
           "SELECT id FROM ai_service_configs WHERE service_type = 'text' AND deleted_at IS NULL LIMIT 1"
         ).get();
         if (anyTextConfig) {

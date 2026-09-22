@@ -506,50 +506,6 @@
                       </el-button>
                     </div>
 
-    <!-- 从素材库导入：手动挑一项应用到当前资产（不依赖名字完全匹配） -->
-    <el-dialog v-model="importLib.visible" :title="importLibMeta.title" width="760px" append-to-body>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-        <el-input v-model="importLib.keyword" placeholder="搜索名称/描述" clearable style="width:220px" @keyup.enter="loadImportLibList" />
-        <el-button size="small" @click="loadImportLibList">搜索</el-button>
-        <el-checkbox v-model="importLib.withFields">同时导入描述/提示词（不改名字）</el-checkbox>
-        <span style="margin-left:auto;color:#6b7280;font-size:12px">
-          导入到：{{ importLib.target ? (importLib.target.name || importLib.target.location || '') : '' }}
-        </span>
-      </div>
-      <div v-loading="importLib.loading" style="max-height:52vh;overflow:auto">
-        <div v-if="!importLib.loading && !importLib.list.length" style="color:#6b7280;font-size:13px;padding:16px 0">
-          素材库里没有可导入的项。先在别处把资产「加入素材库」，这里就会出现。
-        </div>
-        <div
-          v-for="it in importLib.list"
-          :key="it.id"
-          style="display:flex;align-items:center;gap:12px;padding:8px;border-bottom:1px solid #f0f0f0"
-        >
-          <img
-            v-if="it.local_path || it.image_url"
-            :src="assetImageUrl(it)"
-            style="width:72px;height:54px;object-fit:cover;border-radius:4px;flex-shrink:0"
-            alt=""
-          />
-          <div v-else style="width:72px;height:54px;background:#f3f4f6;border-radius:4px;flex-shrink:0" />
-          <div style="flex:1;min-width:0">
-            <div style="font-size:13px;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-              {{ importLibMeta.label(it) || '（未命名）' }}
-            </div>
-            <div style="font-size:12px;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-              {{ importLibMeta.sub(it) || '' }}
-            </div>
-          </div>
-          <el-button size="small" type="primary" :loading="importLib.applyingId === it.id" @click="doImportFromLibrary(it)">
-            导入到这条
-          </el-button>
-        </div>
-      </div>
-      <template #footer>
-        <el-button @click="importLib.visible = false">关闭</el-button>
-      </template>
-    </el-dialog>
-
                     <!-- 角色音色参考（内置音色库） -->
                     <div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                       <el-button
@@ -2071,6 +2027,50 @@
     </el-dialog>
 
     <!-- 角色资源库（本剧库 / 本剧全部角色 / 团队库） -->
+    <!-- 从素材库导入：手动挑一项应用到当前资产（不依赖名字完全匹配） -->
+    <el-dialog v-model="importLib.visible" :title="importLibMeta.title" width="760px" append-to-body>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+        <el-input v-model="importLib.keyword" placeholder="搜索名称/描述" clearable style="width:220px" @keyup.enter="loadImportLibList" />
+        <el-button size="small" @click="loadImportLibList">搜索</el-button>
+        <el-checkbox v-model="importLib.withFields">同时导入描述/提示词（不改名字）</el-checkbox>
+        <span style="margin-left:auto;color:#6b7280;font-size:12px">
+          导入到：{{ importLib.target ? (importLib.target.name || importLib.target.location || '') : '' }}
+        </span>
+      </div>
+      <div v-loading="importLib.loading" style="max-height:52vh;overflow:auto">
+        <div v-if="!importLib.loading && !importLib.list.length" style="color:#6b7280;font-size:13px;padding:16px 0">
+          素材库里没有可导入的项。先在别处把资产「加入素材库」，这里就会出现。
+        </div>
+        <div
+          v-for="it in importLib.list"
+          :key="it.id"
+          style="display:flex;align-items:center;gap:12px;padding:8px;border-bottom:1px solid #f0f0f0"
+        >
+          <img
+            v-if="it.local_path || it.image_url"
+            :src="assetImageUrl(it)"
+            style="width:72px;height:54px;object-fit:cover;border-radius:4px;flex-shrink:0"
+            alt=""
+          />
+          <div v-else style="width:72px;height:54px;background:#f3f4f6;border-radius:4px;flex-shrink:0" />
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              {{ importLibMeta.label(it) || '（未命名）' }}
+            </div>
+            <div style="font-size:12px;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              {{ importLibMeta.sub(it) || '' }}
+            </div>
+          </div>
+          <el-button size="small" type="primary" :loading="importLib.applyingId === it.id" @click="doImportFromLibrary(it)">
+            导入到这条
+          </el-button>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="importLib.visible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="showCharLibrary" title="角色资源库" width="720px" destroy-on-close class="library-dialog" @open="onCharLibraryDialogOpen">
       <el-tabs v-model="charLibraryTab" class="char-library-tabs" @tab-change="onCharLibraryTabChange">
         <el-tab-pane label="本剧角色库" name="library">

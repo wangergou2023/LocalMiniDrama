@@ -155,11 +155,14 @@ const SYSTEM_PROMPT = [
   '    translate or explain it, and make the prose right after it start the next shot (e.g.',
   '    "#C1# the camera cuts to a close-up of …"). Never drop it: dropping it turns a two-shot fight',
   '    sequence back into one unbroken take.',
-  '6. Whenever a #Dn# placeholder follows, the speaker MUST be described as actively speaking on',
-  '   screen with the mouth visibly moving, e.g. "#R3# says in a gentle, clear voice: #D0#".',
-  '   A phrase that only names a voice quality (e.g. "his voice is gentle and clear:") is NOT',
-  '   acceptable — turn it into a speaking action. The dialogue is on-screen diegetic speech,',
-  '   never narration or voice-over.',
+  '6. Whenever a #Dn# placeholder follows, keep the spoken content exactly as it is, and describe how it',
+  '   is delivered according to the wording already in the text:',
+  '   - If the text says the line is a voice-over / narration / off-screen line, KEEP it off-screen:',
+  '     never add a speaker on screen, never add mouth movement, never add a visible person.',
+  '   - Otherwise treat it as on-screen diegetic speech and describe the speaker as actively speaking',
+  '     with the mouth visibly moving, e.g. "#R3# says in a gentle, clear voice: #D0#".',
+  '   The spoken content itself MUST stay in its original language (Chinese stays Chinese).',
+  '   Never translate, summarize or paraphrase a #Dn# block.',
   '7. Output ONLY the translated description. No explanation, no markdown fences, no commentary.',
 ].join('\n');
 
@@ -178,6 +181,34 @@ function looksChinese(s) {
  * @param {{force?: boolean}} [opts]
  * @returns {Promise<string|null>} 英文正文；任何环节失败返回 null（调用方回退中文）
  */
+/**
+ * 把「旁白 / 解说」标成 <d> 块，并显式写成「画外音」。
+ *
+ * 为什么必须做：按 H3 官方规则，翻译时只译散文，**台词/旁白要保留原语言**；
+ * 而 markDialogue 只处理带引号的对白（而且要先从 dialogue 字段解析出说话人），
+ * 写作「解说旁白：…」的旁白既没有引号也没有说话人 → 从来没被标记过 →
+ * 被当成散文整段翻成英文 → H3 拿到英文旁白，成片里就念英文（实测就是这个现象）。
+ *
+ * 这里补上标记：统一写成「(S1) says as an off-screen voice-over (the speaker is never shown):
+ * <d>[Chinese] …</d>」——既进入屏蔽（保持中文），又明确是画外音
+ * （不会像 on-screen 台词那样在画面里长出一个人）。
+ */
+function markNarration(text) {
+  const src = String(text || '');
+  if (!src) return src;
+  if (/off-screen voice-over/i.test(src)) return src; // 已处理过
+  const re = new RegExp(
+    '(解说旁白|旁白|画外音)\\s*[：:]\\s*([\\s\\S]*?)' +
+      '(?=结果|景别|镜头角度|运镜|氛围|情绪|配乐|音效|时长|风格|场景|镜头标题|动作|解说旁白|旁白|画外音|$)',
+    'g'
+  );
+  return src.replace(re, (_m, _label, body) => {
+    const spoken = String(body || '').trim().replace(/[。\s]+$/, '');
+    if (!spoken) return _m;
+    return `(S1) says as an off-screen voice-over (the speaker is never shown): <d>[Chinese] ${spoken}。</d>`;
+  });
+}
+
 async function ensureEnglishSegmentText(db, log, storyboardId, zhText, opts = {}) {
   const text = String(zhText || '').trim();
   if (!text) return null;
@@ -212,7 +243,7 @@ async function ensureEnglishSegmentText(db, log, storyboardId, zhText, opts = {}
   } catch (_) {}
   // 先修历史措辞再翻译：否则「室内」会被如实翻成 interior space，
   // 而渲染阶段的修正只匹配中文，就再也修不到了。
-  const marked = markDialogue(addSpeakingAction(fixLegacySegmentText(text)), speakers);
+  const marked = markNarration(markDialogue(addSpeakingAction(fixLegacySegmentText(text)), speakers));
 
   // 标签与对白先挖成占位符，翻译只处理散文 → 翻完再填回，保证它们逐字不变。
   // 不能指望译模型自觉保留：实测它会时而保留 @图片N、时而规范成 <Picture N>、时而整段丢掉，

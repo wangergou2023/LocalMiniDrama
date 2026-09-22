@@ -201,6 +201,45 @@ function pickMajorityProfile(profiles) {
   };
 }
 
+/**
+ * 把一张图片变成一段视频（缺视频的分镜用静帧顶替）。
+ *
+ * 为什么需要：合成要求每一镜的输入都是「视频」。老流程把图片直接喂给 concat，
+ * FFmpeg 出不来对应长度的画面，成片就凭空少掉这些镜，而且全程不报错
+ * （实测：15 镜 75 秒的宣传片，只有 4 镜有视频时合出来的成片是 21.6 秒）。
+ * 这里用 -loop 1 生成「时长 = 分镜时长」的静帧片段，再交给归一化统一规格。
+ */
+function imageToStillClip(imagePath, outPath, seconds, log) {
+  const { spawnSync } = require('child_process');
+  const ffmpegBin = getFfmpegPath();
+  if (!ffmpegBin || !fs.existsSync(imagePath)) return false;
+  const r = spawnSync(
+    ffmpegBin,
+    [
+      '-y',
+      '-loop', '1',
+      '-i', imagePath,
+      '-t', String(seconds),
+      '-r', '25',
+      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p',
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '20',
+      '-an',
+      outPath,
+    ],
+    { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }
+  );
+  const ok = r.status === 0 && fs.existsSync(outPath);
+  if (!ok && log && log.warn) {
+    log.warn('Video merge: 静帧片段生成失败', {
+      image: path.basename(imagePath),
+      error: String(r.stderr || '').slice(-300),
+    });
+  }
+  return ok;
+}
+
 /** 该段是否需要归一化（探测失败时返回 false —— 不动它，保持原行为） */
 function needsNormalization(profile, target) {
   if (!profile || !target) return false;
@@ -347,6 +386,11 @@ async function processVideoMerge(db, log, mergeId, baseUrl) {
 
   const localPaths = [];
   const toCleanup = [];
+  /** 用静帧顶替的分镜（有图无视频） */
+  const stillFilled = [];
+  /** 既无视频、也没法顶替的分镜 */
+  const missing = [];
+  const allowStill = req.allow_still_fallback !== false; // 默认允许顶替；否则宁可中止也不出残片
   for (let i = 0; i < scenes.length; i++) {
     const p = await resolveVideoToLocalPath(
       scenes[i].video_url,
@@ -356,10 +400,55 @@ async function processVideoMerge(db, log, mergeId, baseUrl) {
       i,
       log
     );
-    if (p) {
-      localPaths.push(p);
-      if (p.startsWith(tempDir)) toCleanup.push(p);
+    if (!p) {
+      missing.push(i + 1);
+      continue;
     }
+    // 关键：这一镜给过来的可能是【图片】而不是视频。
+    // 旧行为照单全收直接喂给 concat —— PNG 进 FFmpeg 出不来画面，
+    // 成片时长会凭空少掉这些镜（实测 15 镜 75 秒的片子只合出 21.6 秒，而且不报错）。
+    const isImage = /\.(png|jpe?g|webp|bmp)$/i.test(p);
+    const isVideo = /\.(mp4|webm|mov|mkv|m4v)$/i.test(p);
+    if (isImage) {
+      if (!allowStill) {
+        missing.push(i + 1);
+        continue;
+      }
+      const secs = Math.max(0.5, Number(scenes[i].duration) || 5);
+      const stillOut = path.join(tempDir, `still_${mergeId}_${i}.mp4`);
+      if (imageToStillClip(p, stillOut, secs, log)) {
+        localPaths.push(stillOut);
+        toCleanup.push(stillOut);
+        stillFilled.push({ index: i + 1, image: path.basename(p), seconds: secs });
+      } else {
+        missing.push(i + 1);
+      }
+      continue;
+    }
+    if (!isVideo) {
+      missing.push(i + 1); // 认不出的类型也当缺失，绝不把非视频塞进 concat
+      continue;
+    }
+    localPaths.push(p);
+    if (p.startsWith(tempDir)) toCleanup.push(p);
+  }
+
+  if (stillFilled.length) {
+    log.info('Video merge: 缺视频的分镜已用静帧顶替', {
+      merge_id: mergeId,
+      count: stillFilled.length,
+      items: stillFilled,
+    });
+  }
+  // 直接中止，而不是悄悄少几镜 —— 残片最难查：成片看着「成功」，时长却少了半集。
+  if (missing.length) {
+    const reason = `合成已中止：第 ${missing.join('、')} 镜还没有视频（也没有可用图片）。`
+      + '请先把这些分镜的视频生成出来（或把合成设置里的「允许用静帧顶替」打开）。';
+    db.prepare('UPDATE video_merges SET status = ?, error_msg = ? WHERE id = ?').run('failed', reason, mergeId);
+    if (taskId) taskService.updateTaskError(db, taskId, reason);
+    log.warn('Video merge: 中止 —— 有分镜没有视频', { merge_id: mergeId, missing });
+    for (const p of toCleanup) { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {} }
+    return;
   }
 
   const ffmpegAvailable = hasLocalFfmpeg();

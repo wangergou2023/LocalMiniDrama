@@ -6586,7 +6586,12 @@ async function onSaveSbPromptDialog() {
 async function onSaveSbImagePrompt(sb) {
   if (!sb?.id) return
   try {
-    await storyboardsAPI.update(sb.id, { image_prompt: (editingSbImagePromptText.value || '').toString().trim() || null })
+    await storyboardsAPI.update(sb.id, {
+      image_prompt: (editingSbImagePromptText.value || '').toString().trim() || null,
+      // 出图时优先用 storyboards.polished_prompt，只改 image_prompt 会被它盖住（改了不生效）。
+      // 这里手动保存的图片提示词应当立即生效，所以把 polished_prompt 一并清空。
+      polished_prompt: null,
+    })
     await loadDrama()
     editingSbImagePromptId.value = null
     ElMessage.success('图片提示词已保存')

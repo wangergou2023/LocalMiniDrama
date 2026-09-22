@@ -234,8 +234,7 @@
                       :min="1"
                       :step="1"
                       :precision="0"
-                      :disabled="storyType === 'promo' || autoEpisodes"
-                      :title="storyType === 'promo' ? '宣传片固定生成 1 集' : ''"
+                      :disabled="storyType !== 'promo' && autoEpisodes"
                       controls-position="right"
                       style="width: 100px"
                     />
@@ -2702,11 +2701,10 @@ const storyEpisodeCount = ref(1)
  * 自动分集把它拆成每集 20 出头个分镜，可以逐集检查、逐集出片。
  */
 const autoEpisodes = ref(false)
-// 切换类型时调整集数，并清空风格
+// 切换类型时自动调整集数/幕数，并清空风格
 watch(storyType, (val) => {
   storyStyle.value = '' // 切换类型时清空风格，避免跨类残留
-  // 宣传片固定 1 集：一条片子不分集，所以这个框锁死为 1（分几幕由后端定，不再让用户选）
-  if (val === 'promo') storyEpisodeCount.value = 1
+  if (val === 'promo' && storyEpisodeCount.value < 5) storyEpisodeCount.value = 5
 })
 const storyGenerating = ref(false)
 /** 剧本工作台：create 创作 | select 选择预览 */

@@ -20,10 +20,7 @@ async function generateStory(db, log, body) {
   const episodeCount = autoEpisodes ? 0 : Math.max(1, Math.floor(Number(body.episode_count) || 1));
 
   const isPromo = type === 'promo';
-  // 宣传片固定 1 集（见 mergePromoSegments），所以「集数」不再参与分幕：
-  // 幕数在这里定死为 5 —— 模板给每一幕钉了 duration:10，5 幕 × 10 秒 ≈ 50 秒，
-  // 正是宣传片的目标时长（前端那个「集数」框对宣传片已锁死为 1，不再让用户选）。
-  const segmentCount = isPromo ? 5 : Math.max(3, episodeCount || 1);
+  const segmentCount = Math.max(3, episodeCount || 1);
   const systemPrompt = isPromo
     ? promptI18n.getPromoVideoSystemPrompt(cfg, segmentCount)
     : promptI18n.getStoryExpansionSystemPrompt(cfg, episodeCount || 1, { autoEpisodes });

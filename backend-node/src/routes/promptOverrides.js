@@ -5,12 +5,6 @@ const response = require('../response');
 // 提示词元数据：label / description 在此维护；内容（default_body / locked_suffix）从 promptI18n 动态读取
 const PROMPT_META = [
   {
-    key: 'universal_multi_beat_format',
-    label: '片段描述规范（H3 精简格式）',
-    description:
-      '控制「生成全能提示词」与分镜批量生成里片段描述的结构与硬性规则（<Picture N> 映射行、精简三段、时间推进用中文、台词与画面禁字规则）。按项目画风自动追加的色彩硬规则不可编辑',
-  },
-  {
     key: 'story_expansion_system',
     label: '故事生成提示词',
     description: '控制 AI 如何将故事梗概扩写成完整剧本',
@@ -72,6 +66,13 @@ const PROMPT_META = [
     key: 'last_frame_prompt',
     label: '尾帧图像提示词',
     description: '控制 AI 如何生成分镜尾帧（动作后静态画面）的图像提示词（风格/比例和 JSON 格式已锁定）',
+  },
+  // 放在最后：它控制的是「全能提示词」与分镜批量生成里的片段描述规范，属于偏底层的格式约定
+  {
+    key: 'universal_multi_beat_format',
+    label: '片段描述规范（H3 精简格式）',
+    description:
+      '控制「生成全能提示词」与分镜批量生成里片段描述的结构与硬性规则（<Picture N> 映射行、精简三段、时间推进用中文、台词与画面禁字规则）。按项目画风自动追加的色彩硬规则不可编辑',
   },
 ];
 

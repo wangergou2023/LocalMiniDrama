@@ -2701,10 +2701,10 @@ const storyEpisodeCount = ref(1)
  * 自动分集把它拆成每集 20 出头个分镜，可以逐集检查、逐集出片。
  */
 const autoEpisodes = ref(false)
-// 切换类型时自动调整集数/幕数，并清空风格
-watch(storyType, (val) => {
-  storyStyle.value = '' // 切换类型时清空风格，避免跨类残留
-  if (val === 'promo' && storyEpisodeCount.value < 5) storyEpisodeCount.value = 5
+// 切换类型时清空风格，避免跨类残留。
+// 注意：这里**不再**把宣传片的集数自动填成 5 —— 集数默认值就是 1，要几集由用户自己填。
+watch(storyType, () => {
+  storyStyle.value = ''
 })
 const storyGenerating = ref(false)
 /** 剧本工作台：create 创作 | select 选择预览 */

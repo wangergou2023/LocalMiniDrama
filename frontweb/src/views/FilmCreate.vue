@@ -1386,16 +1386,6 @@
                     <el-button size="small" :loading="uploadingSbImageId === sb.id" @click="onUploadSbImageClick(sb)">上传</el-button>
                   </template>
                 </div>
-                <!-- 分镜参考图素材库：满意的图存起来，或从这里挑一张设为本镜主图 -->
-                <div class="sb-lib-actions">
-                  <el-button
-                    size="small"
-                    :disabled="!(getSbImage(sb.id) || sb.local_path || sb.image_url || sb.composed_image)"
-                    :loading="sbLibAddingId === sb.id"
-                    @click="onAddSbToMaterialLibrary(sb)"
-                  >加入素材库</el-button>
-                  <el-button size="small" @click="openImportFromLibrary('storyboard', sb)">从素材库导入</el-button>
-                </div>
                 <div v-if="getStripItems(sb.id).length" class="sb-imgs-strip">
                   <el-tooltip content="历史图：点击设为主图，左上角放大预览，右上角删除" placement="top" :show-arrow="false">
                     <el-icon class="sb-strip-hint-icon"><InfoFilled /></el-icon>
@@ -1444,6 +1434,17 @@
               </div>
               </template>
             </div>
+
+                <!-- 分镜参考图素材库：满意的图存起来，或从这里挑一张设为本镜主图 -->
+                <div class="sb-lib-actions">
+                  <el-button
+                    size="small"
+                    :disabled="!(getSbImage(sb.id) || sb.local_path || sb.image_url || sb.composed_image)"
+                    :loading="sbLibAddingId === sb.id"
+                    @click="onAddSbToMaterialLibrary(sb)"
+                  >加入素材库</el-button>
+                  <el-button size="small" @click="openImportFromLibrary('storyboard', sb)">从素材库导入</el-button>
+                </div>
             <!-- 右：分镜视频（由 /videos?storyboard_id 拉取）；有视频时仍显示提示词与生成按钮便于调整后重新生成 -->
             <div class="sb-panel sb-video">
               <div v-if="getSbVideo(sb.id)" class="sb-video-area">

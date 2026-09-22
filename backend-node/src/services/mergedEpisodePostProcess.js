@@ -249,23 +249,21 @@ function buildNativeBedFilter(dialogueSlots, gainFactor, duck) {
 function getDrawtextFontOption() {
   const candidates = [];
   if (process.platform === 'win32') {
+    // 真正跑在 Windows 上时用系统自带字体（在 Windows 内使用是授权允许的）
     const root = process.env.SystemRoot || 'C:\\Windows';
     candidates.push(
       path.join(root, 'Fonts', 'msyh.ttc'),
-      path.join(root, 'Fonts', 'msyhbd.ttc'),
       path.join(root, 'Fonts', 'simhei.ttf')
     );
   }
-  // WSL：Linux 侧一个中文字体都没有（fc-list :lang=zh 为空），但 Windows 字体挂载在 /mnt/c 下。
-  // 实测事故：字幕里的中文全是方框 —— 因为候选里只有 DejaVuSans.ttf，没有中文字形。
+  // Linux/WSL：优先【可免费商用】的 Noto Sans CJK（思源黑体，SIL OFL 1.1，允许嵌入视频）。
+  // 不要用从 Windows 拷来的微软雅黑/中易黑体 —— 它的授权只覆盖 Windows 系统内使用，
+  // 拷到 Linux 侧并用于商业成片有版权风险。
   candidates.push(
-    '/mnt/c/Windows/Fonts/msyh.ttc',
-    '/mnt/c/Windows/Fonts/msyhbd.ttc',
-    '/mnt/c/Windows/Fonts/simhei.ttf',
-    path.join(require('os').homedir(), '.fonts', 'msyh.ttc'),
-    path.join(require('os').homedir(), '.fonts', 'simhei.ttf')
+    path.join(require('os').homedir(), '.fonts', 'NotoSansCJK-Regular.ttc'),
+    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'
   );
-  candidates.push('/System/Library/Fonts/PingFang.ttc', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf');
+  candidates.push('/System/Library/Fonts/PingFang.ttc');
   for (const p of candidates) {
     if (p && fs.existsSync(p)) {
       return `:fontfile='${escapeFfmpegPath(p)}'`;
@@ -277,29 +275,33 @@ function getDrawtextFontOption() {
 /**
  * 字幕（libass）用的字体参数。
  *
- * 为什么必须显式指定：即使把中文字体装进 ~/.fonts 并 fc-cache，
- * `fc-match sans-serif:lang=zh` 依然会命中 DejaVuSans（没有中文字形）→ 中文渲染成方框。
- * 所以这里直接给出 fontsdir（让 libass 自己去目录里找）+ force_style 指定中文字体名。
- * 目录/字体名都取实测存在的：WSL 用 /mnt/c/Windows/Fonts，其余平台回退到 fontfile 所在目录。
+ * 为什么必须显式指定字体名：即使装了中文字体并 fc-cache，
+ * `fc-match sans-serif:lang=zh` 依然会命中 DejaVuSans（无中文字形）→ 中文渲染成方框。
+ * 所以这里给出 fontsdir（让 libass 自己去目录里找）+ force_style 指定字体名。
+ *
+ * 字体选型：Noto Sans CJK SC（思源黑体）= SIL OFL 1.1，
+ * 免费商用、允许嵌入视频；不使用微软雅黑/中易黑体这类仅授权 Windows 内使用的字体。
  */
 function getSubtitleFontOptions() {
-  const fontDirs = ['/mnt/c/Windows/Fonts', path.join(require('os').homedir(), '.fonts')];
-  for (const dir of fontDirs) {
+  const fonts = [
+    { dir: path.join(require('os').homedir(), '.fonts'), file: 'NotoSansCJK-Regular.ttc', name: 'Noto Sans CJK SC' },
+    { dir: '/usr/share/fonts/opentype/noto', file: 'NotoSansCJK-Regular.ttc', name: 'Noto Sans CJK SC' },
+  ];
+  for (const f of fonts) {
     try {
-      if (dir && fs.existsSync(dir) && fs.existsSync(path.join(dir, 'msyh.ttc'))) {
-        return `:fontsdir='${escapeFfmpegPath(dir)}':force_style='FontName=Microsoft YaHei'`;
+      if (f.dir && fs.existsSync(path.join(f.dir, f.file))) {
+        return `:fontsdir='${escapeFfmpegPath(f.dir)}':force_style='FontName=${f.name}'`;
       }
     } catch (_) {}
   }
-  for (const dir of fontDirs) {
-    try {
-      if (dir && fs.existsSync(dir) && fs.existsSync(path.join(dir, 'simhei.ttf'))) {
-        return `:fontsdir='${escapeFfmpegPath(dir)}':force_style='FontName=SimHei'`;
-      }
-    } catch (_) {}
-  }
-  // 找不到中文字体目录：不传额外参数，保持原行为（至少不会更差）
+  // 找不到可免费商用的中文字体：不传额外参数（行为与旧版一致），
+  // 由调用方在日志里提示（否则又会渲染成方框且很难查）
   return '';
+}
+
+/** 是否找得到可用的中文字体（供日志告警用） */
+function hasCjkFont() {
+  return !!getSubtitleFontOptions();
 }
 
 /**
@@ -460,6 +462,11 @@ async function runMergedEpisodePostProcess(db, log, opts) {
       const subEsc = escapeFfmpegPath(srtPath);
       // 必须带上中文字体参数，否则 libass 回退到 DejaVu（无中文字形）→ 中文字幕全变方框。
       const fontOpt = getSubtitleFontOptions();
+      if (!fontOpt) {
+        log.warn('merged post: 未找到可用的中文字体，字幕中文可能显示为方框', {
+          hint: '安装思源黑体/Noto Sans CJK：apt-get download fonts-noto-cjk && 解包后把 NotoSansCJK-Regular.ttc 放进 ~/.fonts 再 fc-cache -f',
+        });
+      }
       vfParts.push(`subtitles='${subEsc}':charenc=UTF-8${fontOpt}`);
     }
     if (hasWm) {

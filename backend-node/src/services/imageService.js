@@ -557,7 +557,15 @@ function create(db, log, req) {
       reference_images: req.reference_images,
     });
   }
-  const mergedPrompt = mergePromptWithStyle(req.prompt || '', req.style);
+  // ── 是否把「项目风格」拼到提示词后面 ── 已关闭（按需求）
+  // 关闭原因：界面上看到的提示词和实际发出去的不一致，就是这一步造成的
+  // （界面只显示 image_prompt，实际却在末尾自动追加一段风格文案）。
+  // 现在：请求里传什么就用什么，不追加任何东西。
+  // 需要恢复时把下面常量改成 true 即可（mergePromptWithStyle 函数完整保留）。
+  const ENABLE_PROMPT_STYLE_APPEND = false;
+  const mergedPrompt = ENABLE_PROMPT_STYLE_APPEND
+    ? mergePromptWithStyle(req.prompt || '', req.style)
+    : (req.prompt || '');
   // 优先使用请求中直接传入的 size；其次将 aspect_ratio + resolution 转成 size；未提供则存 NULL 留给 processImageGeneration 从 drama 元数据读取
   let reqSize = req.size || null;
   if (!reqSize && req.aspect_ratio) {

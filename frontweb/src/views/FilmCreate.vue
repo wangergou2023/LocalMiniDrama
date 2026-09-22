@@ -1390,7 +1390,7 @@
                 <div class="sb-lib-actions">
                   <el-button
                     size="small"
-                    :disabled="!getSbImage(sb.id)"
+                    :disabled="!(getSbImage(sb.id) || sb.local_path || sb.image_url || sb.composed_image)"
                     :loading="sbLibAddingId === sb.id"
                     @click="onAddSbToMaterialLibrary(sb)"
                   >加入素材库</el-button>

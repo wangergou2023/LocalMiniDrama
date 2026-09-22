@@ -400,10 +400,11 @@ function _doImport(db, storagePath, files, data, d, title, metaStr, now, log) {
           const genLocalPath = saveMediaFile(storagePath, projectDir, 'images', files, gen.zip_file || gen.file, 'shot_imp_gen');
           if (genLocalPath) {
             const genInfo = db.prepare(
-              `INSERT INTO image_generations (drama_id, storyboard_id, provider, prompt, negative_prompt, model, frame_type, size, quality, status, error_msg, local_path, created_at, updated_at, completed_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              `INSERT INTO image_generations (drama_id, episode_id, storyboard_id, provider, prompt, negative_prompt, model, frame_type, size, quality, status, error_msg, local_path, created_at, updated_at, completed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             ).run(
               dramaId,
+              episodeId,
               sbId,
               gen.provider || 'imported',
               gen.prompt || sb.image_prompt || '',
@@ -430,9 +431,9 @@ function _doImport(db, storagePath, files, data, d, title, metaStr, now, log) {
         const sbImagePath = saveMediaFile(storagePath, projectDir, 'images', files, sb.image_file, 'shot_imp');
         if (sbImagePath) {
           db.prepare(
-            `INSERT INTO image_generations (drama_id, storyboard_id, provider, prompt, status, local_path, created_at, updated_at)
-             VALUES (?, ?, 'imported', ?, 'completed', ?, ?, ?)`
-          ).run(dramaId, sbId, sb.image_prompt || '', sbImagePath, now, now);
+            `INSERT INTO image_generations (drama_id, episode_id, storyboard_id, provider, prompt, status, local_path, created_at, updated_at)
+             VALUES (?, ?, ?, 'imported', ?, 'completed', ?, ?, ?)`
+          ).run(dramaId, episodeId, sbId, sb.image_prompt || '', sbImagePath, now, now);
         }
       }
 

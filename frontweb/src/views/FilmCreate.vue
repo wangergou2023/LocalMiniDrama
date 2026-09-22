@@ -818,13 +818,14 @@
           </label>
         </div>
         <div class="sb-config-row sb-narration-export-row" style="margin-top:10px;flex-wrap:wrap;align-items:center;gap:12px">
-          <el-checkbox v-model="storyboardUseFirstLastFrame" @change="onStoryboardUseFirstLastFrameChange">
+          <!-- 宣传片只用标准模式：这两个开关对宣传片隐藏（见 isPromoProject） -->
+          <el-checkbox v-if="!isPromoProject" v-model="storyboardUseFirstLastFrame" @change="onStoryboardUseFirstLastFrameChange">
             首尾帧参考图（经典模式双槽；图生前先走专业帧提示词模块 first/last，再生图；视频绑定 first/last_frame_url）
           </el-checkbox>
-          <el-checkbox v-model="storyboardUniversalOmni" @change="onStoryboardUniversalOmniChange">
+          <el-checkbox v-if="!isPromoProject" v-model="storyboardUniversalOmni" @change="onStoryboardUniversalOmniChange">
             全能分镜模式（每镜输出多子分镜段落式 universal_segment_text，与「生成全能提示词」同版式）
           </el-checkbox>
-          <span class="sb-config-hint">两者互斥：首尾帧＝经典双槽，全能分镜＝每镜多子分镜</span>
+          <span v-if="!isPromoProject" class="sb-config-hint">两者互斥：首尾帧＝经典双槽，全能分镜＝每镜多子分镜</span>
           <el-checkbox v-model="storyboardIncludeNarration" @change="() => saveProjectSettings(false)">
             生成分镜时生成解说旁白（narration，与对白分开，便于后期 TTS）
           </el-checkbox>
@@ -3041,6 +3042,13 @@ const videoMuteNativeAudio = ref(true)
  * 每条视频的旁白音色是随机的，叠上 TTS 后就是两层人声、听起来又快又糊。
  */
 const videoNoSpeech = ref(true)
+/**
+ * 是否宣传片项目。
+ * 宣传片统一只用「标准模式」（经典图生视频）：不用首尾帧、也不用全能分镜 ——
+ * 这两个模式对宣传片只会带来额外分支与踩坑机会。因此宣传片项目里隐藏这两个开关，
+ * 并在读取 / 保存 / 生成分镜三处兜底为 false（老项目读到也会被纠正并回写）。
+ */
+const isPromoProject = computed(() => String(storyType.value || '').toLowerCase() === 'promo')
 const videoWatermark = ref(false)
 /** 水印开启时烧录到成片右下角 */
 const videoWatermarkText = ref('')
@@ -5000,6 +5008,12 @@ async function loadDrama() {
     })
     storyboardUniversalOmni.value = sbModes.universalOmni
     storyboardUseFirstLastFrame.value = sbModes.useFirstLastFrame
+    // 宣传片统一标准模式：老项目若开着这两个，读进来即纠正并回写
+    if (String(d.genre || '').toLowerCase() === 'promo' && (sbModes.universalOmni || sbModes.useFirstLastFrame)) {
+      storyboardUniversalOmni.value = false
+      storyboardUseFirstLastFrame.value = false
+      saveProjectSettings(false)
+    }
     if (sbModes.dropped) {
       ElMessage.warning('项目设置里「全能分镜模式」与「首尾帧参考图」同时开启，已保留全能分镜并关闭首尾帧（两者互斥）')
       saveProjectSettings(false)
@@ -5428,8 +5442,9 @@ async function saveProjectSettings(includeGenerationStyle = false) {
     video_resolution: videoResolution.value || '720p',
     video_clip_duration: videoClipDuration.value || DEFAULT_VIDEO_CLIP_DURATION,
     storyboard_include_narration: !!storyboardIncludeNarration.value,
-    storyboard_universal_omni: !!storyboardUniversalOmni.value,
-    storyboard_use_first_last_frame: !!storyboardUseFirstLastFrame.value,
+    // 宣传片只用标准模式（两个开关对它隐藏，这里兜底 false，避免旧值被带回来）
+    storyboard_universal_omni: isPromoProject.value ? false : !!storyboardUniversalOmni.value,
+    storyboard_use_first_last_frame: isPromoProject.value ? false : !!storyboardUseFirstLastFrame.value,
     last_frame_use_first_layout_lock: !!lastFrameUseFirstLayoutLock.value,
   }
   if (includeGenerationStyle) {
@@ -7100,7 +7115,7 @@ async function onGenerateStoryboard() {
       video_duration: getVideoDurationForApi(),
       aspect_ratio: projectAspectRatio.value || '16:9',
       include_narration: !!storyboardIncludeNarration.value,
-      universal_omni_storyboard: !!storyboardUniversalOmni.value,
+      universal_omni_storyboard: isPromoProject.value ? false : !!storyboardUniversalOmni.value,
     })
     const taskId = res?.task_id ?? (typeof res === 'string' ? res : null)
     if (taskId) {
@@ -7796,7 +7811,7 @@ async function runOneClickPipeline(textOnly = false) {
           storyboard_count: getStoryboardCountForApi(),
           video_duration: getVideoDurationForApi(),
           include_narration: !!storyboardIncludeNarration.value,
-          universal_omni_storyboard: !!storyboardUniversalOmni.value,
+          universal_omni_storyboard: isPromoProject.value ? false : !!storyboardUniversalOmni.value,
         })
         const taskId = res?.task_id ?? (typeof res === 'string' ? res : null)
         if (taskId) {
@@ -8296,7 +8311,7 @@ async function runRepairPipeline() {
           storyboard_count: getStoryboardCountForApi(),
           video_duration: getVideoDurationForApi(),
           include_narration: !!storyboardIncludeNarration.value,
-          universal_omni_storyboard: !!storyboardUniversalOmni.value,
+          universal_omni_storyboard: isPromoProject.value ? false : !!storyboardUniversalOmni.value,
         })
         const taskId = res?.task_id ?? (typeof res === 'string' ? res : null)
         if (taskId) {

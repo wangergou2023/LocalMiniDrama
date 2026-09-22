@@ -1619,6 +1619,18 @@
               <span v-if="videoBurnDialogue" class="video-option-hint">开启后，将把各镜「配音」生成的对白 TTS 按分镜时长对齐并混入整集成片（无对白音频的分镜为静音）。可与「字幕」旁白同时开启，两条音轨会叠混。</span>
             </div>
           </el-form-item>
+          <el-form-item label="旁白不交给 H3">
+            <div class="video-option-row">
+              <el-switch v-model="videoNoSpeech" />
+              <span class="video-option-hint">
+                开启（默认）：出视频时先把提示词里的<span style="color:#e6a23c">旁白/台词去掉</span>再提交 ——
+                H3 拿不到要念的词，就不会生成人声，只出环境音与音效；旁白统一由合成时的 TTS 配音
+                （音色可控、全片一致）。
+                关闭：提示词原样提交，H3 会自己念旁白 —— 但因为「参考音频与首帧互斥」，
+                它每镜随机配嗓音，叠上 TTS 会变成两层人声。
+              </span>
+            </div>
+          </el-form-item>
           <el-form-item label="屏蔽原声">
             <div class="video-option-row">
               <el-switch v-model="videoMuteNativeAudio" />
@@ -2997,6 +3009,15 @@ const videoBurnDialogue = ref(false)
  * 打开后成片只保留旁白/对白 TTS（后端 merge_options.keep_native_audio = false）。
  */
 const videoMuteNativeAudio = ref(true)
+/**
+ * 出视频时是否把「旁白/台词」从提示词里去掉（默认开）。
+ *
+ * 打开后 H3 拿不到要念的台词 → 不生成人声，只出环境音与音效；
+ * 旁白由合成时的 TTS 统一配音（音色可控、全片一致）。
+ * 原因：H3 的「参考音频」与「首帧/尾帧」互斥（实测 400），单图模式无法指定音色，
+ * 每条视频的旁白音色是随机的，叠上 TTS 后就是两层人声、听起来又快又糊。
+ */
+const videoNoSpeech = ref(true)
 const videoWatermark = ref(false)
 /** 水印开启时烧录到成片右下角 */
 const videoWatermarkText = ref('')
@@ -6372,15 +6393,46 @@ function sbCanSubmitVideo(sb) {
 }
 
 /** 提交给视频 API 的文案：全能模式有片段描述时仅提交该段（不拼接 video_prompt，避免动作/旁白盖过 @图片 等编排） */
+/**
+ * 出视频时把「说话/旁白」从提示词里去掉 —— H3 拿不到台词就没有人声可念，只出环境音与音效。
+ *
+ * 为什么这么做：H3 的「参考音频」与「首帧/尾帧」互斥（实测 400，请二选一），
+ * 单图/首尾帧模式下无法指定音色 → 每镜随机嗓音；而合成时又叠一层 TTS 旁白，
+ * 两层人声混在一起听感又快又糊。把台词从提示词里拿掉后：
+ *   画面照旧（场景/动作/情绪描述全保留）✓ 无人声 ✓ 环境音/音效保留 ✓
+ *   旁白由合成时的 TTS 统一配音 ✓ 音色可控且全片一致 ✓
+ *
+ * 只作用于「发给接口的这份文本」，不改库里 storyboards.video_prompt。
+ */
+function stripSpeechFromVideoPrompt(prompt) {
+  let p = String(prompt || '')
+  // 全能路径的台词块与英文旁白行
+  p = p.replace(/<d>[\s\S]*?<\/d>/g, '')
+  p = p.replace(/(?:Voice-over narration|Narration)\s*[:：][^\n.]*\.?/gi, '')
+  // 音效段里对旁白音色/语气的描述（「旁白为冷静克制的中性男声，语速平稳…」）
+  p = p.replace(/[；。]?\s*旁白(?:为|语气|音色|是)[^。；]*[。；]?/g, '；')
+  // 经典字段里的整段旁白 → 换成明确的「无人声」约束
+  p = p.replace(
+    /(?:解说旁白|旁白|画外音)\s*[：:][\s\S]*?(?=结果|景别|镜头角度|运镜|氛围|情绪|配乐|音效|时长|风格|$)/g,
+    '本镜画面内不出现任何人声与说话动作（画外解说由后期统一配音），只保留环境音与音效。'
+  )
+  return p
+    .replace(/[；，]\s*([。；])/g, '$1')
+    .replace(/。{2,}/g, '。')          // 生成时拼接留下的「挑战。。结果」这类双句号，一并清掉
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[；，。]+/, '')
+    .trim()
+}
+
 function buildSbVideoPromptForApi(sb, { preferClassicPrompt = false } = {}) {
   const vp = (sb.video_prompt || '').toString().trim()
   const seg = sbUniversalSegmentTrimmed(sb)
-  if (preferClassicPrompt) return vp || seg
-  if (isSbUniversalMode(sb.id)) {
-    if (seg) return seg
-    return vp
-  }
-  return vp
+  let out
+  if (preferClassicPrompt) out = vp || seg
+  else if (isSbUniversalMode(sb.id)) out = seg || vp
+  else out = vp
+  // 「H3 不念旁白」开关（默认开）：占位符替换要在剥离之后做，避免误伤
+  return videoNoSpeech.value ? stripSpeechFromVideoPrompt(out) : out
 }
 
 /**

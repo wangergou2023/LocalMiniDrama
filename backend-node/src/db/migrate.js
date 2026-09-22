@@ -174,6 +174,11 @@ function ensureAllColumns(database) {
     { name: 'creation_mode',     type: 'TEXT DEFAULT \'classic\'' }, // classic | universal
     { name: 'universal_segment_text', type: 'TEXT' },              // 全能模式片段描述（@ 引用等）
     { name: 'universal_segment_text_en', type: 'TEXT' },           // 上条的英文版：H3 生视频用；对白仍留在 <d>[Chinese] 内
+    // 上面那条英文缓存是【从哪段中文翻出来的】的指纹（源文本 md5）。
+    // 旧逻辑只判断「缓存非空就直接用」，不核对源文本是否变了 ——
+    // 实测事故：分镜提示词里的旁白早已清掉，缓存却还是旁白还在时翻的那版，
+    // 于是把带旁白的旧英文发给 H3，H3 就照着念了出来（15 个分镜全是这种情况）。
+    { name: 'universal_segment_text_en_src_hash', type: 'TEXT' },
     { name: 'first_frame_image_id', type: 'INTEGER' },
     // 半自动尾帧衔接的判定结果：1 = 判定为承接上一镜（渲染时自动把上一镜末帧当本镜首帧）、
     // 0 = 判定为剪辑点（不锚）、NULL = 未判定（见 services/adjacentContinuityService）。

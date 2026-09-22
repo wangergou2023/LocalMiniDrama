@@ -214,12 +214,29 @@ async function ensureEnglishSegmentText(db, log, storyboardId, zhText, opts = {}
   if (!text) return null;
   const id = Number(storyboardId);
 
-  // 1. 命中缓存
+  // 1. 命中缓存 —— 但必须核对「这条缓存是不是从这段源文本翻出来的」
+  //
+  // 旧逻辑只要缓存非空就直接返回，不核对源文本是否已经变了。实测事故：
+  // 分镜提示词里的旁白早已清掉，缓存却还是旁白还在时翻的那版 →
+  // 把带旁白的旧英文发给了 H3 → H3 照着念了出来（项目2 全部 15 个分镜都中招）。
+  const srcHash = require('crypto').createHash('md5').update(text).digest('hex');
   if (id && !opts.force) {
     try {
-      const row = db.prepare('SELECT universal_segment_text_en AS en FROM storyboards WHERE id = ?').get(id);
+      const row = db.prepare(
+        'SELECT universal_segment_text_en AS en, universal_segment_text_en_src_hash AS h FROM storyboards WHERE id = ?'
+      ).get(id);
       const cached = row && String(row.en || '').trim();
-      if (cached) return cached;
+      const cachedHash = row && String(row.h || '').trim();
+      if (cached && cachedHash && cachedHash === srcHash) return cached;
+      if (cached && cachedHash !== srcHash) {
+        try {
+          log.info('[分镜英译] 源文本已变，丢弃过期英文缓存重新翻译', {
+            storyboard_id: id,
+            cached_hash: cachedHash || '(空)',
+            src_hash: srcHash,
+          });
+        } catch (_) {}
+      }
     } catch (_) { /* 列不存在时退化为每次翻译 */ }
   }
 
@@ -227,8 +244,8 @@ async function ensureEnglishSegmentText(db, log, storyboardId, zhText, opts = {}
   if (!looksChinese(text)) {
     if (id) {
       try {
-        db.prepare('UPDATE storyboards SET universal_segment_text_en = ?, updated_at = ? WHERE id = ?')
-          .run(text, new Date().toISOString(), id);
+        db.prepare('UPDATE storyboards SET universal_segment_text_en = ?, universal_segment_text_en_src_hash = ?, updated_at = ? WHERE id = ?')
+          .run(text, srcHash, new Date().toISOString(), id);
       } catch (_) {}
     }
     return text;
@@ -315,8 +332,8 @@ async function ensureEnglishSegmentText(db, log, storyboardId, zhText, opts = {}
 
   if (id) {
     try {
-      db.prepare('UPDATE storyboards SET universal_segment_text_en = ?, updated_at = ? WHERE id = ?')
-        .run(en, new Date().toISOString(), id);
+      db.prepare('UPDATE storyboards SET universal_segment_text_en = ?, universal_segment_text_en_src_hash = ?, updated_at = ? WHERE id = ?')
+        .run(en, srcHash, new Date().toISOString(), id);
     } catch (e) {
       log.warn('[分镜英译] 写入缓存失败（不影响本次生成）', { storyboard_id: id, error: e.message });
     }

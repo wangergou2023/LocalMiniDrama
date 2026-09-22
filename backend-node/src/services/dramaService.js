@@ -743,13 +743,23 @@ function getVideoUrlForStoryboard(db, storyboardId, baseUrl) {
   ).get(storyboardId);
 
   // 辅助函数：构造完整 URL，优先使用本地路径（避免远程URL过期导致无法合并）
+  //
+  // 关键：必须判断文件类型。storyboards.local_path 是【图片与视频共用】的字段，
+  // 一旦用户选了主图 / 上传图片 / 从素材库导入 / 超分，local_path 就变成 .png，
+  // 而这里原来不加判断地把它当视频返回 → 合成拿到图片 → 该镜只能出静帧
+  // （实测：镜6/8/11 的视频被图片覆盖，合成时被当成「没有视频」用静帧顶替）。
+  const IMAGE_EXT = /\.(png|jpe?g|webp|bmp|gif|tiff?)(\?.*)?$/i;
+  const isImageish = (p) => !!p && IMAGE_EXT.test(String(p).trim());
   const buildUrl = (videoUrl, localPath) => {
-    if (localPath && String(localPath).trim() && baseUrl) {
+    const lp = localPath && String(localPath).trim();
+    if (lp && !isImageish(lp) && baseUrl) {
       const base = (baseUrl || '').replace(/\/$/, '');
       const p = String(localPath).replace(/^\//, '');
       return p ? base + '/' + p : null;
     }
-    if (videoUrl && String(videoUrl).trim()) return videoUrl;
+    const vu = videoUrl && String(videoUrl).trim();
+    // video_url 也可能是图片地址（同上被覆盖过），同样排除
+    if (vu && !isImageish(vu)) return videoUrl;
     return null;
   };
 

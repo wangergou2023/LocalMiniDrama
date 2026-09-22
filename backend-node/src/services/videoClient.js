@@ -816,7 +816,10 @@ async function callVideoApi(db, log, opts) {
       log.info('[视频][音色] 本剧暂无 active 角色音色参考（角色编辑页「音色库」可绑定）', {
         video_gen_id, drama_id: opts.drama_id, is_h3: isMinimaxH3,
       });
-      if (isMinimaxH3 && Array.isArray(opts.reference_urls) && opts.reference_urls.length > 0) {
+      // 没有角色音色时回退到 TTS 默认旁白音色。
+      // 这里**不再要求必须有参考图**（原来是 `isMinimaxH3 && opts.reference_urls.length > 0`）：
+      // 单图（首帧）模式的项目只提交首帧、不带参考图，用原来的条件就永远拿不到旁白音色参考。
+      if (isMinimaxH3) {
         const narratorRef = await resolveDefaultNarratorVoiceReferenceUrl(db, log, opts.storage_local_path, video_gen_id);
         if (narratorRef && !opts.voice_reference_url) {
           opts.voice_reference_url = narratorRef;

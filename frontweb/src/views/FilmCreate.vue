@@ -5050,15 +5050,22 @@ function onStoryboardPropChange(sbId) {
  * 后端 applyH3RefsToApi 会据此逐张生成 <Picture N> 映射行）。
  * 全能镜头走 omniRefs，不走这里；末帧不再当作参考图（它由 last_frame_url 作关键帧锚定）。
  */
-function buildClassicSbVideoRefs(sb, absoluteUrl) {
-  const scene = getSbSelectedScene(sb.id)
-  const sceneUrl = scene && hasAssetImage(scene) ? toAbsoluteImageUrl(assetImageUrl(scene)) : ''
-  const { urls, labels } = buildClassicVideoRefs({
-    sceneImageUrl: sceneUrl,
-    sceneName: scene ? (scene.location || scene.name) : '',
-    ownFrameUrl: absoluteUrl,
-  })
-  return { refUrls: urls.length ? urls : undefined, refLabels: labels }
+/**
+ * 经典（非全能）出视频时的参考图 —— 按需求改为**不再额外提交参考图**。
+ *
+ * 原因：单图模式只用首帧（first_frame_url）就够了；原来这里会把「场景图」和分镜自身的
+ * 主图重复塞进 reference_image_urls，而 H3 的请求体构建是先判首帧分支、再判参考图分支，
+ * 两者同时存在时参考图会被静默丢弃（POST 摘要里 reference_count: 0），
+ * 只有副作用没有好处。保留函数与返回结构，调用方无需改动。
+ *
+ * 需要恢复时，把原来的实现放回即可：
+ *   const scene = getSbSelectedScene(sb.id)
+ *   const sceneUrl = scene && hasAssetImage(scene) ? toAbsoluteImageUrl(assetImageUrl(scene)) : ''
+ *   const { urls, labels } = buildClassicVideoRefs({ sceneImageUrl: sceneUrl, sceneName: …, ownFrameUrl: absoluteUrl })
+ *   return { refUrls: urls.length ? urls : undefined, refLabels: labels }
+ */
+function buildClassicSbVideoRefs() {
+  return { refUrls: undefined, refLabels: [] }
 }
 
 function getSbSelectedScene(sbId) {

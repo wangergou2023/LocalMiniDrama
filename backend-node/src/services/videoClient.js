@@ -606,16 +606,26 @@ async function callMinimaxH3VideoApi(config, log, opts) {
     }
   }
 
-  // 人声音色参考（独立注入：**不能**写在上面「参考图」分支里）
+  // 人声音色参考（独立注入，但**有首帧/尾帧时不能提交**）
   //
-  // 原来这段写在 `else if (refs.length)` 里，而上面是 `if (首帧/尾帧) … else if (参考图) …` ——
-  // 于是「同时提交首帧 + 参考图」的请求会走首帧分支，把参考图和音色**一起丢掉**：
-  // 实测 分镜#274 的请求日志为 {"has_first_frame":true,"reference_count":0,"has_voice_reference":false}，
-  // 而音色其实已经解析成功（日志「已回退为 TTS 默认旁白音色参考」），即「找到了却没发出去」，
-  // 结果每条视频的旁白音色都是 H3 随机配的，同一条片子音色不一致。
-  // 现在把它移出分支：无论走首帧还是走参考图，音色参考都会照常提交。
+  // H3 的硬限制（实测，API 原话）：
+  //   "invalid params, reference 场景不能混用 first_frame/middle_frame/last_frame,请二选一 (2013)"
+  // 即「参考（图片/音频）」与「首帧/尾帧」是两种互斥的输入方式，二选一。
+  // 所以：只有本镜**没有**首/尾帧时才提交音色参考；有首帧时提交会被 400 顶回来，
+  // 整个视频任务直接失败（实测 video#48 分镜277 就是这个 400）。
+  //
+  // 需要「首帧 + 统一音色」的组合时，走「经典模式出片 + 合成时用 TTS 旁白配音」，
+  // 或者改用全能（Ref2VA）模式让 H3 带音频参考。
   {
-    let voiceUrl = (voice_reference_url || '').toString().trim();
+    const hasFrameInput = !!(firstForApi || lastForApi);
+    let voiceUrl = hasFrameInput ? '' : (voice_reference_url || '').toString().trim();
+    if (hasFrameInput && voice_reference_url) {
+      log.info('[MiniMaxH3][音色] 本镜提交了首/尾帧，按 H3 限制跳过音色参考（二选一）', {
+        video_gen_id,
+        has_first_frame: !!firstForApi,
+        has_last_frame: !!lastForApi,
+      });
+    }
     if (voiceUrl) {
       // 本地相对路径/本地 URL → 读文件转 base64（MiniMax 云端访问不到本机 localhost，须内嵌）
       const isLocal = /localhost|127\.0\.0\.1/i.test(voiceUrl) || !/^https?:\/\//i.test(voiceUrl) || /\/static\//i.test(voiceUrl);

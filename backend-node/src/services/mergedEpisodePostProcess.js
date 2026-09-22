@@ -256,12 +256,49 @@ function getDrawtextFontOption() {
       path.join(root, 'Fonts', 'simhei.ttf')
     );
   }
+  // WSL：Linux 侧一个中文字体都没有（fc-list :lang=zh 为空），但 Windows 字体挂载在 /mnt/c 下。
+  // 实测事故：字幕里的中文全是方框 —— 因为候选里只有 DejaVuSans.ttf，没有中文字形。
+  candidates.push(
+    '/mnt/c/Windows/Fonts/msyh.ttc',
+    '/mnt/c/Windows/Fonts/msyhbd.ttc',
+    '/mnt/c/Windows/Fonts/simhei.ttf',
+    path.join(require('os').homedir(), '.fonts', 'msyh.ttc'),
+    path.join(require('os').homedir(), '.fonts', 'simhei.ttf')
+  );
   candidates.push('/System/Library/Fonts/PingFang.ttc', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf');
   for (const p of candidates) {
     if (p && fs.existsSync(p)) {
       return `:fontfile='${escapeFfmpegPath(p)}'`;
     }
   }
+  return '';
+}
+
+/**
+ * 字幕（libass）用的字体参数。
+ *
+ * 为什么必须显式指定：即使把中文字体装进 ~/.fonts 并 fc-cache，
+ * `fc-match sans-serif:lang=zh` 依然会命中 DejaVuSans（没有中文字形）→ 中文渲染成方框。
+ * 所以这里直接给出 fontsdir（让 libass 自己去目录里找）+ force_style 指定中文字体名。
+ * 目录/字体名都取实测存在的：WSL 用 /mnt/c/Windows/Fonts，其余平台回退到 fontfile 所在目录。
+ */
+function getSubtitleFontOptions() {
+  const fontDirs = ['/mnt/c/Windows/Fonts', path.join(require('os').homedir(), '.fonts')];
+  for (const dir of fontDirs) {
+    try {
+      if (dir && fs.existsSync(dir) && fs.existsSync(path.join(dir, 'msyh.ttc'))) {
+        return `:fontsdir='${escapeFfmpegPath(dir)}':force_style='FontName=Microsoft YaHei'`;
+      }
+    } catch (_) {}
+  }
+  for (const dir of fontDirs) {
+    try {
+      if (dir && fs.existsSync(dir) && fs.existsSync(path.join(dir, 'simhei.ttf'))) {
+        return `:fontsdir='${escapeFfmpegPath(dir)}':force_style='FontName=SimHei'`;
+      }
+    } catch (_) {}
+  }
+  // 找不到中文字体目录：不传额外参数，保持原行为（至少不会更差）
   return '';
 }
 
@@ -421,7 +458,9 @@ async function runMergedEpisodePostProcess(db, log, opts) {
     const vfParts = [];
     if (hasSubs) {
       const subEsc = escapeFfmpegPath(srtPath);
-      vfParts.push(`subtitles='${subEsc}':charenc=UTF-8`);
+      // 必须带上中文字体参数，否则 libass 回退到 DejaVu（无中文字形）→ 中文字幕全变方框。
+      const fontOpt = getSubtitleFontOptions();
+      vfParts.push(`subtitles='${subEsc}':charenc=UTF-8${fontOpt}`);
     }
     if (hasWm) {
       const wmFile = path.join(tempRoot, 'watermark.txt');

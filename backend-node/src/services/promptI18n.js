@@ -1309,11 +1309,26 @@ function splitStoryboardUserSuffix(cfg) {
   return { body: full.slice(0, i).trim(), locked: full.slice(i).trim() };
 }
 
+/**
+ * 出视频时追加到提示词末尾的「无人声规则」。
+ * 优先取高级设置里的覆盖值；覆盖为空字符串表示用户主动关闭该行为。
+ */
+function getVideoNoSpeechRule() {
+  const v = _overrideCache['video_no_speech_rule'];
+  if (v === undefined || v === null) return getDefaultPromptBody('video_no_speech_rule');
+  return String(v);
+}
+
 function getDefaultPromptBody(key) {
   switch (key) {
+    case 'video_no_speech_rule':
+      // 出视频时追加到提示词末尾。用英文写：H3 是英文提示词模型，中文否定指令实测不生效
+      // （分镜#274~#281 的片段里 H3 照样自己念了旁白），且英文不会被中转英环节改写。
+      // 留空即关闭该行为；含 <d> 角色台词的提示词（全能短剧）不会追加这一段。
+      return 'No dialogue, no speech, no human voice, no narration, no talking, no lip movement: '
+        + 'ambient sound effects only. The voice-over is added in post-production.';
     case 'universal_multi_beat_format':
-      return buildUniversalFormatSpecBody();
-    case 'story_expansion_system':
+      return buildUniversalFormatSpecBody();    case 'story_expansion_system':
       // 从**同一处**生成（见 buildStoryExpansionBody 注释）：这里原先手抄了一份正文，
       // 与真正在用的提示词长期不一致，而它会在提示词设置页作为 placeholder 显示给用户。
       // 传 '${n}' 而不是具体数字，是为了仍然给出带占位符的模板正文。
@@ -1904,6 +1919,8 @@ module.exports = {
   getLastFramePrompt,
   getSceneExtractionPrompt,
   getStoryboardSystemPrompt,
+  /** 出视频时追加的「无人声规则」（高级设置里可改，留空即关闭；含 <d> 角色台词时不追加） */
+  getVideoNoSpeechRule,
   getUniversalOmniMultiBeatFormatSpec,
   getStoryboardUniversalOmniModeSuffix,
   getStoryboardUniversalOmniUserReminder,

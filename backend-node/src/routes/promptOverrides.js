@@ -67,6 +67,17 @@ const PROMPT_META = [
     label: '尾帧图像提示词',
     description: '控制 AI 如何生成分镜尾帧（动作后静态画面）的图像提示词（风格/比例和 JSON 格式已锁定）',
   },
+  // 出视频时统一追加的「无人声规则」：独立成条，便于单独修改/清空。
+  // 为什么不写进「分镜拆解」：那条默认正文 4000+ 字，而覆盖是整条替换，改一个小规则要复制全文，
+  // 很容易把默认正文弄丢；而且本规则要在【出视频时】生效，才能覆盖「手改的 / 导入的」提示词。
+  {
+    key: 'video_no_speech_rule',
+    label: '视频提示词·无人声规则',
+    description:
+      '出视频时自动追加到提示词末尾的一段硬性约束。默认禁止生成人声（对白/旁白/说话口型），只保留环境音与音效 —— '
+      + '因为 H3 的「参考音频」与「首帧」互斥，单图模式无法固定音色，让它念旁白会导致每镜音色不一致；'
+      + '旁白统一由合成时的 TTS 配音。提示词里若已有 <d> 角色台词（全能短剧）则不会追加。留空即关闭该行为。',
+  },
   // 放在最后：它控制的是「全能提示词」与分镜批量生成里的片段描述规范，属于偏底层的格式约定
   {
     key: 'universal_multi_beat_format',
@@ -90,6 +101,7 @@ const PROMPT_GROUP = {
   storyboard_system_promo: 'promo', // 分镜拆解（宣传片那份）
   scene_extraction_promo: 'promo', // 场景提取（宣传片那份）
   universal_multi_beat_format: 'shared',
+  video_no_speech_rule: 'shared', // 出视频时追加的无人声规则：两条链路共用
   storyboard_user_suffix: 'shared',
   prop_extraction: 'shared',
   first_frame_prompt: 'shared',

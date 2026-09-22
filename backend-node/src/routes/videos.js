@@ -3,6 +3,7 @@ const videoService = require('../services/videoService');
 const taskService = require('../services/taskService');
 const { normalizeAspectRatioForApi } = require('../services/videoClient');
 const aiClient = require('../services/aiClient');
+const promptI18n = require('../services/promptI18n');
 
 function routes(db, log) {
   return {
@@ -34,6 +35,16 @@ function routes(db, log) {
           const { injectStyleIntoVideoPrompt } = require('../utils/videoPromptStyle');
           prompt = injectStyleIntoVideoPrompt(prompt, style);
         }
+        // 「视频提示词·无人声规则」：在高级设置里可单独修改，留空即关闭（见 promptOverrides 的 PROMPT_META）。
+        // 默认禁止生成人声 —— H3 的「参考音频」与「首帧」互斥（实测 400），单图模式无法固定音色，
+        // 让它念旁白会导致每镜音色不一致；旁白统一由合成时的 TTS 配音。
+        // 提示词里已有 <d> 角色台词（全能短剧，台词要留给 H3 念）时不追加。
+        try {
+          const noSpeechRule = String(promptI18n.getVideoNoSpeechRule() || '').trim();
+          if (noSpeechRule && !/<d>[\s\S]*?<\/d>/.test(prompt) && !/no human voice/i.test(prompt)) {
+            prompt = `${prompt.replace(/[。；.\s]+$/, '')}。${noSpeechRule}`;
+          }
+        } catch (_) { /* 取不到规则就不追加，不影响出片 */ }
         const model = body.model ?? null;
         const duration = body.duration ?? null;
         // 画幅：请求体归一化（全角冒号等）后写入 DB；未传则从 drama.metadata 读取并同样归一化

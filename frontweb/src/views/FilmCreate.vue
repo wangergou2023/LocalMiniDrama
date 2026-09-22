@@ -1619,6 +1619,16 @@
               <span v-if="videoBurnDialogue" class="video-option-hint">开启后，将把各镜「配音」生成的对白 TTS 按分镜时长对齐并混入整集成片（无对白音频的分镜为静音）。可与「字幕」旁白同时开启，两条音轨会叠混。</span>
             </div>
           </el-form-item>
+          <el-form-item label="屏蔽原声">
+            <div class="video-option-row">
+              <el-switch v-model="videoMuteNativeAudio" />
+              <span class="video-option-hint">
+                开启（默认）：合成时**先屏蔽各镜视频自带的声音**，成片只保留旁白/对白 TTS ——
+                H3 每次随机配的人声不会串进来，全片音色统一（代价：环境音/音效也一并去掉）。
+                关闭：把各镜原声作为垫底轨混入（旁白说话时自动压低）。
+              </span>
+            </div>
+          </el-form-item>
           <el-form-item label="水印">
             <div class="video-option-row">
               <el-switch v-model="videoWatermark" />
@@ -2980,6 +2990,13 @@ const videoQuality = ref('high')
 const videoSubtitle = ref(false)
 /** 合成整集时把各镜对白 TTS（audio_local_path）按分镜时长对齐并混入成片 */
 const videoBurnDialogue = ref(false)
+/**
+ * 合成时是否屏蔽各镜视频自带的声音（默认开）。
+ *
+ * 目的：H3 每次会给旁白随机配一个嗓音，和 TTS 旁白叠在一起会又糊又快；
+ * 打开后成片只保留旁白/对白 TTS（后端 merge_options.keep_native_audio = false）。
+ */
+const videoMuteNativeAudio = ref(true)
 const videoWatermark = ref(false)
 /** 水印开启时烧录到成片右下角 */
 const videoWatermarkText = ref('')
@@ -7320,6 +7337,9 @@ function getFinalizeMergeOptions() {
   return {
     burn_narration_subtitles: !!videoSubtitle.value,
     burn_dialogue_audio: !!videoBurnDialogue.value,
+    // 屏蔽各镜原声：后端 mergedEpisodePostProcess 读 keep_native_audio !== false，
+    // 传 false 时不再把 H3 原声作为垫底轨混入，成片只留 TTS 旁白/对白。
+    keep_native_audio: !videoMuteNativeAudio.value,
     watermark_text: videoWatermark.value ? String(videoWatermarkText.value || '').trim().slice(0, 200) : '',
   }
 }

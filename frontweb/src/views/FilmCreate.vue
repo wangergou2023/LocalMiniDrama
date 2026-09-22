@@ -6436,8 +6436,13 @@ function stripSpeechFromVideoPrompt(prompt) {
   // 全能短剧里 <d> 是角色台词，必须留给 H3 念 —— 有 <d> 就不加，否则会把对白一起掐掉。
   // （这里之前写反了：return 放在前面，这段根本执行不到，约束从未生效。）
   const hasDialogue = /<d>[\s\S]*?<\/d>/.test(p)
-  if (hasDialogue || p.includes('不出现任何人声')) return p
-  return (p.replace(/[。；]\s*$/, '') + '。本镜画面内不出现任何人声与说话动作（画外解说由后期统一配音），只保留环境音与音效。').trim()
+  // 无人声约束：**必须写成英文**。
+  // 实测（分镜#274~#281，视频#79~#86）：中文那句约束发出去了，H3 照样自己加了说话声 ——
+  // H3 是英文提示词模型，对中文否定指令的服从度差；官方规范也是「描述用英文」。
+  const NO_SPEECH = ' No dialogue, no speech, no human voice, no narration, no talking, '
+    + 'no lip movement: ambient sound effects only. The voice-over is added in post-production.'
+  if (hasDialogue || /no human voice/i.test(p)) return p
+  return (p.replace(/[。；]\s*$/, '') + NO_SPEECH).trim()
 }
 
 function buildSbVideoPromptForApi(sb, { preferClassicPrompt = false } = {}) {

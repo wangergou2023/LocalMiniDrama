@@ -4,6 +4,7 @@ const KNOWN_TABLES = new Set([
   'character_libraries',
   'scene_libraries',
   'prop_libraries',
+  'storyboard_libraries',
 ]);
 
 const columnCache = new WeakMap();

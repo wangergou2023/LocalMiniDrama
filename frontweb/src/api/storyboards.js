@@ -118,4 +118,15 @@ export const storyboardsAPI = {
   rebuildVideoPrompt(id) {
     return request.post(`/storyboards/${id}/rebuild-video-prompt`, {})
   },
+  /** 把这一镜的图存进「分镜参考图」素材库（全局） */
+  addToMaterialLibrary(id) {
+    return request.post(`/storyboards/${id}/add-to-material-library`, {})
+  },
+  /** 从「分镜参考图」素材库挑一张，设为本镜的主图（不依赖名字匹配） */
+  imageFromLibrary(id, libraryId, withFields = false) {
+    return request.put(`/storyboards/${id}/image-from-library`, {
+      library_id: libraryId,
+      with_fields: !!withFields,
+    })
+  },
 }

@@ -17,6 +17,9 @@
           <el-button class="btn-library" @click="showPropLibrary = true">
             <el-icon><Box /></el-icon>素材道具
           </el-button>
+          <el-button class="btn-library" @click="showSbLibrary = true">
+            <el-icon><PictureFilled /></el-icon>分镜参考图
+          </el-button>
         </div>
         <!-- 右侧操作区 -->
         <div class="header-actions">
@@ -287,6 +290,32 @@
       </div>
       <template #footer><el-button @click="showPropLibrary = false">关闭</el-button></template>
     </el-dialog>
+        <!-- 素材库 · 分镜参考图：把满意的分镜图存下来复用 -->
+    <el-dialog v-model="showSbLibrary" title="素材库 · 分镜参考图" width="720px" destroy-on-close class="library-dialog" @open="loadSbLibraryList">
+      <div class="library-toolbar">
+        <el-input v-model="sbLibraryKeyword" placeholder="搜索标题或旁白" clearable style="width: 220px" @input="debouncedLoadSbLibrary()" />
+      </div>
+      <div v-loading="sbLibraryLoading" class="library-list">
+        <div v-for="item in sbLibraryList" :key="item.id" class="library-item">
+          <div class="library-item-cover" @click="openImagePreview(assetImageUrl(item))">
+            <img v-if="item.image_url || item.local_path" :src="assetImageUrl(item)" alt="" />
+            <span v-else class="library-item-placeholder">暂无图</span>
+          </div>
+          <div class="library-item-info">
+            <div class="library-item-name">{{ item.name || '未命名' }}</div>
+            <div class="library-item-desc">{{ (item.narration || item.description || '').slice(0, 60) }}{{ (item.narration || item.description || '').length > 60 ? '…' : '' }}</div>
+            <div class="library-item-actions">
+              <el-button size="small" type="danger" plain @click="onDeleteSbLibraryItem(item)">删除</el-button>
+            </div>
+          </div>
+        </div>
+        <div v-if="!sbLibraryLoading && sbLibraryList.length === 0" class="library-empty">素材库暂无分镜参考图，可在分镜下点「加入素材库」后在此查看</div>
+      </div>
+      <div class="library-pagination">
+        <el-pagination v-model:current-page="sbLibraryPage" v-model:page-size="sbLibraryPageSize" :total="sbLibraryTotal" :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next" @current-change="loadSbLibraryList" @size-change="loadSbLibraryList" />
+      </div>
+      <template #footer><el-button @click="showSbLibrary = false">关闭</el-button></template>
+    </el-dialog>
     <!-- 编辑公共道具 -->
     <el-dialog v-model="showEditPropLibrary" title="编辑素材道具" width="480px" @close="editPropLibraryForm = null">
       <el-form v-if="editPropLibraryForm" label-width="80px">
@@ -356,6 +385,7 @@ import { dramaAPI } from '@/api/drama'
 import { characterLibraryAPI } from '@/api/characterLibrary'
 import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
+import { storyboardLibraryAPI } from '@/api/storyboardLibrary'
 import AIConfigContent from '@/components/AIConfigContent.vue'
 import { uploadAPI } from '@/api/upload'
 import { aiAPI } from '@/api/ai'
@@ -583,6 +613,36 @@ async function submitEditPropLibrary() {
 async function onDeletePropLibrary(item) {
   try { await ElMessageBox.confirm(`确定删除公共道具「${(item.name || '未命名').slice(0, 20)}」吗？`, '删除确认', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }) } catch { return }
   try { await propLibraryAPI.delete(item.id); ElMessage.success('已删除'); loadPropLibraryList() } catch (e) { ElMessage.error(e.message || '删除失败') }
+}
+
+// 公共分镜参考图库（分镜图上「加入素材库」存进来的）
+const showSbLibrary = ref(false)
+const sbLibraryList = ref([])
+const sbLibraryLoading = ref(false)
+const sbLibraryPage = ref(1)
+const sbLibraryPageSize = ref(20)
+const sbLibraryTotal = ref(0)
+const sbLibraryKeyword = ref('')
+let sbLibraryKeywordTimer = null
+
+async function loadSbLibraryList() {
+  sbLibraryLoading.value = true
+  try {
+    const res = await storyboardLibraryAPI.list({ page: sbLibraryPage.value, page_size: sbLibraryPageSize.value, keyword: sbLibraryKeyword.value || undefined, global: 1 })
+    sbLibraryList.value = res?.items ?? []
+    const p = res?.pagination ?? {}
+    sbLibraryTotal.value = p.total ?? 0
+    if (p.page != null) sbLibraryPage.value = p.page
+    if (p.page_size != null) sbLibraryPageSize.value = p.page_size
+  } catch { sbLibraryList.value = [] } finally { sbLibraryLoading.value = false }
+}
+function debouncedLoadSbLibrary() {
+  if (sbLibraryKeywordTimer) clearTimeout(sbLibraryKeywordTimer)
+  sbLibraryKeywordTimer = setTimeout(() => { sbLibraryPage.value = 1; loadSbLibraryList() }, 300)
+}
+async function onDeleteSbLibraryItem(item) {
+  try { await ElMessageBox.confirm(`确定删除分镜参考图「${(item.name || '未命名').slice(0, 20)}」吗？`, '删除确认', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }) } catch { return }
+  try { await storyboardLibraryAPI.delete(item.id); ElMessage.success('已删除'); loadSbLibraryList() } catch (e) { ElMessage.error(e.message || '删除失败') }
 }
 
 const showNewDialog = ref(false)

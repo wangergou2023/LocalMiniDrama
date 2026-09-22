@@ -9,6 +9,7 @@ const stubRoutes = require('./stub');
 const characterLibraryRoutes = require('./characterLibrary');
 const sceneLibraryRoutes = require('./sceneLibrary');
 const propLibraryRoutes = require('./propLibrary');
+const storyboardLibraryRoutes = require('./storyboardLibrary');
 const characterRoutes = require('./characters');
 const uploadModule = require('./upload');
 const sceneRoutes = require('./scenes');
@@ -37,6 +38,7 @@ function setupRouter(cfg, db, log) {
   const charLibrary = characterLibraryRoutes(db, cfg, log);
   const sceneLibrary = sceneLibraryRoutes(db, cfg, log);
   const propLibrary = propLibraryRoutes(db, cfg, log);
+  const storyboardLibrary = storyboardLibraryRoutes(db, cfg, log);
   const characters = characterRoutes(db, cfg, log, uploadService);
   const uploadHandlers = uploadModule.routes(cfg, log, db);
   const scenes = sceneRoutes(db, log, cfg);
@@ -162,6 +164,13 @@ function setupRouter(cfg, db, log) {
   r.put('/prop-library/:id', propLibrary.update);
   r.delete('/prop-library/:id', propLibrary.delete);
 
+  // ---------- storyboard-library（分镜参考图素材库）----------
+  r.get('/storyboard-library', storyboardLibrary.list);
+  r.post('/storyboard-library', storyboardLibrary.create);
+  r.get('/storyboard-library/:id', storyboardLibrary.get);
+  r.put('/storyboard-library/:id', storyboardLibrary.update);
+  r.delete('/storyboard-library/:id', storyboardLibrary.delete);
+
   // ---------- characters ----------
   r.get('/characters/:id', characters.getOne);
   r.put('/characters/:id', characters.update);
@@ -283,6 +292,8 @@ function setupRouter(cfg, db, log) {
   r.post('/storyboards', storyboards.create);
   r.post('/storyboards/:id/insert-before', storyboards.insertBefore);
   r.get('/storyboards/:id', storyboards.getOne);
+  r.post('/storyboards/:id/add-to-material-library', storyboards.addToMaterialLibrary);
+  r.put('/storyboards/:id/image-from-library', storyboards.imageFromLibrary);
   r.put('/storyboards/:id', storyboards.update);
   r.delete('/storyboards/:id', storyboards.delete);
   r.post('/storyboards/:id/props', prop.associateProps);

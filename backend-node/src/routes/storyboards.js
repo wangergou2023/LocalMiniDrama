@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const response = require('../response');
 const storyboardService = require('../services/storyboardService');
+const storyboardLibraryService = require('../services/storyboardLibraryService');
 const episodeStoryboardService = require('../services/episodeStoryboardService');
 const framePromptService = require('../services/framePromptService');
 const aiClient = require('../services/aiClient');
@@ -327,6 +328,43 @@ function routes(db, log) {
         response.created(res, sb);
       } catch (err) {
         log.error('storyboards insertBefore', { error: err.message });
+        response.internalError(res, err.message);
+      }
+    },
+    // 把这一镜的图存进「分镜参考图」素材库（全局）
+    addToMaterialLibrary: (req, res) => {
+      try {
+        const out = storyboardLibraryService.addStoryboardToMaterialLibrary(db, log, req.params.id);
+        if (!out.ok) {
+          if (out.error === 'storyboard not found') return response.notFound(res, '分镜不存在');
+          return response.badRequest(res, out.error);
+        }
+        response.success(res, { message: '已加入分镜参考图素材库', item: out.item });
+      } catch (err) {
+        log.error('storyboards add-to-material-library', { error: err.message });
+        response.internalError(res, err.message);
+      }
+    },
+    // 从「分镜参考图」素材库挑一张，设为本镜的主图（不依赖名字匹配）
+    imageFromLibrary: (req, res) => {
+      try {
+        const body = req.body || {};
+        if (body.library_id == null) return response.badRequest(res, '缺少 library_id');
+        const out = storyboardLibraryService.applyLibraryItemToStoryboard(
+          db,
+          log,
+          req.params.id,
+          body.library_id,
+          { withFields: !!body.with_fields }
+        );
+        if (!out.ok) {
+          if (out.error === 'library item not found') return response.notFound(res, '分镜参考图不存在');
+          if (out.error === 'storyboard not found') return response.notFound(res, '分镜不存在');
+          return response.badRequest(res, out.error);
+        }
+        response.success(res, { message: '已从素材库导入' });
+      } catch (err) {
+        log.error('storyboards image-from-library', { error: err.message });
         response.internalError(res, err.message);
       }
     },

@@ -1386,6 +1386,16 @@
                     <el-button size="small" :loading="uploadingSbImageId === sb.id" @click="onUploadSbImageClick(sb)">上传</el-button>
                   </template>
                 </div>
+                <!-- 分镜参考图素材库：满意的图存起来，或从这里挑一张设为本镜主图 -->
+                <div class="sb-lib-actions">
+                  <el-button
+                    size="small"
+                    :disabled="!getSbImage(sb.id)"
+                    :loading="sbLibAddingId === sb.id"
+                    @click="onAddSbToMaterialLibrary(sb)"
+                  >加入素材库</el-button>
+                  <el-button size="small" @click="openImportFromLibrary('storyboard', sb)">从素材库导入</el-button>
+                </div>
                 <div v-if="getStripItems(sb.id).length" class="sb-imgs-strip">
                   <el-tooltip content="历史图：点击设为主图，左上角放大预览，右上角删除" placement="top" :show-arrow="false">
                     <el-icon class="sb-strip-hint-icon"><InfoFilled /></el-icon>
@@ -2695,6 +2705,7 @@ import { uploadAPI } from '@/api/upload'
 import { characterLibraryAPI } from '@/api/characterLibrary'
 import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
+import { storyboardLibraryAPI } from '@/api/storyboardLibrary'
 import { generationSettingsAPI } from '@/api/prompts'
 import { parseScriptIntoEpisodes, episodesListToPlainScript } from '@/utils/scriptEpisodes'
 import { resolveStoryboardModes, storyboardModeDropMessage, SB_MODE_UNIVERSAL, SB_MODE_FIRST_LAST } from '@/utils/storyboardModes'
@@ -2794,8 +2805,31 @@ const IMPORT_LIB_META = {
     label: (i) => i.name,
     sub: (i) => i.description || i.prompt,
   },
+  storyboard: {
+    title: '从分镜参考图素材库导入',
+    fetch: (kw) => storyboardLibraryAPI.list({ page_size: 200, keyword: kw || undefined }),
+    apply: (targetId, libId, wf) => storyboardsAPI.imageFromLibrary(targetId, libId, wf),
+    label: (i) => i.name,
+    sub: (i) => i.narration || i.description,
+  },
 }
 const importLibMeta = computed(() => IMPORT_LIB_META[importLib.type] || IMPORT_LIB_META.prop)
+
+// 把某个分镜的「分镜参考图」存进素材库（全局），方便复用
+const sbLibAddingId = ref(null)
+async function onAddSbToMaterialLibrary(sb) {
+  if (!sb) return
+  sbLibAddingId.value = sb.id
+  try {
+    const res = await storyboardsAPI.addToMaterialLibrary(sb.id)
+    const dup = res && res.duplicated
+    ElMessage.success(dup ? '这张图已在素材库里，已更新' : '已加入分镜参考图素材库')
+  } catch (e) {
+    ElMessage.error(e.message || '加入失败')
+  } finally {
+    sbLibAddingId.value = null
+  }
+}
 
 async function loadImportLibList() {
   importLib.loading = true
@@ -10369,6 +10403,13 @@ html.light .sb-ctrl-mode-btn.el-button:hover {
   overflow-x: auto;
   border-top: 1px solid var(--el-border-color-lighter);
   flex-shrink: 0;
+}
+/* 分镜参考图素材库的两个按钮 */
+.sb-lib-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
 }
 .sb-strip-hint-icon {
   font-size: 12px;

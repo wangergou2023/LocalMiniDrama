@@ -118,6 +118,15 @@ async function generateStory(db, log, body) {
 
     if (result.length > 0) {
       log && log.info && log.info('Story episodes parsed', { count: result.length });
+      if (isPromo) {
+        // 宣传片固定只出 1 集（见 mergePromoSegments 的说明）
+        const merged = mergePromoSegments(result);
+        log && log.info && log.info('宣传片合并为 1 集', {
+          segments: result.length,
+          chars: merged.content.length,
+        });
+        return { episodes: [merged] };
+      }
       logScriptLengths(log, result);
       return { episodes: result };
     }
@@ -246,7 +255,35 @@ function startStoryGeneration(db, log, req) {
   return task.id;
 }
 
+/**
+ * 宣传片：把各幕合并成 1 集。
+ *
+ * 为什么必须合并：宣传片大纲里每一条的 `episode` 字段其实是**幕号**（见上面 isPromo 的映射），
+ * 而 processStoryGeneration 会按 `episode_number` 逐条 saveEpisodes —— 一个 5 幕的宣传片
+ * 会被存成 5 集，用户还得逐集去点「生成分镜」。宣传片本来就是一条片子，所以这里合并成一集：
+ * 幕标题、画面描述、解说词全部保留在正文里（空行分隔，一段一幕），
+ * 后续「生成分镜」照旧从这一集的 script_content 里切，一段一幕正好对应一条片子的分幕结构。
+ *
+ * 正文形态沿用已验证可用的剧本形态：画面句 + 「画外音：」行（不写「分镜N」编号）。
+ */
+function mergePromoSegments(segments) {
+  const list = (Array.isArray(segments) ? segments : []).filter(
+    (s) => s && (s.content || s.image_prompt)
+  );
+  const body = list
+    .map((seg, i) => {
+      const lines = [];
+      lines.push(String(seg.title || '').trim() || `第${i + 1}幕`);
+      if (seg.image_prompt) lines.push(`画面：${String(seg.image_prompt).trim()}`);
+      if (seg.content) lines.push(`画外音：${String(seg.content).trim()}`);
+      return lines.join('\n');
+    })
+    .join('\n\n');
+  return { episode: 1, title: '第1集', content: body };
+}
+
 module.exports = {
   generateStory,
   startStoryGeneration,
+  mergePromoSegments,
 };

@@ -210,9 +210,16 @@ function addStoryboardToMaterialLibrary(db, log, storyboardId) {
 }
 
 /**
- * 把「分镜参考图」库里某一项的图设为某个分镜的主图（用户手动挑，不依赖名字匹配）。
+ * 把「分镜参考图」库里某一项的图设为某个分镜的图（用户手动挑，不依赖名字匹配）。
  *
- * 默认只覆盖 image_url / local_path；opts.withFields 时一并把库项的画面提示词写回 image_prompt。
+ * 关键：**要同时写进 image_generations 并把 first_frame_image_id 指过去**。
+ * 只改 storyboards.image_url/local_path 是不够的 —— 实测「首尾帧双槽」模式的项目里，
+ * 界面首帧槽显示的是 first_frame_image_id 指向的那条 image_generations 记录，
+ * 分镜的图列表也来自 image_generations，所以只改分镜行会出现「导入成功但界面毫无变化」。
+ *
+ * 库里那张图是磁盘上的文件（local_path），这里为它建一条 completed 的图记录，
+ * 两种模式（首尾帧 / 单主图）都能立刻看到。
+ * opts.withFields 时一并把库项的画面提示词写回 image_prompt；
  * **不动 title / narration**：那是剧本与台词在用的内容。
  */
 function applyLibraryItemToStoryboard(db, log, storyboardId, libraryItemId, opts = {}) {
@@ -223,16 +230,49 @@ function applyLibraryItemToStoryboard(db, log, storyboardId, libraryItemId, opts
     .get(Number(storyboardId));
   if (!sb) return { ok: false, error: 'storyboard not found' };
   const now = new Date().toISOString();
-  const sets = ['image_url = ?', 'local_path = ?', 'updated_at = ?'];
-  const vals = [item.image_url || null, item.local_path || null, now];
+
+  // 分镜所属的剧（image_generations 的 drama_id 冗余字段，便于按剧检索）
+  const ep = sb.episode_id
+    ? db.prepare('SELECT drama_id FROM episodes WHERE id = ?').get(Number(sb.episode_id))
+    : null;
+  const dramaId = ep ? ep.drama_id : null;
+
+  // 1) 为库项这张图建一条图记录（status=completed，前端列表只认 completed）
+  const genInfo = db
+    .prepare(
+      `INSERT INTO image_generations
+         (storyboard_id, episode_id, drama_id, provider, prompt, frame_type, image_url, local_path, status, created_at, updated_at, completed_at)
+       VALUES (?, ?, ?, 'library', ?, 'storyboard_first', ?, ?, 'completed', ?, ?, ?)`
+    )
+    .run(
+      Number(storyboardId),
+      sb.episode_id ?? null,
+      dramaId,
+      item.prompt || null,
+      item.image_url || null,
+      item.local_path || null,
+      now,
+      now,
+      now
+    );
+  const newGenId = genInfo.lastInsertRowid;
+
+  // 2) 分镜行：主图 + 首帧都指向它
+  const sets = ['image_url = ?', 'local_path = ?', 'first_frame_image_id = ?', 'updated_at = ?'];
+  const vals = [item.image_url || null, item.local_path || null, newGenId, now];
   if (opts.withFields && item.prompt != null) {
     sets.push('image_prompt = ?');
     vals.push(item.prompt);
   }
   vals.push(Number(storyboardId));
   db.prepare(`UPDATE storyboards SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
-  log.info('Library item applied to storyboard', { storyboard_id: storyboardId, library_item_id: libraryItemId });
-  return { ok: true };
+
+  log.info('Library item applied to storyboard', {
+    storyboard_id: storyboardId,
+    library_item_id: libraryItemId,
+    new_image_generation_id: newGenId,
+  });
+  return { ok: true, image_generation_id: newGenId };
 }
 
 module.exports = {

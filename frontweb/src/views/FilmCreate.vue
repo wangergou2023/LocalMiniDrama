@@ -2856,12 +2856,16 @@ function openImportFromLibrary(type, target) {
 
 async function doImportFromLibrary(item) {
   if (!importLib.target) return
+  const wasStoryboard = importLib.type === 'storyboard'
   importLib.applyingId = item.id
   try {
     await importLibMeta.value.apply(importLib.target.id, item.id, importLib.withFields)
     ElMessage.success(`已从素材库导入「${importLibMeta.value.label(item) || ''}」`)
     importLib.visible = false
     await loadDrama()
+    // 分镜参考图导入后会新建一条图记录并写回 first_frame_image_id，
+    // 必须重拉分镜媒体，否则首帧槽/主图要等下次加载才刷新
+    if (wasStoryboard) await loadStoryboardMedia()
   } catch (e) {
     ElMessage.error(e.message || '导入失败')
   } finally {

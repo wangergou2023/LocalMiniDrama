@@ -1313,6 +1313,8 @@ function splitStoryboardUserSuffix(cfg) {
  * 出视频时追加到提示词末尾的「无人声规则」。
  * 优先取高级设置里的覆盖值；覆盖为空字符串表示用户主动关闭该行为。
  */
+const SCENE_EXTRACTION_PROMO_DEFAULT = "【任务】从剧本中提取所有唯一的场景背景\n\n【要求】\n1. 识别剧本中所有不同的场景（地点+时间组合）\n2. 为每个场景生成详细的**中文**图片生成提示词（Prompt）\n3. **重要**：场景描述必须是**纯背景**，不能包含人物、角色、动作等元素\n4. **重要**：prompt 字段必须为中文，不得使用英文（风格词如 realistic 可保留）\n\n【场景归并规则 —— 硬性】\n场景是**背景空间 + 光照条件**，不是镜头。判定与合并一律按下面的口径：\na. 同一背景空间下的不同机位、不同景别、不同道具摆放、不同动作、不同画面构图，**必须合并为同一个场景**，不得拆开。\nb. 只有当**背景空间本身**发生改变（换场地、换房间、换布景）或**光照条件**发生改变（如开灯转为关灯暗场）时，才拆出新场景。\nc. 剧本中**反复出现的同一地点措辞**（同一句地点描述出现多次）就是**同一个场景**，必须直接合并，不得按镜头逐条新建、也不得给同一地点加不同后缀拆成多条。\nd. 宣传片/产品片类项目，场景数通常在 **3–5 个**；只有剧本确实跨越多个物理空间时才更多。";
+
 function getVideoNoSpeechRule() {
   const v = _overrideCache['video_no_speech_rule'];
   if (v === undefined || v === null) return getDefaultPromptBody('video_no_speech_rule');
@@ -1343,8 +1345,12 @@ function getDefaultPromptBody(key) {
     case 'character_extraction':
       return '你是一个专业的角色分析师，擅长从剧本中提取和分析角色信息。\n\n**【语言要求】所有字段的值必须使用中文，禁止出现英文内容（role字段的值除外，固定为 main/supporting/minor）。**\n\n你的任务是根据提供的剧本内容，提取并整理剧中出现的所有有名字角色的设定。\n\n要求：\n1. 提取所有有名字的角色（忽略无名路人或背景角色）\n2. 对每个角色，提取以下信息（全部用中文填写）：\n   - name: 角色名字（中文）\n   - role: 角色类型，固定值之一：main / supporting / minor\n   - appearance: 外貌描述（中文，100-200字，包含性别、年龄、体型、面部特征、发型、服装风格等，不含任何场景或环境信息）\n   - description: 背景故事和角色关系（中文，50-100字）\n3. 主要角色外貌要详细，次要角色可以简化';
 
+    case 'scene_extraction_promo':
+      // 宣传片那份：默认正文 = 短剧基础版 + 【场景归并硬性规则】。
+      // 原先两份默认相同，宣传片的差异只靠 prompt_overrides 里的自定义（本机有效）；
+      // 现按需求把那份自定义烧成内置默认值，换机器/新装也自带。
+      return SCENE_EXTRACTION_PROMO_DEFAULT;
     case 'scene_extraction':
-    case 'scene_extraction_promo': // 宣传片那份，默认正文与短剧相同
       return '【任务】从剧本中提取所有唯一的场景背景\n\n【要求】\n1. 识别剧本中所有不同的场景（地点+时间组合）\n2. 为每个场景生成详细的**中文**图片生成提示词（Prompt）\n3. **重要**：场景描述必须是**纯背景**，不能包含人物、角色、动作等元素\n4. **重要**：prompt 字段必须为中文，不得使用英文（风格词如 realistic 可保留）';
 
     case 'prop_extraction':

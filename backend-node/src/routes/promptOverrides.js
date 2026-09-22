@@ -17,8 +17,9 @@ const PROMPT_META = [
   },
   {
     key: 'promo_video_system',
-    label: '宣传片大纲提示词',
-    description: '控制 AI 如何根据公司/产品信息生成宣传片分镜大纲（解说词+画面描述）',
+    label: '故事生成提示词',
+    description:
+      '控制宣传片这条链路里，AI 如何根据梗概/产品信息生成剧本（形态是分幕解说词大纲：每幕含标题、解说词、英文画面描述）。输出格式要求已锁定',
   },
   {
     key: 'storyboard_system',

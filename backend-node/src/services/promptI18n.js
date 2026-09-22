@@ -198,7 +198,14 @@ function buildStoryboardSystemBody() {
 - segment_index 必须从0开始递增的整数，同一段落内所有镜头共享相同的 segment_index 和 segment_title`;
 }
 
-function getStoryboardSystemPrompt(cfg) {
+/**
+ * 分镜拆解的系统提示词。
+ *
+ * opts.chain === 'promo' 时用宣传片那份覆盖（key: storyboard_system_promo），
+ * 其余（短剧 / 未指定）用 storyboard_system。两条链路各管各的，互不覆盖。
+ * 链路由调用点判定（见 episodeStoryboardService，取项目的 dramas.genre）。
+ */
+function getStoryboardSystemPrompt(cfg, opts = {}) {
   if (isEnglish(cfg)) {
     return `[Role] You are a senior film storyboard artist, proficient in Robert McKee's shot breakdown theory, skilled at building emotional rhythm.
 
@@ -296,7 +303,9 @@ function getStoryboardSystemPrompt(cfg) {
 - Emotion intensity must accurately reflect script atmosphere changes
 - segment_index must be sequential integers starting from 0; all shots in the same segment share the same index and title`;
   }
-  const _sbOverride = _overrideCache['storyboard_system'];
+  // 分镜拆解提示词按链路分开存：短剧用 storyboard_system，宣传片用 storyboard_system_promo
+  const sbOverrideKey = opts.chain === 'promo' ? 'storyboard_system_promo' : 'storyboard_system';
+  const _sbOverride = _overrideCache[sbOverrideKey];
   if (_sbOverride) {
     return _sbOverride + '\n\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n\n【重要提示】\n- 镜头数量必须与剧本中的独立动作数量匹配（不允许合并或减少）\n- 每个镜头必须有明确的动作和结果\n- 景别选择必须符合叙事节奏（不要连续使用同一景别）\n- 情绪强度必须准确反映剧本氛围变化';
   }
@@ -1275,6 +1284,7 @@ function getDefaultPromptBody(key) {
       return buildStoryExpansionBody({ language: 'zh' }, '${n}');
 
     case 'storyboard_system':
+    case 'storyboard_system_promo': // 宣传片那份，默认正文与短剧相同
       // 同一处来源（见 buildStoryboardSystemBody 注释）。注意**不能**走 _overrideCache：
       // 用户的自定义内容由接口的 current_body 单独返回，这里要的是「默认正文」。
       return buildStoryboardSystemBody();
@@ -1322,6 +1332,7 @@ function getLockedSuffix(key) {
     case 'promo_video_system':
       return null;
     case 'storyboard_system':
+    case 'storyboard_system_promo':
       return '\n\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n\n【重要提示】\n- 镜头数量必须与剧本中的独立动作数量匹配（不允许合并或减少）\n- 每个镜头必须有明确的动作和结果\n- 景别选择必须符合叙事节奏（不要连续使用同一景别）\n- 情绪强度必须准确反映剧本氛围变化\n- 【角色一致性】每个镜头的characters列表必须与该镜头action/dialogue中实际描写的人物严格一致，不得把（在场景中存在但本镜头动作未涉及）的角色列入';
     case 'character_extraction':
       return '\n- **风格要求**：[当前剧集风格]\n- **图片比例**：[当前比例]\n输出格式：\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n每个元素是一个角色对象，包含上述字段。';

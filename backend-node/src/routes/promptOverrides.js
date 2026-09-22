@@ -23,8 +23,14 @@ const PROMPT_META = [
   },
   {
     key: 'storyboard_system',
-    label: '分镜拆解提示词',
-    description: '控制 AI 如何将剧本拆分成分镜头方案（输出格式要求已锁定）',
+    label: '分镜拆解提示词（短剧）',
+    description: '控制 AI 如何将短剧剧本拆分成分镜头方案（输出格式要求已锁定）',
+  },
+  {
+    key: 'storyboard_system_promo',
+    label: '分镜拆解提示词（宣传片）',
+    description:
+      '控制 AI 如何将宣传片剧本拆分成分镜头方案；只影响宣传片链路，与短剧那份互不覆盖（输出格式要求已锁定）',
   },
   {
     key: 'character_extraction',
@@ -71,9 +77,10 @@ const PROMPT_META = [
 const PROMPT_GROUP = {
   story_expansion_system: 'drama',
   character_extraction: 'drama',
+  storyboard_system: 'drama', // 分镜拆解（短剧那份）
   promo_video_system: 'promo',
+  storyboard_system_promo: 'promo', // 分镜拆解（宣传片那份）
   universal_multi_beat_format: 'shared',
-  storyboard_system: 'shared',
   storyboard_user_suffix: 'shared',
   scene_extraction: 'shared',
   prop_extraction: 'shared',

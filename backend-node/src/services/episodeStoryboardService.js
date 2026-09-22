@@ -1701,7 +1701,7 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   }
 
   // 获取剧集风格和比例（如果未指定，则从 drama metadata / style 中获取完整提示词）
-  const drama = db.prepare('SELECT style, metadata FROM dramas WHERE id = ?').get(episode.drama_id);
+  const drama = db.prepare('SELECT style, genre, metadata FROM dramas WHERE id = ?').get(episode.drama_id);
   const { resolvedStreamStyleFromDrama } = require('../utils/dramaStyleMerge');
   const finalStyle = resolvedStreamStyleFromDrama(style, drama);
 
@@ -1888,7 +1888,10 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
     userPrompt += promptI18n.getStoryboardNarrationExtraInstructions(cfg);
   }
 
-  let systemPrompt = promptI18n.getStoryboardSystemPrompt(cfg);
+  // 分镜拆解提示词按链路取覆盖：宣传片用 storyboard_system_promo，其余用 storyboard_system
+  let systemPrompt = promptI18n.getStoryboardSystemPrompt(cfg, {
+    chain: drama && drama.genre === 'promo' ? 'promo' : 'drama',
+  });
 
   // 当用户指定了分镜数量时，在系统提示词后追加最高优先级覆盖指令，
   // 使"目标数量"优先于默认的"一动作一镜头、禁止合并"原则

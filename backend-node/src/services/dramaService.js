@@ -814,6 +814,12 @@ function finalizeEpisode(db, log, episodeId, baseUrl, body = {}) {
     merge_options: {
       burn_narration_subtitles: !!(body && body.burn_narration_subtitles),
       burn_dialogue_audio: !!(body && body.burn_dialogue_audio),
+      // 注意：这里是【白名单】—— 前端每加一个合成开关，都必须同步加到这里，否则会被静默丢掉。
+      // 「屏蔽原声」曾经因此一直不生效：前端一直在传 keep_native_audio，但这里没带，
+      // 落库的 merge_options 里就没有这个字段，mergedEpisodePostProcess 读到的仍是默认「保留原声」。
+      keep_native_audio: (body && body.keep_native_audio !== undefined) ? !!body.keep_native_audio : undefined,
+      // 缺视频的分镜是否允许用静帧顶替（默认允许，见 videoMergeService.processVideoMerge）
+      allow_still_fallback: (body && body.allow_still_fallback !== undefined) ? !!body.allow_still_fallback : undefined,
       watermark_text: (body && body.watermark_text != null)
         ? String(body.watermark_text).trim().slice(0, 200)
         : '',

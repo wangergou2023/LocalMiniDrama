@@ -33,8 +33,13 @@ function injectStyleIntoVideoPrompt(prompt, style) {
   if (tailRe.test(p)) p = p.replace(tailRe, '').replace(/[\s.。]+$/, '');
   const m = /(^|\n)(detailed_description:[ \t]*)/.exec(p);
   if (!m) {
-    // 非六段结构（老格式/自由文本）保留旧行为：贴末尾
-    return p ? `${p}. Style: ${s}` : `Style: ${s}`;
+    // 非六段结构（经典自由文本，如「场景：…动作：…=VideoRatio: 16:9」）：
+    // 【按需求不再追加风格】，做到「界面里看到的提示词 = 实际发出去的提示词」。
+    // 旧行为 `prompt + '. Style: ' + style` 实测会造成界面与实际不一致
+    // （分镜#280 末尾就被贴上整段晶圆风格，用户无从判断到底发了什么）。
+    // 需要恢复时改回： return p ? `${p}. Style: ${s}` : `Style: ${s}`;
+    void s;
+    return p;
   }
   const idx = m.index + m[0].length;
   const head = p.slice(0, idx).replace(/\s+$/, '');

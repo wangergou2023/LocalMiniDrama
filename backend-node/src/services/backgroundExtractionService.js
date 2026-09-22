@@ -70,7 +70,12 @@ function buildExistingScenesHint(existingScenes, language) {
 
 async function extractBackgroundsFromScript(db, cfg, log, scriptContent, dramaId, model, style, existingScenes) {
   if (!scriptContent || !scriptContent.trim()) return [];
-  const systemPrompt = promptI18n.getSceneExtractionPrompt(cfg, style);
+  // 场景提取提示词按链路取：宣传片用 scene_extraction_promo，其余（短剧）用 scene_extraction
+  const dramaRow = dramaId
+    ? db.prepare('SELECT genre FROM dramas WHERE id = ? AND deleted_at IS NULL').get(Number(dramaId))
+    : null;
+  const chain = dramaRow && dramaRow.genre === 'promo' ? 'promo' : 'drama';
+  const systemPrompt = promptI18n.getSceneExtractionPrompt(cfg, style, { chain });
   const hint = buildExistingScenesHint(existingScenes, promptI18n.getLanguage(cfg));
   const prompt = hint + (promptI18n.getLanguage(cfg) === 'en' ? '[Script Content]\n' : '【剧本内容】\n') + scriptContent;
   console.log('systemPrompt', systemPrompt);

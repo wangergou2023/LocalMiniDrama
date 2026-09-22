@@ -39,8 +39,14 @@ const PROMPT_META = [
   },
   {
     key: 'scene_extraction',
-    label: '场景提取提示词',
-    description: '控制 AI 如何从剧本中提取场景背景（风格/比例和输出格式已锁定）',
+    label: '场景提取提示词（短剧）',
+    description: '控制 AI 如何从短剧剧本中提取场景背景（风格/比例和输出格式已锁定）',
+  },
+  {
+    key: 'scene_extraction_promo',
+    label: '场景提取提示词（宣传片）',
+    description:
+      '控制 AI 如何从宣传片剧本中提取场景背景；只影响宣传片链路，与短剧那份互不覆盖（风格/比例和输出格式已锁定）',
   },
   {
     key: 'prop_extraction',
@@ -78,11 +84,12 @@ const PROMPT_GROUP = {
   story_expansion_system: 'drama',
   character_extraction: 'drama',
   storyboard_system: 'drama', // 分镜拆解（短剧那份）
+  scene_extraction: 'drama', // 场景提取（短剧那份）
   promo_video_system: 'promo',
   storyboard_system_promo: 'promo', // 分镜拆解（宣传片那份）
+  scene_extraction_promo: 'promo', // 场景提取（宣传片那份）
   universal_multi_beat_format: 'shared',
   storyboard_user_suffix: 'shared',
-  scene_extraction: 'shared',
   prop_extraction: 'shared',
   first_frame_prompt: 'shared',
   key_frame_prompt: 'shared',

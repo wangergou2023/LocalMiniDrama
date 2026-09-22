@@ -20,6 +20,18 @@ function getLanguage(cfg) {
   return (cfg?.app?.language || 'zh').toLowerCase();
 }
 
+/**
+ * 按链路挑覆盖 key：宣传片链路读 `${baseKey}_promo`，其余（短剧 / 未指定）读 baseKey。
+ * 两条链路各管各的、互不回退；调用方负责把 chain 传进来（见 episodeStoryboardService、
+ * backgroundExtractionService —— 它们按项目的 dramas.genre 判定）。
+ *
+ * 新增一条「分两份」的提示词时：这里给 key 规则，PROMPT_META 里加一项（group 设 promo），
+ * getDefaultPromptBody / getLockedSuffix 里补一个 case，调用点把 chain 传进来即可。
+ */
+function chainOverrideKey(baseKey, opts) {
+  return opts && opts.chain === 'promo' ? `${baseKey}_promo` : baseKey;
+}
+
 function isEnglish(cfg) {
   return getLanguage(cfg) === 'en';
 }
@@ -310,7 +322,7 @@ function getStoryboardSystemPrompt(cfg, opts = {}) {
 - segment_index must be sequential integers starting from 0; all shots in the same segment share the same index and title`;
   }
   // 分镜拆解提示词按链路分开存：短剧用 storyboard_system，宣传片用 storyboard_system_promo
-  const sbOverrideKey = opts.chain === 'promo' ? 'storyboard_system_promo' : 'storyboard_system';
+  const sbOverrideKey = chainOverrideKey('storyboard_system', opts);
   const _sbOverride = _overrideCache[sbOverrideKey];
   if (_sbOverride) {
     return _sbOverride + '\n\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n\n【重要提示】\n- 镜头数量必须与剧本中的独立动作数量匹配（不允许合并或减少）\n- 每个镜头必须有明确的动作和结果\n- 景别选择必须符合叙事节奏（不要连续使用同一景别）\n- 情绪强度必须准确反映剧本氛围变化';
@@ -1047,7 +1059,7 @@ Each object containing:
 - image_prompt: **纯中文**（中文项目）单道具主图提示词（纯色无缝背景、仅主体、无杂物无场景、柔和棚拍光；融入项目真实尺度铁律与次要道具语音；无剧本人名地名等；只写有依据的外观词，简练不扩写）`;
 }
 
-function getSceneExtractionPrompt(cfg, style) {
+function getSceneExtractionPrompt(cfg, style, opts = {}) {
   const styleText = (style || '').toString().trim();
   const s = styleText || styleTextForCfgLang(cfg);
   const imageRatio = cfg?.style?.default_image_ratio || '16:9';
@@ -1070,7 +1082,8 @@ function getSceneExtractionPrompt(cfg, style) {
 Each element: location, time, prompt (English image generation prompt for pure background).`;
   }
   const _sceneLocked = `\n5. **风格要求**：${s}\n   - **图片比例**：${imageRatio}\n\n【输出格式】\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块。直接以 [ 开头，以 ] 结尾。**\n每个元素包含：location（地点）, time（时间）, prompt（完整的中文图片生成提示词，纯背景，明确说明无人物）。`;
-  const _sceneOverride = _overrideCache['scene_extraction'];
+  // 场景提取提示词按链路分开存：短剧用 scene_extraction，宣传片用 scene_extraction_promo
+  const _sceneOverride = _overrideCache[chainOverrideKey('scene_extraction', opts)];
   if (_sceneOverride) {
     return _sceneOverride + _sceneLocked;
   }
@@ -1316,6 +1329,7 @@ function getDefaultPromptBody(key) {
       return '你是一个专业的角色分析师，擅长从剧本中提取和分析角色信息。\n\n**【语言要求】所有字段的值必须使用中文，禁止出现英文内容（role字段的值除外，固定为 main/supporting/minor）。**\n\n你的任务是根据提供的剧本内容，提取并整理剧中出现的所有有名字角色的设定。\n\n要求：\n1. 提取所有有名字的角色（忽略无名路人或背景角色）\n2. 对每个角色，提取以下信息（全部用中文填写）：\n   - name: 角色名字（中文）\n   - role: 角色类型，固定值之一：main / supporting / minor\n   - appearance: 外貌描述（中文，100-200字，包含性别、年龄、体型、面部特征、发型、服装风格等，不含任何场景或环境信息）\n   - description: 背景故事和角色关系（中文，50-100字）\n3. 主要角色外貌要详细，次要角色可以简化';
 
     case 'scene_extraction':
+    case 'scene_extraction_promo': // 宣传片那份，默认正文与短剧相同
       return '【任务】从剧本中提取所有唯一的场景背景\n\n【要求】\n1. 识别剧本中所有不同的场景（地点+时间组合）\n2. 为每个场景生成详细的**中文**图片生成提示词（Prompt）\n3. **重要**：场景描述必须是**纯背景**，不能包含人物、角色、动作等元素\n4. **重要**：prompt 字段必须为中文，不得使用英文（风格词如 realistic 可保留）';
 
     case 'prop_extraction':
@@ -1360,6 +1374,7 @@ function getLockedSuffix(key) {
     case 'character_extraction':
       return '\n- **风格要求**：[当前剧集风格]\n- **图片比例**：[当前比例]\n输出格式：\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n每个元素是一个角色对象，包含上述字段。';
     case 'scene_extraction':
+    case 'scene_extraction_promo':
       return '\n5. **风格要求**：[当前剧集风格]\n   - **图片比例**：[当前比例]\n\n【输出格式】\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块。直接以 [ 开头，以 ] 结尾。**\n每个元素包含：location（地点）, time（时间）, prompt（完整的中文图片生成提示词，纯背景，明确说明无人物）。';
     case 'prop_extraction':
       return '\n- **风格要求**：[当前道具风格]\n- **图片比例**：[当前比例]\n\n【输出格式】\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n每个对象包含：\n- name: 道具名称\n- type: 类型 (如：武器/关键证物/日常用品/特殊装置)\n- description: 在剧中的作用和中文外观描述（人名归属可写此处，勿写入 image_prompt）\n- image_prompt: 单道具主图提示词（纯色底、仅主体；无剧本人名地名等；简练、不扩写；中文项目用中文并匹配项目语音与真实尺度铁律）';

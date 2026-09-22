@@ -823,6 +823,11 @@ function finalizeEpisode(db, log, episodeId, baseUrl, body = {}) {
     provider: 'ffmpeg',
     merge_options: {
       burn_narration_subtitles: !!(body && body.burn_narration_subtitles),
+      // 「旁白语音」与「字幕」已拆成两个独立开关：
+      //   burn_narration_subtitles → 只生成 SRT 并烧字幕
+      //   mix_narration_audio      → 只合成 TTS 旁白语音并混入成片
+      // 未传时（老调用方）后端会退化为「跟随字幕开关」，保持旧行为。
+      mix_narration_audio: (body && body.mix_narration_audio !== undefined) ? !!body.mix_narration_audio : undefined,
       burn_dialogue_audio: !!(body && body.burn_dialogue_audio),
       // 注意：这里是【白名单】—— 前端每加一个合成开关，都必须同步加到这里，否则会被静默丢掉。
       // 「屏蔽原声」曾经因此一直不生效：前端一直在传 keep_native_audio，但这里没带，

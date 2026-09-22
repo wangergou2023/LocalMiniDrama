@@ -390,7 +390,14 @@ async function processVideoMerge(db, log, mergeId, baseUrl) {
   const stillFilled = [];
   /** 既无视频、也没法顶替的分镜 */
   const missing = [];
-  const allowStill = req.allow_still_fallback !== false; // 默认允许顶替；否则宁可中止也不出残片
+  // 本函数没有 req（形参是 mergeId），开关从库里的 merge_options 读。
+  // 之前误写成 req.allow_still_fallback → ReferenceError → 任务卡在 pending、前端一直转圈（实测 06:42 那次）。
+  let mergeOptsForInput = {};
+  try {
+    const mr = db.prepare('SELECT merge_options FROM video_merges WHERE id = ?').get(mergeId);
+    mergeOptsForInput = JSON.parse((mr && mr.merge_options) || '{}');
+  } catch (_) { mergeOptsForInput = {}; }
+  const allowStill = mergeOptsForInput.allow_still_fallback !== false; // 默认允许顶替；否则宁可中止也不出残片
   for (let i = 0; i < scenes.length; i++) {
     const p = await resolveVideoToLocalPath(
       scenes[i].video_url,
@@ -498,8 +505,12 @@ async function processVideoMerge(db, log, mergeId, baseUrl) {
   } catch (_) {
     mergeOpts = {};
   }
+  // 注意：这里是决定「要不要跑后处理」的闸门 —— 前端每加一个合成开关都必须同步加进来，
+  // 否则那个开关打开也不会触发后处理（实测：只开「旁白配音」时 postNeed=false，
+  // 后处理根本没跑，成片连 _post 都没有）。
   const postNeed =
     !!mergeOpts.burn_narration_subtitles
+    || !!mergeOpts.mix_narration_audio
     || !!mergeOpts.burn_dialogue_audio
     || !!(mergeOpts.watermark_text && String(mergeOpts.watermark_text).trim());
   if (mergedRelativePath && ffmpegAvailable && postNeed) {

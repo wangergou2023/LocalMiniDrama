@@ -310,7 +310,16 @@ function hasCjkFont() {
 async function runMergedEpisodePostProcess(db, log, opts) {
   const { mergedAbsPath, storageRoot, scenes, episodeId, mergeOpts = {} } = opts;
   const wantDial = !!mergeOpts.burn_dialogue_audio;
-  const wantNarr = !!mergeOpts.burn_narration_subtitles;
+  // 「字幕」与「旁白语音」按需求拆成两件事：
+  //   wantSubs      = 生成 SRT 并把字幕烧进画面
+  //   wantNarrAudio = 合成 TTS 旁白语音并混入成片
+  // 旧行为是一个开关（burn_narration_subtitles）同时管两件事；为兼容老调用方，
+  // 未显式传 mix_narration_audio 时仍跟随 burn_narration_subtitles。
+  const wantSubs = !!mergeOpts.burn_narration_subtitles;
+  const wantNarrAudio = mergeOpts.mix_narration_audio === undefined
+    ? wantSubs
+    : !!mergeOpts.mix_narration_audio;
+  const wantNarr = wantNarrAudio; // 下方音频相关分支沿用这个变量名
   const watermarkText = (mergeOpts.watermark_text && String(mergeOpts.watermark_text).trim())
     ? String(mergeOpts.watermark_text).trim().slice(0, 200)
     : '';
@@ -319,8 +328,8 @@ async function runMergedEpisodePostProcess(db, log, opts) {
     return { ok: false, error: '无效合成参数' };
   }
 
-  const needAudio = wantDial || wantNarr;
-  if (!needAudio && !watermarkText) {
+  const needAudio = wantDial || wantNarrAudio;
+  if (!needAudio && !wantSubs && !watermarkText) {
     return { ok: false, error: 'NO_POST_OPTS' };
   }
 
@@ -340,7 +349,8 @@ async function runMergedEpisodePostProcess(db, log, opts) {
     /** 有对白 TTS 的镜头时间窗，供原生音频床压低用（见 buildNativeBedFilter） */
     const dialogueSlots = [];
 
-    if (needAudio) {
+    // 注意：字幕只需要时间轴与 SRT 文案，不需要生成音频 —— 所以 wantSubs 开着也要进这个循环
+    if (needAudio || wantSubs) {
       let tMs = 0;
       let tSec = 0;
       let srtIdx = 1;
@@ -355,13 +365,17 @@ async function runMergedEpisodePostProcess(db, log, opts) {
         ).get(sbId);
 
         const narrText = (row?.narration && String(row.narration).trim()) ? String(row.narration).trim() : '';
-        if (wantNarr && narrText) {
+        if (wantSubs && narrText) {
           const durMs = Math.round(slotSec * 1000);
           srtLines.push(String(srtIdx++), `${formatSrtTimestamp(tMs)} --> ${formatSrtTimestamp(tMs + durMs)}`, narrText, '');
         }
         tMs += Math.round(slotSec * 1000);
         const slotStartSec = tSec;
         tSec += slotSec;
+
+        // 只加字幕（wantSubs 且 needAudio=false）时不需要生成任何音频片段；
+        // 旧代码无条件往下走 -> segmentFiles 为空 -> concat 失败 -> 整个后处理被跳过。
+        if (!needAudio) continue;
 
         const diaFit = path.join(tempRoot, `dia_fit_${i}.mp3`);
         const narrFit = path.join(tempRoot, `narr_fit_${i}.mp3`);
@@ -380,7 +394,7 @@ async function runMergedEpisodePostProcess(db, log, opts) {
           }
         }
 
-        if (wantNarr) {
+        if (wantNarrAudio) {
           if (!narrText) {
             if (!writeSilenceMp3(slotSec, narrFit, log)) {
               return { ok: false, error: `旁白静音片段失败 #${i}` };
@@ -423,7 +437,7 @@ async function runMergedEpisodePostProcess(db, log, opts) {
           } catch (_) {
             return { ok: false, error: `对白片段复制失败 #${i}` };
           }
-        } else if (wantNarr) {
+        } else if (wantNarrAudio) {
           try {
             fs.copyFileSync(narrFit, segOut);
           } catch (_) {
@@ -434,19 +448,34 @@ async function runMergedEpisodePostProcess(db, log, opts) {
         segmentFiles.push(segOut);
       }
 
-      const concatOut = path.join(tempRoot, 'full_mix.mp3');
-      if (!concatMp3List(segmentFiles, concatOut, log)) {
-        return { ok: false, error: '音轨拼接失败' };
+      // 只在真的需要音频（对白 / 旁白配音）时拼接并对齐整条音轨
+      if (needAudio) {
+        const concatOut = path.join(tempRoot, 'full_mix.mp3');
+        if (!concatMp3List(segmentFiles, concatOut, log)) {
+          return { ok: false, error: '音轨拼接失败' };
+        }
+
+        alignedAudioPath = path.join(tempRoot, 'aligned_mix.mp3');
+        if (!alignAudioToVideoDuration(concatOut, videoDur, alignedAudioPath, log)) {
+          return { ok: false, error: '音轨与视频总时长对齐失败' };
+        }
+
+        // [独立产物] 把整条旁白/对白音轨另存到成片旁边，供后期剪辑单独取用。
+        // 用户的诉求是「字幕」和「TTS 音频」分开拿，而不是全部烧死进视频。
+        try {
+          const aBase = path.basename(mergedAbsPath, path.extname(mergedAbsPath));
+          const audioOut = path.join(path.dirname(mergedAbsPath), `${aBase}_narration.mp3`);
+          fs.copyFileSync(alignedAudioPath, audioOut);
+          log.info('merged post: 已导出独立旁白音轨（供后期剪辑）', { file: path.basename(audioOut) });
+        } catch (e) {
+          log.warn('merged post: 导出独立旁白音轨失败（不影响成片）', { error: e.message });
+        }
       }
 
-      alignedAudioPath = path.join(tempRoot, 'aligned_mix.mp3');
-      if (!alignAudioToVideoDuration(concatOut, videoDur, alignedAudioPath, log)) {
-        return { ok: false, error: '音轨与视频总时长对齐失败' };
-      }
-
-      if (wantNarr && srtLines.length > 0) {
+      if (wantSubs && srtLines.length > 0) {
         const baseName = path.basename(mergedAbsPath, path.extname(mergedAbsPath));
         srtPath = path.join(path.dirname(mergedAbsPath), `${baseName}_narration.srt`);
+        log.info('merged post: 已导出独立字幕文件（供后期剪辑）', { file: path.basename(srtPath) });
         fs.writeFileSync(srtPath, `\uFEFF${srtLines.join('\n')}\n`, 'utf8');
       }
     }

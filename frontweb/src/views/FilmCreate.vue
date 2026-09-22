@@ -1610,7 +1610,13 @@
           <el-form-item label="字幕">
             <div class="video-option-row">
               <el-switch v-model="videoSubtitle" />
-              <span v-if="videoSubtitle" class="video-option-hint">开启后，合成整集时会检测解说旁白：若有文案则自动生成 SRT、按分镜时长合成旁白语音（过长加速 / 过短补静音）、与成片对齐后烧录字幕并混音。</span>
+              <span v-if="videoSubtitle" class="video-option-hint">开启后，合成整集时按分镜时长生成 SRT 并烧进画面（<b>只加字幕，不出声音</b>）。</span>
+            </div>
+          </el-form-item>
+          <el-form-item label="旁白配音">
+            <div class="video-option-row">
+              <el-switch v-model="videoNarrationAudio" />
+              <span v-if="videoNarrationAudio" class="video-option-hint">开启后，按分镜时长逐条合成解说旁白的 TTS 语音（过长加速 / 过短补静音）并对齐混入成片（<b>只出声音，不加字幕</b>）。与「字幕」互相独立，可单独开、也可一起开。</span>
             </div>
           </el-form-item>
           <!-- 「对白烧录」只在整集确实有对白配音时显示。
@@ -3003,6 +3009,12 @@ const videoMusic = ref('')
 const videoSfx = ref('')
 const videoQuality = ref('high')
 const videoSubtitle = ref(false)
+/**
+ * 是否合成解说旁白语音并混入成片（默认关）。
+ * 与「字幕」是两个独立开关：字幕只烧画面文字，旁白配音只出声音。
+ * 旧版是一个开关同时做两件事，用户无法只加字幕不出声。
+ */
+const videoNarrationAudio = ref(false)
 /** 合成整集时把各镜对白 TTS（audio_local_path）按分镜时长对齐并混入成片 */
 const videoBurnDialogue = ref(false)
 /**
@@ -7408,7 +7420,8 @@ async function startBatchVideoGeneration() {
 
 function getFinalizeMergeOptions() {
   return {
-    burn_narration_subtitles: !!videoSubtitle.value,
+    burn_narration_subtitles: !!videoSubtitle.value,   // 只生成 SRT 并烧字幕
+    mix_narration_audio: !!videoNarrationAudio.value,   // 只合成旁白语音并混音
     burn_dialogue_audio: !!videoBurnDialogue.value,
     // 屏蔽各镜原声：后端 mergedEpisodePostProcess 读 keep_native_audio !== false，
     // 传 false 时不再把 H3 原声作为垫底轨混入，成片只留 TTS 旁白/对白。

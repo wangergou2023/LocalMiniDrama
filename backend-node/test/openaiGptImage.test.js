@@ -66,11 +66,19 @@ describe('openai_image: inferImageProtocol', () => {
     assert.equal(imageClient.inferImageProtocol('gpt-image', 'gpt-image-2'), 'openai_image');
   });
 
-  it('provider=openai + model=gpt-image-2 → openai_image（其它模型不恢复通用云通道）', () => {
+  it('provider=openai + model=gpt-image-* → openai_image（其它模型不恢复通用云通道）', () => {
     assert.equal(imageClient.inferImageProtocol('openai', 'gpt-image-2'), 'openai_image');
     assert.equal(imageClient.inferImageProtocol('openai', ['gpt-image-2']), 'openai_image');
+    // 2026-09-22：模型名改成【前缀识别】。网关会随时升级/下架型号（gpt-image-2 已下架，
+    // 现只有 gpt-image-2.5-flare / -sunburst），写死具体型号会让新模型发不出去，
+    // 所以 gpt-image 系列（含未来型号）一律归入该通道。
+    assert.equal(imageClient.inferImageProtocol('openai', 'gpt-image-1'), 'openai_image');
+    assert.equal(imageClient.inferImageProtocol('openai', 'gpt-image-2.5-flare'), 'openai_image');
+    assert.equal(imageClient.inferImageProtocol('openai', 'gpt-image-2.5-sunburst'), 'openai_image');
+    assert.equal(imageClient.inferImageProtocol('openai', 'gpt-image-3'), 'openai_image');
+    // 真正的守门：非 gpt-image 系列仍然不恢复通用云通道
     assert.equal(imageClient.inferImageProtocol('openai', 'dall-e-3'), 'openai');
-    assert.equal(imageClient.inferImageProtocol('openai', 'gpt-image-1'), 'openai');
+    assert.equal(imageClient.inferImageProtocol('openai', 'gpt-4o'), 'openai');
   });
 
   it('comfyui 仍归 comfyui', () => {
@@ -141,14 +149,25 @@ describe('openai_image: 文生图 POST /images/generations', () => {
     );
   });
 
-  it('配置模型不是 gpt-image-2 时被规范化并记 warn', async () => {
+  it('配置里的模型是 gpt-image 系列时【原样用它】（不再被强行改回写死的型号）', async () => {
+    recordedWarns.length = 0;
+    installFetch(() => jsonRes(200, { data: [{ b64_json: 'QUJD' }] }));
+    await imageClient.callOpenAIGptImageApi(baseConfig, silentLog, {
+      prompt: 'x', size: '1:1', model: 'gpt-image-2.5-sunburst',
+    });
+    assert.equal(JSON.parse(recordedCalls[0].options.body).model, 'gpt-image-2.5-sunburst');
+    assert.equal(recordedWarns.length, 0, '正常型号不应产生回退 warn');
+  });
+
+  it('配置模型不是 gpt-image 系列时回退到默认值并记 warn', async () => {
     recordedWarns.length = 0;
     installFetch(() => jsonRes(200, { data: [{ b64_json: 'QUJD' }] }));
     await imageClient.callOpenAIGptImageApi(baseConfig, warnLog, {
       prompt: 'x', size: '1:1', model: 'dall-e-3',
     });
-    assert.equal(JSON.parse(recordedCalls[0].options.body).model, 'gpt-image-2');
-    assert.ok(recordedWarns.some((w) => /规范化/.test(w.msg) && w.meta?.requested === 'dall-e-3'));
+    // 默认值随网关型号更新（原为 gpt-image-2，2026-09-22 起为 gpt-image-2.5-flare）
+    assert.equal(JSON.parse(recordedCalls[0].options.body).model, 'gpt-image-2.5-flare');
+    assert.ok(recordedWarns.some((w) => /回退/.test(w.msg) && w.meta?.requested === 'dall-e-3'));
   });
 
   it('返回 url 时原样透传（由 imageService 下载落盘）', async () => {

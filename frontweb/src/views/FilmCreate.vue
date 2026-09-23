@@ -788,10 +788,11 @@
         </div>
       </section>
 
-      <!-- 6. 分镜生成 -->
+      <!-- 分镜生成（原注释写「6.」是老编号的残留：早期把角色/场景/道具算作 3、4、5 步，
+           后来合并成「资源管理」一步，编号就废了；界面上只剩这一个「5.」漏在标题里） -->
       <section id="anchor-storyboard" class="section card">
         <h2 class="section-title">
-          <span>5. 分镜生成</span>
+          <span>分镜生成</span>
           <span class="step-desc">根据剧本、角色、场景自动生成分镜头脚本</span>
         </h2>
         <div class="sb-config-row">
@@ -1578,7 +1579,7 @@
         <div v-else-if="storyboards.length === 0" class="empty-tip">请先生成分镜</div>
       </section>
 
-      <!-- 7. 视频配置 + AI 模型配置 -->
+      <!-- 视频配置 + AI 模型配置 -->
       <section id="anchor-video-config" class="section card">
         <h2 class="section-title">视频配置</h2>
         <div class="config-grid">
@@ -1657,7 +1658,7 @@
         <p class="config-tip">文本/图片/视频使用的模型以「<el-link type="primary" underline="never" @click="showAiConfigDialog = true">AI 配置</el-link>」中设为默认的为准。</p>
       </section>
 
-      <!-- 8. 合成视频 -->
+      <!-- 合成视频 -->
       <section id="anchor-video" class="section card">
         <h2 class="section-title">合成视频</h2>
         <el-button

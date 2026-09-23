@@ -14,30 +14,67 @@
     <div class="studio-body">
       <!-- ───── 左：输入 ───── -->
       <section class="studio-panel studio-panel--input">
-        <div class="panel-title">输入图<span class="panel-title-tip">可选；带上它就是对这张图做编辑</span></div>
+        <div class="panel-title">
+          输入图
+          <span class="panel-title-tip">可选，1 张；带上它就是对这张图做编辑</span>
+        </div>
 
         <div
-          class="drop-zone"
-          :class="{ 'drop-zone--has': !!inputImage, 'drop-zone--over': dragOver }"
-          @click="fileRef?.click()"
+          class="drop-zone drop-zone--sm"
+          :class="{ 'drop-zone--has': !!inputImage, 'drop-zone--over': dragOver && pickTarget === 'base' }"
+          @click="pickTarget = 'base'; fileRef?.click()"
           @dragover.prevent="dragOver = true"
           @dragleave.prevent="dragOver = false"
-          @drop.prevent="onDrop"
+          @drop.prevent="onDrop('base', $event)"
         >
           <img v-if="inputImage" :src="inputImage.url" alt="" />
           <div v-else class="drop-hint">
-            <el-icon :size="26"><Upload /></el-icon>
+            <el-icon :size="22"><Upload /></el-icon>
             <div>点击选择，或把图片拖到这里</div>
           </div>
-          <div v-if="uploading" class="drop-mask">上传中…</div>
+          <div v-if="uploading && pickTarget === 'base'" class="drop-mask">上传中…</div>
         </div>
-
         <div class="row-actions">
-          <el-button size="small" :loading="uploading" @click="fileRef?.click()">上传图片</el-button>
-          <el-button size="small" @click="openLibPicker">从素材库导入</el-button>
+          <el-button size="small" :loading="uploading && pickTarget === 'base'" @click="pickTarget = 'base'; fileRef?.click()">上传图片</el-button>
+          <el-button size="small" @click="openLibPicker('base')">从素材库导入</el-button>
           <el-button v-if="inputImage" size="small" text type="danger" @click="inputImage = null">移除</el-button>
         </div>
         <input ref="fileRef" type="file" accept="image/*" style="display:none" @change="onPickFile" />
+
+        <div class="panel-title panel-title--sm">
+          参考图
+          <span class="panel-title-tip">
+            场景 / 角色 / 物品各可加多张，总计上限 {{ MAX_REFS }} 张；
+            编号与出图时一致，提示词里可直接写「参考图2」这样引用
+          </span>
+        </div>
+        <div class="ref-groups">
+          <div v-for="g in REF_GROUPS" :key="g.key" class="ref-group">
+            <div class="ref-group-head">
+              <span class="ref-group-name">{{ g.label }}</span>
+              <span class="ref-group-count">{{ refs[g.key].length }} 张</span>
+              <el-button size="small" text :disabled="refFull" @click="pickTarget = g.key; fileRef?.click()">上传</el-button>
+              <el-button size="small" text :disabled="refFull" @click="openLibPicker(g.key)">素材库</el-button>
+            </div>
+            <div
+              class="ref-thumbs"
+              @dragover.prevent="dragOver = true"
+              @dragleave.prevent="dragOver = false"
+              @drop.prevent="onDrop(g.key, $event)"
+            >
+              <div v-for="(r, i) in refs[g.key]" :key="r.url + i" class="ref-thumb">
+                <img :src="r.url" alt="" title="点击放大预览" @click="previewUrl = r.url" />
+                <span class="ref-thumb-idx">参考图{{ refIndexOf(g.key, i) }}</span>
+                <button class="ref-thumb-del" title="移除" @click.stop="refs[g.key].splice(i, 1)">×</button>
+              </div>
+              <div
+                v-if="!refs[g.key].length"
+                class="ref-empty"
+                @click="pickTarget = g.key; fileRef?.click()"
+              >点这里或拖图进来添加</div>
+            </div>
+          </div>
+        </div>
 
         <div class="panel-title">
           提示词
@@ -194,7 +231,18 @@ const router = useRouter()
 
 // ── 输入 ──
 const fileRef = ref(null)
-const inputImage = ref(null) // { url, local_path, name }
+const inputImage = ref(null) // { url, local_path, name } —— 要编辑的那张（1 张）
+/** 参考图分组：与分镜出图的顺序一致（场景 → 角色 → 物品），提示词里的「参考图N」按这个顺序编号 */
+const REF_GROUPS = [
+  { key: 'scene', label: '场景' },
+  { key: 'character', label: '角色' },
+  { key: 'prop', label: '物品' },
+]
+const refs = ref({ scene: [], character: [], prop: [] })
+/** 后端 reference_images 上限（imageService.create 会 slice(0, 10)） */
+const MAX_REFS = 10
+/** 上传 / 从素材库导入的目标：'base' 或 'scene' | 'character' | 'prop' */
+const pickTarget = ref('base')
 const uploading = ref(false)
 const dragOver = ref(false)
 const prompt = ref('')
@@ -223,6 +271,8 @@ function saveLocalState() {
       negativePrompt: negativePrompt.value,
       size: size.value,
       inputImage: inputImage.value,
+      refs: refs.value,
+      pickTarget: pickTarget.value,
       currentUrl: current.value?.url || '',
     }))
   } catch (_) { /* 隐私模式下 localStorage 不可用，忽略即可 */ }
@@ -237,6 +287,11 @@ function restoreLocalState() {
     if (typeof d.negativePrompt === 'string') negativePrompt.value = d.negativePrompt
     if (d.size) size.value = d.size
     if (d.inputImage && d.inputImage.url) inputImage.value = d.inputImage
+    if (d.refs && typeof d.refs === 'object') {
+      for (const k of ['scene', 'character', 'prop']) {
+        if (Array.isArray(d.refs[k])) refs.value[k] = d.refs[k].filter((r) => r && r.url)
+      }
+    }
   } catch (_) {}
 }
 
@@ -262,13 +317,15 @@ onMounted(() => {
   loadHistoryFromServer()
 })
 
-watch([prompt, negativePrompt, size, inputImage], saveLocalState, { deep: true })
+watch([prompt, negativePrompt, size, inputImage, refs], saveLocalState, { deep: true })
 
 // ── 素材库选择 ──
 const showLibPicker = ref(false)
 const libTab = ref('character')
 const libLoading = ref(false)
 const libList = ref([])
+/** 「从素材库导入」这次要导到哪：'base' 或参考图分组 */
+const libPickTarget = ref('base')
 const LIB_API = {
   character: characterLibraryAPI,
   scene: sceneLibraryAPI,
@@ -286,6 +343,30 @@ const saveDesc = ref('')
 const savePrompt = ref('')
 const savingItem = ref(null)
 
+/** 参考图整体编号：输入图算 1 号，然后按 场景 → 角色 → 物品 依次排 */
+function refIndexOf(groupKey, i) {
+  const order = ['scene', 'character', 'prop']
+  let n = inputImage.value ? 2 : 1
+  for (const k of order) {
+    if (k === groupKey) return n + i
+    n += refs.value[k].length
+  }
+  return n + i
+}
+
+/** 真正提交给后端的参考图列表（输入图在最前，随后 场景 → 角色 → 物品），上限 10 张 */
+const referenceList = computed(() => {
+  const all = [
+    inputImage.value,
+    ...refs.value.scene,
+    ...refs.value.character,
+    ...refs.value.prop,
+  ].filter(Boolean)
+  return all.slice(0, MAX_REFS)
+})
+
+const refFull = computed(() => referenceList.value.length >= MAX_REFS)
+
 function libItemName(it) {
   return it.name || it.location || it.title || `#${it.id}`
 }
@@ -293,31 +374,45 @@ function libItemName(it) {
 async function onPickFile(e) {
   const file = e?.target?.files?.[0]
   if (!file) return
-  await uploadOne(file)
+  await uploadOne(file, pickTarget.value)
   if (e?.target) e.target.value = ''
+  pickTarget.value = 'base'
 }
 
-async function onDrop(e) {
+async function onDrop(target, e) {
   dragOver.value = false
-  const file = e?.dataTransfer?.files?.[0]
-  if (file) await uploadOne(file)
+  const files = Array.from(e?.dataTransfer?.files || [])
+  if (!files.length) return
+  for (const f of files) await uploadOne(f, target)
 }
 
-async function uploadOne(file) {
+/** target: 'base' 落到输入图；'scene' | 'character' | 'prop' 追加到对应参考图组 */
+async function uploadOne(file, target) {
+  if (target !== 'base' && refFull.value) {
+    ElMessage.warning(`参考图最多 ${MAX_REFS} 张（后端上限），请先移除一些`)
+    return
+  }
   uploading.value = true
   try {
     const res = await uploadAPI.uploadImage(file, {})
     const d = res?.data ?? res
     const url = d?.url || (d?.local_path ? '/static/' + String(d.local_path).replace(/^\//, '') : '')
     if (!url) throw new Error('上传未返回图片地址')
-    inputImage.value = { url, local_path: d?.local_path || null, name: file.name }
-    ElMessage.success('图片已就绪，可以开始调试提示词')
+    const item = { url, local_path: d?.local_path || null, name: file.name }
+    if (target === 'base') {
+      inputImage.value = item
+      ElMessage.success('输入图已就绪，可以开始调试提示词')
+    } else {
+      refs.value[target].push(item)
+      ElMessage.success(`已加入「${REF_GROUPS.find((g) => g.key === target)?.label}」参考图`)
+    }
   } catch (e) {
     ElMessage.error(e?.message || '上传失败')
   } finally {
     uploading.value = false
   }
 }
+
 
 function useAsInput(item) {
   inputImage.value = { url: item.url, local_path: item.local_path || null, name: '历史结果' }
@@ -345,8 +440,9 @@ async function onGenerate() {
       size: size.value,
       // 给调试台的图打标：历史可按此读回（与分镜图 / 角色图彻底分开）
       frame_type: STUDIO_FRAME_TYPE,
-      // 带输入图时后端会自动走图生图 / 参考图编辑（openai_image 通道切 /images/edits）
-      reference_images: inputImage.value?.url ? [inputImage.value.url] : undefined,
+      // 参考图整体提交（输入图在前，随后 场景 → 角色 → 物品，上限 10 张）。
+      // 带图时后端自动走图生图 / 参考图编辑（openai_image 通道切 /images/edits）
+      reference_images: referenceList.value.length ? referenceList.value.map((r) => r.url) : undefined,
     }
     const res = await imagesAPI.create(payload)
     const d = res?.data ?? res
@@ -380,7 +476,9 @@ async function onGenerate() {
   }
 }
 
-function openLibPicker() {
+/** target: 'base' | 'scene' | 'character' | 'prop' */
+function openLibPicker(target = 'base') {
+  libPickTarget.value = target
   showLibPicker.value = true
 }
 
@@ -402,9 +500,19 @@ async function loadLibList() {
 function pickLibItem(it) {
   const url = assetImageUrl(it) || it.image_url
   if (!url) { ElMessage.warning('这一项没有图'); return }
-  inputImage.value = { url, local_path: it.local_path || null, name: libItemName(it) }
+  const item = { url, local_path: it.local_path || null, name: libItemName(it) }
+  const target = libPickTarget.value
+  if (target === 'base') {
+    inputImage.value = item
+    ElMessage.success('已设为输入图，可以开始调试')
+  } else if (refFull.value) {
+    ElMessage.warning(`参考图最多 ${MAX_REFS} 张（后端上限），请先移除一些`)
+    return
+  } else {
+    refs.value[target].push(item)
+    ElMessage.success(`已加入「${REF_GROUPS.find((g) => g.key === target)?.label}」参考图`)
+  }
   showLibPicker.value = false
-  ElMessage.success('已从素材库取图，可以开始调试')
 }
 
 function openSaveDialog(item) {
@@ -448,6 +556,83 @@ async function doSaveToLibrary() {
 </script>
 
 <style scoped>
+/* 参考图分组（场景 / 角色 / 物品，各可多张） */
+.ref-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.ref-group {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.ref-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.ref-group-name { font-weight: 600; }
+.ref-group-count { color: var(--el-text-color-secondary); margin-right: auto; }
+.ref-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  min-height: 26px;
+}
+.ref-thumb {
+  position: relative;
+  width: 62px;
+  height: 62px;
+}
+.ref-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 6px;
+  cursor: zoom-in;
+  background: var(--el-fill-color-lighter);
+}
+.ref-thumb-idx {
+  position: absolute;
+  left: 2px;
+  bottom: 2px;
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+}
+.ref-thumb-del {
+  position: absolute;
+  right: -4px;
+  top: -4px;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: var(--el-color-danger);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.ref-empty {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  border: 1px dashed var(--el-border-color);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.drop-zone--sm { height: 150px; }
+
+
 /* 预览：完整显示整张图，高度不超过视口 */
 .preview-wrap {
   display: flex;

@@ -20,6 +20,9 @@
           <el-button class="btn-library" @click="showSbLibrary = true">
             <el-icon><PictureFilled /></el-icon>素材分镜
           </el-button>
+          <el-button class="btn-library" title="单独调试一张图：传图或取素材库图，改提示词反复生成，满意后存回素材库" @click="$router.push('/image-studio')">
+            <el-icon><MagicStick /></el-icon>图片调试台
+          </el-button>
         </div>
         <!-- 右侧操作区 -->
         <div class="header-actions">

@@ -44,6 +44,13 @@ const router = createRouter({
       name: 'media-library',
       component: () => import('@/views/MediaLibrary.vue'),
       meta: { title: '媒体素材库' }
+    },
+    {
+      // 图片调试台：单独调一张图（传图/取素材库图 → 改提示词反复生成 → 存回素材库）
+      path: '/image-studio',
+      name: 'image-studio',
+      component: () => import('@/views/ImageStudio.vue'),
+      meta: { title: '图片调试台' }
     }
   ]
 })

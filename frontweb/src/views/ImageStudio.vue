@@ -183,6 +183,7 @@ import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
 import { storyboardLibraryAPI } from '@/api/storyboardLibrary'
 import { assetImageUrl } from '@/utils/mediaUrl'
+import { readImageTaskResult } from '@/utils/taskResult'
 
 const router = useRouter()
 
@@ -301,11 +302,12 @@ async function onGenerate() {
       if (task?.status === 'failed') throw new Error(task.error || '生成失败')
     }
     if (!task || task.status !== 'completed') throw new Error('生成超时')
-    const result = task.result || {}
-    const url = result.image_url || (result.local_path ? '/static/' + String(result.local_path).replace(/^\//, '') : '')
+    // task.result 是 JSON 字符串：必须解析，否则永远取不到地址
+    // （实测就是这个原因报「未获取到图片地址」，而后端其实已经出图成功）
+    const { url, local_path: localPath } = readImageTaskResult(task)
     if (!url) throw new Error('未获取到图片地址')
 
-    const item = { url, local_path: result.local_path || null, prompt: prompt.value.trim() }
+    const item = { url, local_path: localPath || null, prompt: prompt.value.trim() }
     current.value = item
     history.value = [item, ...history.value].slice(0, 60)
     ElMessage.success('生成完成')

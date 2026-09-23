@@ -546,6 +546,7 @@ import { taskAPI } from '@/api/task'
 import { characterAPI } from '@/api/characters'
 import { sceneAPI } from '@/api/scenes'
 import { propAPI } from '@/api/props'
+import { readImageTaskResult } from '@/utils/taskResult'
 import {
   generationStyleOptions,
   stylePromptMetadataForSave,
@@ -619,9 +620,8 @@ async function doGenerateLibImg(form, prompt, api, reloadFn) {
       if (task.status === 'failed') throw new Error(task.error || '生成失败')
     }
     if (!task || task.status !== 'completed') throw new Error('生成超时')
-    const result = task.result
-    const imageUrl = result?.image_url
-    const localPath = result?.local_path ?? null
+    // task.result 是 JSON 字符串，必须解析（否则永远取不到、报「未获取到图片地址」）
+    const { url: imageUrl, local_path: localPath } = readImageTaskResult(task)
     if (!imageUrl && !localPath) throw new Error('未获取到图片地址')
     form.image_url = imageUrl || ''
     form.local_path = localPath
@@ -698,8 +698,9 @@ async function generateDramaCharImg() {
       if (task.status === 'failed') throw new Error(task.error || '生成失败')
     }
     if (!task || task.status !== 'completed') throw new Error('生成超时')
-    form.image_url = task.result?.image_url || ''
-    form.local_path = task.result?.local_path ?? null
+    const _img = readImageTaskResult(task)
+    form.image_url = _img.url
+    form.local_path = _img.local_path
     loadDrama()
     ElMessage.success('AI 图片已生成')
   } catch (e) { ElMessage.error(e.message || '生成失败') }
@@ -770,8 +771,9 @@ async function generateDramaSceneImg() {
       if (task.status === 'failed') throw new Error(task.error || '生成失败')
     }
     if (!task || task.status !== 'completed') throw new Error('生成超时')
-    form.image_url = task.result?.image_url || ''
-    form.local_path = task.result?.local_path ?? null
+    const _img = readImageTaskResult(task)
+    form.image_url = _img.url
+    form.local_path = _img.local_path
     loadDrama()
     ElMessage.success('AI 图片已生成')
   } catch (e) { ElMessage.error(e.message || '生成失败') }
@@ -840,8 +842,9 @@ async function generateDramaPropImg() {
       if (task.status === 'failed') throw new Error(task.error || '生成失败')
     }
     if (!task || task.status !== 'completed') throw new Error('生成超时')
-    form.image_url = task.result?.image_url || ''
-    form.local_path = task.result?.local_path ?? null
+    const _img = readImageTaskResult(task)
+    form.image_url = _img.url
+    form.local_path = _img.local_path
     loadDrama()
     ElMessage.success('AI 图片已生成')
   } catch (e) { ElMessage.error(e.message || '生成失败') }

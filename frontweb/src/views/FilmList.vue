@@ -407,6 +407,7 @@ import { imagesAPI } from '@/api/images'
 import { taskAPI } from '@/api/task'
 import { getStyleLabel } from '@/constants/styleOptions'
 import { DEFAULT_VIDEO_CLIP_DURATION } from '@/utils/scriptDurationEstimate'
+import { readImageTaskResult } from '@/utils/taskResult'
 
 const router = useRouter()
 const { isDark, toggle: toggleTheme } = useTheme()
@@ -454,9 +455,8 @@ async function doGenerateLibImg(form, prompt, api, reloadFn) {
       if (task.status === 'failed') throw new Error(task.error || '生成失败')
     }
     if (!task || task.status !== 'completed') throw new Error('生成超时')
-    const result = task.result
-    const imageUrl = result?.image_url
-    const localPath = result?.local_path ?? null
+    // task.result 是 JSON 字符串，必须解析（否则永远取不到、报「未获取到图片地址」）
+    const { url: imageUrl, local_path: localPath } = readImageTaskResult(task)
     if (!imageUrl && !localPath) throw new Error('未获取到图片地址')
     form.image_url = imageUrl || ''
     form.local_path = localPath

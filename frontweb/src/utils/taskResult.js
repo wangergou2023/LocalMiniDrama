@@ -27,4 +27,32 @@ export function parseTaskResult(result) {
   }
 }
 
-export default { parseTaskResult }
+/**
+ * 从 /static/... 形式的图片地址反推 local_path。
+ * 素材库里存 local_path 很关键 —— 素材库导出/导入靠它把图片打进包里。
+ */
+export function localPathFromImageUrl(url) {
+  const m = String(url || '').match(/\/static\/(.+)$/)
+  return m ? m[1] : null
+}
+
+/**
+ * 读取「生成图片」类任务的结果，统一返回 { url, local_path }。
+ *
+ * 后端 task.result 是 **JSON 字符串**（见本文件顶部说明），各调用点各写各的
+ * `task.result?.image_url` 会永远取到 undefined，表现为「未获取到图片地址」。
+ * 实测踩过：图片调试台与素材库「AI 生成」都因此失败，而后端其实已经出图成功。
+ *
+ * @param {{result?: unknown}} task
+ * @returns {{ url: string, local_path: string|null }}
+ */
+export function readImageTaskResult(task) {
+  const r = parseTaskResult(task && task.result)
+  if (!r || typeof r !== 'object') return { url: '', local_path: null }
+  const imageUrl = r.image_url || r.url || ''
+  const localPath = r.local_path || localPathFromImageUrl(imageUrl)
+  const url = imageUrl || (localPath ? '/static/' + String(localPath).replace(/^\//, '') : '')
+  return { url, local_path: localPath || null }
+}
+
+export default { parseTaskResult, localPathFromImageUrl, readImageTaskResult }

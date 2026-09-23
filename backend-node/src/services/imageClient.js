@@ -15,16 +15,16 @@ const { callComfyUIImageApi } = require("./comfyuiClient");
 // gpt-image-2.5-flare / gpt-image-2.5-sunburst）。这里改成【前缀识别】，
 // 并且发请求时用【配置里填的模型】，只有配置为空时才回退到这个默认值。
 const OPENAI_IMAGE_MODEL = 'gpt-image-2.5-flare';
-/** 是否属于 OpenAI gpt-image 系列（gpt-image-2 / gpt-image-2.5-flare / 未来的 gpt-image-3 … 都算） */
+/** 是否属于 OpenAI gpt-image 系列（gpt-image / gpt-image-2.5-flare / 未来的 gpt-image-3 … 都算） */
 function isOpenAIImageModelName(m) {
   return /^gpt-image/i.test(String(m == null ? '' : m).trim());
 }
 const OPENAI_IMAGE_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
-/** OpenAI gpt-image-2 仅支持这三种尺寸 */
+/** OpenAI gpt-image 仅支持这三种尺寸 */
 const OPENAI_IMAGE_SIZES = ['1024x1024', '1024x1536', '1536x1024'];
 /** /images/edits 的 image[] 上限 */
 const OPENAI_IMAGE_MAX_REF_IMAGES = 8;
-/** 生图/编辑单次请求超时（毫秒）——gpt-image-2 云端出图较慢，给足 5 分钟 */
+/** 生图/编辑单次请求超时（毫秒）——gpt-image 云端出图较慢，给足 5 分钟 */
 const OPENAI_IMAGE_TIMEOUT_MS = 300000;
 /** 异步任务轮询：间隔 / 次数（总等待 ≈ 3s × 60 = 3 分钟，仍受上面的整体超时约束） */
 const OPENAI_IMAGE_POLL_INTERVAL_MS = 3000;
@@ -54,15 +54,15 @@ function getProxyExpireHours() {
 /**
  * 根据 provider 名推断接口规范（api_protocol 未设置时的兜底逻辑）
  * 已明确设置 api_protocol 的配置不会走此函数。
- * 目前只支持两种图像后端：comfyui（本地/远程）与 openai_image（OpenAI 官方 gpt-image-2 云端）。
- * 其它 provider（包括 provider=openai 但模型不是 gpt-image-2 的）会返回 'openai'，
+ * 目前只支持两种图像后端：comfyui（本地/远程）与 openai_image（OpenAI 官方 gpt-image 云端）。
+ * 其它 provider（包括 provider=openai 但模型不是 gpt-image 的）会返回 'openai'，
  * 由 callImageApi 兜底给出明确报错，绝不静默走通用多模型通道。
  */
 function inferImageProtocol(provider, model) {
   const p = String(provider || '').toLowerCase().trim();
   if (p === 'comfyui' || p === 'comfy') return 'comfyui';
   if (p === 'openai_image' || p === 'gpt_image' || p === 'gpt-image') return 'openai_image';
-  // provider=openai 且模型就是 gpt-image-2 时，也归入 OpenAI 官方云端图像通道
+  // provider=openai 且模型就是 gpt-image 时，也归入 OpenAI 官方云端图像通道
   const models = Array.isArray(model) ? model : (model != null ? [model] : []);
   const first = String(models[0] || '').toLowerCase().trim();
   if (p === 'openai' && isOpenAIImageModelName(first)) return 'openai_image';
@@ -106,7 +106,7 @@ function getDefaultImageConfig(db, preferredModel, preferredProvider, imageServi
   // 其次是「AI 配置」里显式设的默认 —— 它代表用户当前意图，必须压过调用方传来的厂商偏好。
   // preferred_provider 来自配置文件的历史偏好（config.yaml 的 ai.default_image_provider，
   // 默认值是 'openai'）；曾经因为它优先级更高，把默认改成本地 ComfyUI 后，道具图仍然被发去
-  // 云端 gpt-image-2，撞上安全策略拦截而报错。
+  // 云端 gpt-image，撞上安全策略拦截而报错。
   const defaultOne = active.find((c) => c.is_default);
   if (defaultOne) return defaultOne;
   // 没有设默认时才用厂商偏好兜底
@@ -161,7 +161,7 @@ function setProxyCache(db, cacheKey, proxyUrl) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// OpenAI 官方 gpt-image-2（云端图像通道）
+// OpenAI 官方 gpt-image（云端图像通道）
 //   文生图：POST {base_url}/images/generations（JSON）
 //   带参考图（分镜/角色一致性）：POST {base_url}/images/edits（multipart/form-data，image[]）
 // 返回契约与 ComfyUI 图像通道一致：成功 { image_url }（data URL 或 http URL），失败 { error }。
@@ -170,7 +170,7 @@ function setProxyCache(db, cacheKey, proxyUrl) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 项目尺寸/画幅 → OpenAI gpt-image-2 支持的尺寸。
+ * 项目尺寸/画幅 → OpenAI gpt-image 支持的尺寸。
  * 9:16 → 1024x1536、16:9 → 1536x1024、1:1 → 1024x1024；
  * 显式给了合法尺寸（1024x1024 / 1024x1536 / 1536x1024）就直接沿用；
  * 其它：按长边就近（竖 → 1024x1536，横 → 1536x1024，无法解析 → 1536x1024）。
@@ -369,7 +369,7 @@ function describeOpenAIImageHttpError(status, text) {
     detail = j?.error?.message || j?.message || '';
   } catch (_) {}
   const tail = detail || body.slice(0, 300);
-  return `OpenAI gpt-image-2 请求失败（HTTP ${status}）${tail ? '：' + tail : ''}`;
+  return `OpenAI gpt-image 请求失败（HTTP ${status}）${tail ? '：' + tail : ''}`;
 }
 
 /** 网络异常 → 可读中文报错（超时单独指出） */
@@ -377,16 +377,16 @@ function describeOpenAIImageNetworkError(err) {
   const name = err?.name || '';
   const msg = String(err?.message || err || '');
   if (name === 'AbortError' || /abort|timeout|timed out/i.test(msg)) {
-    return 'OpenAI gpt-image-2 请求超时（网络超时），请检查网络或代理后重试';
+    return 'OpenAI gpt-image 请求超时（网络超时），请检查网络或代理后重试';
   }
   if (/fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|socket hang up|network/i.test(msg)) {
     return `网络错误：无法连接 OpenAI（${msg.slice(0, 200)}）`;
   }
-  return `OpenAI gpt-image-2 请求失败：${msg.slice(0, 300)}`;
+  return `OpenAI gpt-image 请求失败：${msg.slice(0, 300)}`;
 }
 
 /**
- * 调用 OpenAI 官方 gpt-image-2：
+ * 调用 OpenAI 官方 gpt-image：
  * - 无参考图 → POST {base_url}/images/generations（JSON: model/prompt/size/n=1）
  * - 有参考图 → POST {base_url}/images/edits（multipart/form-data: model/prompt/size/image[]，最多 8 张）
  * @returns {Promise<{image_url?: string, error?: string}>}
@@ -401,7 +401,7 @@ function describeOpenAIImageNetworkError(err) {
  * 不重试的情况：超时（AbortError，整体预算已经等很久了）与 HTTP 4xx/5xx（那是接口/参数问题，
  * 重试只会重复计费）。
  */
-/** 轮询异步任务：文档里 gpt-image-2 可能返回 {task_id, status:"pending"|"processing"} */
+/** 轮询异步任务：文档里 gpt-image 可能返回 {task_id, status:"pending"|"processing"} */
 function extractOpenAITaskId(obj) {
   if (!obj || typeof obj !== 'object') return null;
   const id = obj.task_id || obj.taskId || (obj.data && (obj.data.task_id || obj.data.taskId)) || obj.id;
@@ -440,7 +440,7 @@ async function pollOpenAIImageTask({ base, apiKey, taskId, safeLog, signal, imag
       }
       safeLog.info('[OpenAI图生] 异步任务未完成', { image_gen_id: imageGenId, attempt, task_id: taskId });
     } catch (e) {
-      if (e?.name === 'AbortError') return { ok: false, error: 'OpenAI gpt-image-2 请求超时（等待异步任务超时）' };
+      if (e?.name === 'AbortError') return { ok: false, error: 'OpenAI gpt-image 请求超时（等待异步任务超时）' };
       safeLog.warn('[OpenAI图生] 异步查询失败，继续重试', { image_gen_id: imageGenId, attempt, error: String(e?.message || e).slice(0, 120) });
     }
   }
@@ -473,7 +473,7 @@ async function callOpenAIGptImageApi(config, log, opts = {}) {
 
   const apiKey = String(config?.api_key || '').trim();
   if (!apiKey) {
-    return { error: 'OpenAI gpt-image-2 未配置 API Key，请在「AI 配置」中填写 OpenAI 的 API Key' };
+    return { error: 'OpenAI gpt-image 未配置 API Key，请在「AI 配置」中填写 OpenAI 的 API Key' };
   }
 
   // 模型用【配置里填的那个】（公司网关会换型号，写死会导致新模型发不出去）；
@@ -489,7 +489,7 @@ async function callOpenAIGptImageApi(config, log, opts = {}) {
 
   const prompt = String(opts.prompt || '');
   if (!prompt.trim()) {
-    return { error: 'OpenAI gpt-image-2 提示词为空，无法生成图片' };
+    return { error: 'OpenAI gpt-image 提示词为空，无法生成图片' };
   }
 
   const size = mapOpenAIImageSize(opts.size);
@@ -526,7 +526,7 @@ async function callOpenAIGptImageApi(config, log, opts = {}) {
       }
       if (blobs.length === 0) {
         clearTimeout(timer);
-        return { error: 'OpenAI gpt-image-2 参考图全部不可用（本地文件读不到或下载失败），无法调用 /images/edits' };
+        return { error: 'OpenAI gpt-image 参考图全部不可用（本地文件读不到或下载失败），无法调用 /images/edits' };
       }
       const buildForm = (fieldName = 'image[]') => {
         const form = new FormData();
@@ -613,11 +613,11 @@ async function callOpenAIGptImageApi(config, log, opts = {}) {
   }
   if (!parsed) {
     return {
-      error: `OpenAI gpt-image-2 返回无法解析（响应前 300 字）：${String(text || '').slice(0, 300)}`,
+      error: `OpenAI gpt-image 返回无法解析（响应前 300 字）：${String(text || '').slice(0, 300)}`,
     };
   }
 
-  safeLog.info('[OpenAI图生] gpt-image-2 生成成功', {
+  safeLog.info('[OpenAI图生] gpt-image 生成成功', {
     url,
     model,
     size,
@@ -704,7 +704,7 @@ async function callImageApi(db, log, opts) {
     });
   }
 
-  // OpenAI 官方 gpt-image-2 云端图像通道（文生图 / 带参考图的分镜图）
+  // OpenAI 官方 gpt-image 云端图像通道（文生图 / 带参考图的分镜图）
   if (protocol === 'openai_image') {
     return callOpenAIGptImageApi(config, log, {
       prompt: effectivePrompt, model, size, image_gen_id,
@@ -716,9 +716,9 @@ async function callImageApi(db, log, opts) {
     });
   }
 
-  // 同上：只支持 ComfyUI 与 OpenAI gpt-image-2，其它 api_protocol 明确报错（不要静默返回 undefined）
+  // 同上：只支持 ComfyUI 与 OpenAI gpt-image，其它 api_protocol 明确报错（不要静默返回 undefined）
   return {
-    error: `不支持的图片接口规范 api_protocol=${protocol}（本软件支持 ComfyUI 与 OpenAI gpt-image-2）`,
+    error: `不支持的图片接口规范 api_protocol=${protocol}（本软件支持 ComfyUI 与 OpenAI gpt-image）`,
   };
 
 

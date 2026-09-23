@@ -69,7 +69,7 @@ function createConfig(db, log, req) {
   const now = new Date().toISOString();
   const model = modelToDb(req.model);
   const providerLower = String(req.provider || '').toLowerCase().trim();
-  // OpenAI 官方 gpt-image-2 云端图像通道（协议名 openai_image）
+  // OpenAI 官方 gpt-image 云端图像通道（协议名 openai_image）
   const isOpenAIImage = providerLower === 'openai_image' || providerLower === 'gpt_image' || providerLower === 'gpt-image';
   let endpoint = req.endpoint || '';
   let queryEndpoint = req.query_endpoint || '';
@@ -78,13 +78,13 @@ function createConfig(db, log, req) {
   if (!endpoint && req.provider) {
     const p = req.provider.toLowerCase();
     const st = (req.service_type || 'text').toLowerCase();
-    // 只支持四类后端：ComfyUI（本地/在线，靠 base_url 区分）、OpenAI 官方 gpt-image-2（云端图像）、
+    // 只支持四类后端：ComfyUI（本地/在线，靠 base_url 区分）、OpenAI 官方 gpt-image（云端图像）、
     // 云端 MiniMax H3、OpenAI 兼容（文本/DeepSeek 等）。
     // 其余云厂商（火山/即梦/可灵/通义/海螺/Vidu/Gemini…）已下线，不再推导端点。
     if (p === 'comfyui') {
       // ComfyUI 走 /prompt 等自有接口，由 comfyuiClient 处理，不需要 endpoint 字段
     } else if (isOpenAIImage) {
-      // OpenAI 官方 gpt-image-2：文生图 /images/generations，带参考图自动切 /images/edits
+      // OpenAI 官方 gpt-image：文生图 /images/generations，带参考图自动切 /images/edits
       endpoint = '/images/generations';
     } else if (p === 'minimax_h3') {
       // 云端 MiniMax H3（Video Generation V2）
@@ -258,16 +258,16 @@ async function testConnection(opts) {
 
   // --- NanoBanana ---
 
-  // --- OpenAI 官方 gpt-image-2（云端图像）---
+  // --- OpenAI 官方 gpt-image（云端图像）---
   // 轻量校验：GET /models 验证 Key 与网络，不触发真实生图（不产生费用）
-  // 模型名按前缀识别（gpt-image-2 / gpt-image-2.5-flare / … ）—— 写死具体型号会在网关升级后失效
+  // 模型名按前缀识别（gpt-image / gpt-image-2.5-flare / … ）—— 写死具体型号会在网关升级后失效
   if (provider === 'openai_image' || provider === 'gpt_image' || provider === 'gpt-image'
     || (provider === 'openai' && /^gpt-image/i.test(String(model || '')))) {
     // 与图像通道用同一套归一化：内部网关常填 http://gw:port（缺 /v1），这里也要补，否则探针 404
     let modelBase = base;
     try { modelBase = require('./imageClient').resolveOpenAIImageBaseUrl({ base_url: base }); } catch (_) {}
     const url = modelBase + '/models';
-    console.log('[testConnection] OpenAI gpt-image-2 图像服务', { url, serviceType, model });
+    console.log('[testConnection] OpenAI gpt-image 图像服务', { url, serviceType, model });
     let res;
     try {
       res = await fetch(url, {
@@ -332,7 +332,7 @@ async function testConnection(opts) {
 
   if (isMediaService) {
     throw new Error(
-      '图像/视频只支持两种接口规范：ComfyUI（本地或远程）与 OpenAI gpt-image-2（图像）/ 云端 MiniMax H3（视频）。' +
+      '图像/视频只支持两种接口规范：ComfyUI（本地或远程）与 OpenAI gpt-image（图像）/ 云端 MiniMax H3（视频）。' +
       `当前 provider=${opts.provider || '-'} api_protocol=${opts.api_protocol || '-'}`
     );
   }

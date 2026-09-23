@@ -80,13 +80,16 @@
       <section class="studio-panel studio-panel--result">
         <div class="panel-title">当前结果</div>
         <div v-if="current" class="result-box">
-          <img :src="current.url" alt="" @click="previewUrl = current.url" />
-          <div class="result-actions">
-            <el-button size="small" type="primary" @click="openSaveDialog(current)">导入到素材库</el-button>
-            <el-button size="small" @click="useAsInput(current)">用作输入图</el-button>
-            <el-button size="small" @click="downloadImage(current)">下载</el-button>
+          <img class="result-thumb" :src="current.url" alt="" title="点击放大预览" @click="previewUrl = current.url" />
+          <div class="result-info">
+            <div class="result-actions">
+              <el-button size="small" type="primary" @click="openSaveDialog(current)">导入到素材库</el-button>
+              <el-button size="small" @click="useAsInput(current)">用作输入图</el-button>
+              <el-button size="small" @click="downloadImage(current)">下载</el-button>
+              <el-button size="small" text @click="previewUrl = current.url">放大预览</el-button>
+            </div>
+            <div class="result-prompt">{{ current.prompt }}</div>
           </div>
-          <div class="result-prompt">{{ current.prompt }}</div>
         </div>
         <div v-else class="empty-tip">还没有结果，左侧写好提示词点「生成」</div>
 
@@ -97,11 +100,11 @@
         </div>
         <div v-if="history.length" class="history-grid">
           <div v-for="(h, i) in history" :key="i" class="history-item" :class="{ 'history-item--cur': current && h.url === current.url }">
-            <img :src="h.url" alt="" @click="current = h" />
+            <img :src="h.url" alt="" title="点击放大预览" @click="previewUrl = h.url" />
             <div class="history-tools">
               <el-button size="small" text @click="useAsInput(h)">用作输入</el-button>
               <el-button size="small" text @click="openSaveDialog(h)">存素材库</el-button>
-              <el-button size="small" text @click="prompt = h.prompt">复用提示词</el-button>
+              <el-button size="small" text @click="prompt = h.prompt; current = h">复用提示词</el-button>
             </div>
             <div class="history-prompt" :title="h.prompt">{{ h.prompt }}</div>
           </div>
@@ -164,8 +167,10 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showPreview" width="80%" title="预览" append-to-body>
-      <img v-if="previewUrl" :src="previewUrl" style="width: 100%" alt="" />
+    <el-dialog v-model="showPreview" width="86%" title="预览" append-to-body class="studio-preview-dialog">
+      <div class="preview-wrap">
+        <img v-if="previewUrl" :src="previewUrl" alt="" />
+      </div>
     </el-dialog>
   </div>
 </template>
@@ -443,6 +448,20 @@ async function doSaveToLibrary() {
 </script>
 
 <style scoped>
+/* 预览：完整显示整张图，高度不超过视口 */
+.preview-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-height: 78vh;
+  overflow: auto;
+}
+.preview-wrap img {
+  max-width: 100%;
+  max-height: 78vh;
+  object-fit: contain;
+}
+
 .studio-page {
   min-height: 100vh;
   padding: 16px 24px 40px;
@@ -542,16 +561,29 @@ async function doSaveToLibrary() {
 }
 .param-label { font-size: 13px; }
 .generate-btn { width: 100%; margin-top: 6px; }
-.result-box img {
-  width: 100%;
+.result-box {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+/* 上方不再占一大块：只放一张小缩略图，想看大图点它（弹出预览） */
+.result-thumb {
+  height: 190px;
+  width: auto;
+  max-width: 46%;
+  object-fit: contain;
   border-radius: 8px;
   cursor: zoom-in;
   background: var(--el-fill-color-lighter);
+  flex: 0 0 auto;
+}
+.result-info {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .result-actions {
   display: flex;
   gap: 8px;
-  margin-top: 10px;
   flex-wrap: wrap;
 }
 .result-prompt {
@@ -578,7 +610,7 @@ async function doSaveToLibrary() {
   height: 110px;
   object-fit: cover;
   border-radius: 6px;
-  cursor: pointer;
+  cursor: zoom-in;
   background: var(--el-fill-color-lighter);
 }
 .history-tools {

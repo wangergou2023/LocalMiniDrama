@@ -8,9 +8,17 @@ const taskService = require('./taskService');
 const { loadConfig } = require('../config');
 const { callComfyUIImageApi } = require("./comfyuiClient");
 
-// ── OpenAI 官方 gpt-image-2 云端图像通道（协议名 openai_image，给无显卡用户）──────────
-// 只支持 OpenAI 官方的 gpt-image-2；不做通用多模型，也不恢复任何其它云图像供应商。
-const OPENAI_IMAGE_MODEL = 'gpt-image-2';
+// ── OpenAI gpt-image 系列云端图像通道（协议名 openai_image，给无显卡用户）──────────
+// 只接 OpenAI 的 gpt-image 系列；不做通用多模型，也不恢复任何其它云图像供应商。
+//
+// 模型名不再写死：公司网关会随时升级型号（gpt-image-2 已下架，现为
+// gpt-image-2.5-flare / gpt-image-2.5-sunburst）。这里改成【前缀识别】，
+// 并且发请求时用【配置里填的模型】，只有配置为空时才回退到这个默认值。
+const OPENAI_IMAGE_MODEL = 'gpt-image-2.5-flare';
+/** 是否属于 OpenAI gpt-image 系列（gpt-image-2 / gpt-image-2.5-flare / 未来的 gpt-image-3 … 都算） */
+function isOpenAIImageModelName(m) {
+  return /^gpt-image/i.test(String(m == null ? '' : m).trim());
+}
 const OPENAI_IMAGE_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 /** OpenAI gpt-image-2 仅支持这三种尺寸 */
 const OPENAI_IMAGE_SIZES = ['1024x1024', '1024x1536', '1536x1024'];
@@ -57,7 +65,7 @@ function inferImageProtocol(provider, model) {
   // provider=openai 且模型就是 gpt-image-2 时，也归入 OpenAI 官方云端图像通道
   const models = Array.isArray(model) ? model : (model != null ? [model] : []);
   const first = String(models[0] || '').toLowerCase().trim();
-  if (p === 'openai' && first === OPENAI_IMAGE_MODEL) return 'openai_image';
+  if (p === 'openai' && isOpenAIImageModelName(first)) return 'openai_image';
   return 'openai';
 }
 
@@ -468,13 +476,14 @@ async function callOpenAIGptImageApi(config, log, opts = {}) {
     return { error: 'OpenAI gpt-image-2 未配置 API Key，请在「AI 配置」中填写 OpenAI 的 API Key' };
   }
 
-  // 模型固定 gpt-image-2：配置里为空或不是它时，一律规范化并记 warn
+  // 模型用【配置里填的那个】（公司网关会换型号，写死会导致新模型发不出去）；
+  // 只有配置为空、或填的不是 gpt-image 系列时才回退到默认值并记 warn。
   const requestedModel = String(opts.model || '').trim();
-  const model = OPENAI_IMAGE_MODEL;
-  if (requestedModel !== OPENAI_IMAGE_MODEL) {
-    safeLog.warn('[OpenAI图生] 模型已规范化为 gpt-image-2', {
+  const model = isOpenAIImageModelName(requestedModel) ? requestedModel : OPENAI_IMAGE_MODEL;
+  if (model !== requestedModel) {
+    safeLog.warn('[OpenAI图生] 模型回退为默认值', {
       requested: requestedModel || '(空)',
-      used: OPENAI_IMAGE_MODEL,
+      used: model,
     });
   }
 

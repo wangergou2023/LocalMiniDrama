@@ -260,8 +260,9 @@ async function testConnection(opts) {
 
   // --- OpenAI 官方 gpt-image-2（云端图像）---
   // 轻量校验：GET /models 验证 Key 与网络，不触发真实生图（不产生费用）
+  // 模型名按前缀识别（gpt-image-2 / gpt-image-2.5-flare / … ）—— 写死具体型号会在网关升级后失效
   if (provider === 'openai_image' || provider === 'gpt_image' || provider === 'gpt-image'
-    || (provider === 'openai' && model === 'gpt-image-2')) {
+    || (provider === 'openai' && /^gpt-image/i.test(String(model || '')))) {
     // 与图像通道用同一套归一化：内部网关常填 http://gw:port（缺 /v1），这里也要补，否则探针 404
     let modelBase = base;
     try { modelBase = require('./imageClient').resolveOpenAIImageBaseUrl({ base_url: base }); } catch (_) {}

@@ -309,7 +309,7 @@
           </template>
           <el-select v-model="form.api_protocol" style="width: 100%" placeholder="选择接口规范（自定义厂商必选）" clearable>
             <el-option label="OpenAI 兼容（大多数中转站默认）" value="openai" />
-            <el-option label="OpenAI 官方图像 gpt-image-2（/images/generations，带参考图自动改 /images/edits）" value="openai_image" />
+            <el-option label="OpenAI 图像 gpt-image 系列（/images/generations，带参考图自动改 /images/edits）" value="openai_image" />
             <el-option label="MiniMax H3（官方 V2：/v2/video_generation，模型 MiniMax-H3）" value="minimax_h3" />
           </el-select>
         </el-form-item>
@@ -955,11 +955,11 @@ const providerConfigs = {
     { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-v4-flash', 'deepseek-v4-pro'] }
   ],
   image: [
-    { id: 'openai', name: 'OpenAI', models: ['gpt-image-2'] },
+    { id: 'openai', name: 'OpenAI', models: ['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'] },
     { id: 'comfyui', name: 'ComfyUI', models: ['qwen-image-edit-2511'] }
   ],
   storyboard_image: [
-    { id: 'openai', name: 'OpenAI', models: ['gpt-image-2'] },
+    { id: 'openai', name: 'OpenAI', models: ['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'] },
     { id: 'comfyui', name: 'ComfyUI', models: ['qwen-image-edit-2511'] }
   ],
   video: [
@@ -1116,9 +1116,9 @@ const endpointPreviewInfo = computed(() => {
     submitPath = '/chat/completions'
   } else if (service_type === 'image' || service_type === 'storyboard_image') {
     if (proto === 'openai_image' || p === 'openai' || p === 'openai_image' || p === 'gpt_image' || p === 'gpt-image') {
-      // OpenAI 官方 gpt-image-2：文生图走 /images/generations；带参考图（分镜/角色一致性）自动改用 /images/edits
+      // OpenAI gpt-image 系列：文生图走 /images/generations；带参考图（分镜/角色一致性）自动改用 /images/edits
       submitPath = endpoint || '/images/generations'
-      note = 'OpenAI gpt-image-2：文生图 POST /images/generations；带参考图时自动改用 POST /images/edits'
+      note = 'OpenAI gpt-image 系列：文生图 POST /images/generations；带参考图时自动改用 POST /images/edits'
     } else {
       submitPath = endpoint || '/images/generations'  // openai 兼容：base_url 已含 /v1
     }
@@ -1186,7 +1186,7 @@ function onProviderChange(providerId) {
     form.value.endpoint = '/v2/video_generation'
     form.value.query_endpoint = '/v2/query/video_generation/{taskId}'
   }
-  // OpenAI 官方 gpt-image-2：文生图端点；带参考图时后端自动改用 /images/edits
+  // OpenAI gpt-image 系列：文生图端点；带参考图时后端自动改用 /images/edits
   if ((st === 'image' || st === 'storyboard_image')
     && (providerId === 'openai' || providerId === 'openai_image' || providerId === 'gpt_image' || providerId === 'gpt-image')) {
     form.value.endpoint = '/images/generations'

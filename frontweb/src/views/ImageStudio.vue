@@ -171,7 +171,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Upload, MagicStick } from '@element-plus/icons-vue'
@@ -205,6 +205,59 @@ const showPreview = computed({
 const generating = ref(false)
 const current = ref(null)  // { url, local_path, prompt }
 const history = ref([])
+
+// ── 刷新不丢：状态存本地 + 历史从数据库读回 ──
+/** 调试台自己的生成记录用这个 frame_type 打标，便于单独查回来（与分镜图区分开） */
+const STUDIO_FRAME_TYPE = 'studio'
+const LS_KEY = 'lm-image-studio-v1'
+
+function saveLocalState() {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify({
+      prompt: prompt.value,
+      negativePrompt: negativePrompt.value,
+      size: size.value,
+      inputImage: inputImage.value,
+      currentUrl: current.value?.url || '',
+    }))
+  } catch (_) { /* 隐私模式下 localStorage 不可用，忽略即可 */ }
+}
+
+function restoreLocalState() {
+  try {
+    const raw = localStorage.getItem(LS_KEY)
+    if (!raw) return
+    const d = JSON.parse(raw) || {}
+    if (typeof d.prompt === 'string') prompt.value = d.prompt
+    if (typeof d.negativePrompt === 'string') negativePrompt.value = d.negativePrompt
+    if (d.size) size.value = d.size
+    if (d.inputImage && d.inputImage.url) inputImage.value = d.inputImage
+  } catch (_) {}
+}
+
+/** 从数据库把以前生成过的调试图读回来（换浏览器、换机器都还在） */
+async function loadHistoryFromServer() {
+  try {
+    const res = await imagesAPI.list({ frame_type: STUDIO_FRAME_TYPE, page: 1, page_size: 60 })
+    const d = res?.data ?? res
+    const items = d?.items || d?.list || (Array.isArray(d) ? d : [])
+    const list = items
+      .map((it) => {
+        const url = assetImageUrl(it)
+        if (!url) return null
+        return { url, local_path: it.local_path || null, prompt: it.prompt || '', created_at: it.created_at }
+      })
+      .filter(Boolean)
+    if (list.length) history.value = list
+  } catch (_) { /* 读不到就算了，不影响生成 */ }
+}
+
+onMounted(() => {
+  restoreLocalState()
+  loadHistoryFromServer()
+})
+
+watch([prompt, negativePrompt, size, inputImage], saveLocalState, { deep: true })
 
 // ── 素材库选择 ──
 const showLibPicker = ref(false)
@@ -285,6 +338,8 @@ async function onGenerate() {
       prompt: prompt.value.trim(),
       negative_prompt: negativePrompt.value.trim() || undefined,
       size: size.value,
+      // 给调试台的图打标：历史可按此读回（与分镜图 / 角色图彻底分开）
+      frame_type: STUDIO_FRAME_TYPE,
       // 带输入图时后端会自动走图生图 / 参考图编辑（openai_image 通道切 /images/edits）
       reference_images: inputImage.value?.url ? [inputImage.value.url] : undefined,
     }
@@ -307,9 +362,11 @@ async function onGenerate() {
     const { url, local_path: localPath } = readImageTaskResult(task)
     if (!url) throw new Error('未获取到图片地址')
 
-    const item = { url, local_path: localPath || null, prompt: prompt.value.trim() }
+    const item = { url, local_path: localPath || null, prompt: prompt.value.trim(), created_at: new Date().toISOString() }
     current.value = item
-    history.value = [item, ...history.value].slice(0, 60)
+    // 去重：服务端历史可能已经包含它（刷新后 loadHistoryFromServer 会拉回来）
+    history.value = [item, ...history.value.filter((h) => h.url !== item.url)].slice(0, 60)
+    saveLocalState()
     ElMessage.success('生成完成')
   } catch (e) {
     ElMessage.error(e?.message || '生成失败')

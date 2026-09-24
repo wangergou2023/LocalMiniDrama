@@ -77,6 +77,7 @@ echo.
 echo [3/5] 构建前端...
 if not exist "frontweb\node_modules" (
   echo       首次运行，安装前端依赖（可能要几分钟）...
+  REM 前端【不能】加 --ignore-scripts：esbuild / vite 靠安装脚本放置自己的二进制
   pushd frontweb
   call npm install --no-audit --no-fund
   if errorlevel 1 ( popd & echo [错误] 前端依赖安装失败。 & pause & exit /b 1 )
@@ -99,8 +100,24 @@ if not exist "desktop\node_modules\@img\sharp-win32-x64" set NEED_DESKTOP_INSTAL
 if "!NEED_DESKTOP_INSTALL!"=="1" (
   echo       安装 / 修复桌面端依赖（Windows 原生版）...
   pushd desktop
-  call npm install --no-audit --no-fund
-  if errorlevel 1 ( popd & echo [错误] 桌面端依赖安装失败。 & pause & exit /b 1 )
+  REM 关键：加 --ignore-scripts。
+  REM better-sqlite3 自带各平台【N-API 预编译】（prebuilds\win32-x64.node），
+  REM 不需要现场编译；但它带 binding.gyp 又没有 install 脚本，npm 的历史默认行为会
+  REM 自动跑 node-gyp rebuild —— 那就要 Python 3 + Visual Studio C++ 生成工具（好几个 GB），
+  REM 缺了就会以 EPERM / gyp ERR! find Python 失败，整个安装中断。
+  REM 加 --ignore-scripts 后：2 秒装完，直接可用（已实测）。
+  call npm install --ignore-scripts --no-audit --no-fund
+  if errorlevel 1 (
+    popd
+    echo.
+    echo       首次安装失败 —— 可能是上一次装坏留下的残留（EPERM/文件被占用）。
+    echo       正在清掉 desktop\node_modules 后重试一次...
+    rmdir /s /q "node_modules" 2>nul
+    pushd desktop
+    call npm install --ignore-scripts --no-audit --no-fund
+    if errorlevel 1 ( popd & echo [错误] 桌面端依赖仍然装不上，请把上面的报错发出来。 & pause & exit /b 1 )
+    popd
+  )
   popd
 )
 if not exist "desktop\node_modules\@img\sharp-win32-x64" (

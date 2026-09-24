@@ -180,7 +180,13 @@ function findFreePort(preferredPort) {
  * 需自行实现。这里提供：图片/视频「另存为 + 复制链接」、链接复制、输入框编辑、文本复制。
  */
 function installContextMenu(win) {
-  // 下载前弹「另存为」对话框，默认落在系统下载目录
+  // 下载前弹「另存为」对话框，默认落在系统下载目录。
+  //
+  // ⚠️ 必须用【同步】版本 showSaveDialogSync：
+  //    will-download 是同步钩子，Electron 只在「setSavePath 尚未被调用」时才会再弹一个
+  //    它自己的保存对话框。原先用的是异步 showSaveDialog + .then(setSavePath)，
+  //    等异步回调回来时 Electron 已经弹过了，于是【一次另存弹出两个对话框】，
+  //    用户实测「要点两次保存」。改成同步后只弹一个。
   win.webContents.session.on('will-download', (_e, item) => {
     let name = '';
     try {
@@ -188,13 +194,18 @@ function installContextMenu(win) {
     } catch (_) {}
     const safe = String(name).replace(/[\\/:*?"<>|]/g, '_').slice(-120) || 'download';
     const downloads = app.getPath('downloads');
-    dialog
-      .showSaveDialog(win, { defaultPath: path.join(downloads, safe) })
-      .then((r) => {
-        if (r.canceled || !r.filePath) item.cancel();
-        else item.setSavePath(r.filePath);
-      })
-      .catch(() => item.cancel());
+    let savePath = null;
+    try {
+      // 同步返回：用户选中的路径，或 null（取消）
+      savePath = dialog.showSaveDialogSync(win, { defaultPath: path.join(downloads, safe) });
+    } catch (_) {
+      savePath = null;
+    }
+    if (!savePath) {
+      item.cancel();
+      return;
+    }
+    item.setSavePath(savePath);
   });
 
   win.webContents.on('context-menu', (_e, params) => {

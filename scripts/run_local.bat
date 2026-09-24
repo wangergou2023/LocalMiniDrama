@@ -1,7 +1,12 @@
 @echo off
+REM 本地运行（不安装）：构建前端后直接由后端在 5679 端口提供页面。
+REM 与 run_dev.bat 的区别：run_dev.bat 起的是「开发模式」（Vite 5173 热更新），
+REM 本脚本起的是「接近正式发布」的形态（前端已构建，单端口 5679）。
+REM 用法：双击 或 scripts\run_local.bat
 setlocal
-cd /d "%~dp0"
-set "ROOT=%~dp0"
+REM 脚本位于 scripts\ 下，仓库根目录是它的上一级
+cd /d "%~dp0.."
+set "ROOT=%~dp0..\"
 
 echo ============================================
 echo   LocalMiniDrama  -  local run (no install)

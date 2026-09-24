@@ -1,6 +1,12 @@
 #!/bin/bash
+# ⚠️ 已被淘汰：请用仓库根目录的「打包-Windows.bat」（它会额外体检 Windows 原生依赖：
+#    从 Linux 拷过来的 node_modules 里 sharp/better-sqlite3 是 Linux 二进制，打出来的包在
+#    Windows 上加载不了）。本脚本保留仅作参考。
+#
+# 用法（在仓库根目录执行）：bash scripts/build-windows-legacy.sh
 set -e
-cd "$(dirname "$0")"
+# 脚本现在位于 scripts/ 下，先回到仓库根目录
+cd "$(dirname "$0")/.."
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

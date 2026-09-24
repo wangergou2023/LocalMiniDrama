@@ -154,13 +154,13 @@ if not "%BUILD_RC%"=="0" (
 echo ============================================================
 echo   打包完成！
 echo ============================================================
-echo   产物目录：%CD%\release
-dir /b "release\*.exe" 2>nul
+echo   产物目录：%CD%\desktop\release
+dir /b "desktop\release\*.exe" 2>nul
 echo.
-echo   安装包：release\LocalMiniDrama-Setup-!VER!.exe
-echo   便携版：release\LocalMiniDrama !VER!.exe
+echo   安装包：desktop\release\LocalMiniDrama-Setup-!VER!.exe
+echo   便携版：desktop\release\LocalMiniDrama !VER!.exe
 echo.
 echo   把安装包发给同事即可（她那边需要是同一份代码的版本才能导入/导出素材）。
 echo.
-start "" "%CD%\release"
+start "" "%CD%\desktop\release"
 pause

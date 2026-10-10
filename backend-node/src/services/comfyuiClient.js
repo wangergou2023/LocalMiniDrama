@@ -687,9 +687,109 @@ async function waitForComfyJob(baseUrl, promptId, log, { runningBudgetMs, absolu
   throw new Error('ComfyUI' + tag + ' 等待超过绝对上限 ' + Math.round(absoluteCapMs / 3600000) + ' 小时');
 }
 
+/**
+ * 解析「提交前释放 Ollama 显存」的策略：
+ *   'auto'（默认）—— 探测 ComfyUI 同机的 Ollama，有常驻模型就让出来
+ *   'always'      —— 同上，但探测/调用失败会额外 warn，便于排查为什么没生效
+ *   'never'       —— 完全不碰
+ * 兼容布尔写法：settings.free_ollama_vram = true / false。
+ */
+function resolveFreeOllamaMode(config) {
+  try {
+    const s = typeof config?.settings === 'string' ? JSON.parse(config.settings) : (config?.settings || {});
+    const v = s && s.free_ollama_vram;
+    if (v === false || v === 'never' || v === 'false') return 'never';
+    if (v === true || v === 'always' || v === 'true') return 'always';
+    if (v === 'auto') return 'auto';
+  } catch (_) {}
+  return 'auto';
+}
+
+/**
+ * 提交工作流前，把同机 Ollama 占的显存让出来。
+ *
+ * 为什么需要：Ollama 的常驻模型会和 ComfyUI 抢同一对显卡。实测 qwen3.8-27b 常驻占 21.28 GB，
+ * 此时 H3 视频的失败形态是**加载期 OOM**（工作流能提交、参数校验也过，倒在分配显存上）：
+ *   H3VM Dev12 PRE-FLIGHT | cuda:0 free=1.65GiB used=13.93GiB   ← Ollama 占着
+ *   !!! Allocation on device 0 would exceed allowed memory ... Free (according to CUDA): 6.12 MiB
+ * 而同一条工作流在双卡腾空（239/213 MiB）时 352.91 秒正常出片。两者唯一差别就是 Ollama 在不在。
+ *
+ * 做法：Ollama 的「卸载」就是 POST /api/generate {"model": m, "keep_alive": 0}
+ * （实测 2ms 返回，显存立刻释放；模型下次被调用时自动重载，不是禁用）。
+ * 地址按 **ComfyUI 所在主机** 推断 —— 只有同机才会抢显存，跨机时探测自然失败、等于不生效。
+ *
+ * 全程 best-effort：探不到 / 调不通都只记 warn，绝不抛错影响本次生成。
+ */
+async function freeOllamaVramBeforeSubmit(comfyBaseUrl, config, log) {
+  const safeLog = log || { info() {}, warn() {}, error() {} };
+  const mode = resolveFreeOllamaMode(config);
+  if (mode === 'never') return { skipped: 'never' };
+
+  let settingsObj = {};
+  try {
+    settingsObj = typeof config?.settings === 'string' ? JSON.parse(config.settings) : (config?.settings || {});
+  } catch (_) {}
+  const port = Number(settingsObj.ollama_port) > 0 ? Number(settingsObj.ollama_port) : 11434;
+
+  let origin = null;
+  try {
+    const host = new URL(comfyBaseUrl).hostname;
+    if (host) origin = 'http://' + (host.includes(':') ? '[' + host + ']' : host) + ':' + port;
+  } catch (_) {}
+  if (!origin) return { skipped: 'bad-base-url' };
+
+  const t0 = Date.now();
+  let loaded = [];
+  try {
+    const res = await fetch(origin + '/api/ps', { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    loaded = Array.isArray(data?.models) ? data.models : [];
+  } catch (e) {
+    // 同机没有 Ollama（或不是 Ollama）很正常，属于静默跳过
+    const msg = '[ComfyUI] 提交前释放 Ollama 显存：探测 ' + origin + '/api/ps 失败（同机无 Ollama 时属正常）: ' + e.message;
+    if (mode === 'always') safeLog.warn(msg); else safeLog.info(msg);
+    return { skipped: 'no-ollama', origin, error: e.message };
+  }
+
+  if (loaded.length === 0) {
+    safeLog.info('[ComfyUI] 提交前释放 Ollama 显存：' + origin + ' 当前无常驻模型，无需释放（' + (Date.now() - t0) + 'ms）');
+    return { skipped: 'nothing-loaded', origin };
+  }
+
+  const freedGb = loaded.reduce((s, m) => s + (Number(m.size_vram) || 0), 0) / 1e9;
+  const names = loaded.map((m) => m.name).filter(Boolean);
+  safeLog.info('[ComfyUI] 提交前释放 Ollama 显存：发现 ' + names.length + ' 个常驻模型（合计 ' + freedGb.toFixed(2) + ' GB），开始卸载', { origin, models: names });
+
+  const failed = [];
+  for (const name of names) {
+    try {
+      const res = await fetch(origin + '/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: name, keep_alive: 0 }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    } catch (e) {
+      failed.push(name + ': ' + e.message);
+    }
+  }
+
+  const ms = Date.now() - t0;
+  if (failed.length) {
+    safeLog.warn('[ComfyUI] 部分 Ollama 模型卸载失败（不影响本次生成，但显存可能仍被占用）: ' + failed.join('; '));
+  }
+  safeLog.info('[ComfyUI] 提交前释放 Ollama 显存：已请求卸载 ' + (names.length - failed.length) + '/' + names.length
+    + ' 个模型，让出约 ' + freedGb.toFixed(2) + ' GB，耗时 ' + ms + 'ms');
+  return { origin, unloaded: names.length - failed.length, freedGb, ms, failed };
+}
+
 async function callComfyUIImageApi(config, log, opts) {
   const { prompt, size, image_gen_id, reference_image_urls, files_base_url, storage_local_path } = opts;
   const baseUrl = (config.base_url || 'http://127.0.0.1:8188').replace(/\/$/, '');
+  // 提交前让出同机 Ollama 占的显存（见 freeOllamaVramBeforeSubmit 注释）
+  await freeOllamaVramBeforeSubmit(baseUrl, config, log);
   const hasRefs = Array.isArray(reference_image_urls) && reference_image_urls.some(Boolean);
 
   // 解析 settings 中的 workflow 字段
@@ -1199,6 +1299,9 @@ async function callComfyUIVideoApi(config, log, opts) {
   // 非 H3 路径只看 image_url，不受影响。
   const firstFrameUrl = opts.first_frame_url || opts.first_frame_local_path || null;
   const lastFrameUrl = opts.last_frame_url || opts.last_frame_local_path || null;  const baseUrl = (config.base_url || "http://127.0.0.1:8188").replace(/\/$/, "");
+  // 提交前让出同机 Ollama 占的显存 —— 视频权重远超双卡显存，Ollama 常驻时必 OOM
+  // （实测：Ollama 占着时倒在校验后的加载期分配，腾空后同一条工作流 352.91 秒出片）。
+  await freeOllamaVramBeforeSubmit(baseUrl, config, log);
 
   const fs = require("fs");
   const path = require("path");
@@ -1446,7 +1549,7 @@ async function callComfyUIVideoApi(config, log, opts) {
   throw new Error('ComfyUI 视频配置未选择工作流：请在「AI 配置 → 视频服务」中选择工作流文件（settings.workflow）');
 }
 
-module.exports = { callComfyUIImageApi, callComfyUIVideoApi, resumeComfyUIVideo, cancelComfyUIJob, buildComfyVideoViewUrl, parseSize, hasH3ReferenceNode, applyH3RefsToApi, applyH3GuideFramesToApi, prepareReferenceAudios, prepareReferenceImages, uploadFileToComfyUI, isLocalComfyHost, resolveReferenceTransfer };
+module.exports = { callComfyUIImageApi, callComfyUIVideoApi, resumeComfyUIVideo, cancelComfyUIJob, buildComfyVideoViewUrl, parseSize, hasH3ReferenceNode, applyH3RefsToApi, applyH3GuideFramesToApi, prepareReferenceAudios, prepareReferenceImages, uploadFileToComfyUI, isLocalComfyHost, resolveReferenceTransfer, freeOllamaVramBeforeSubmit, resolveFreeOllamaMode };
 
 // 经典/首尾帧镜头的主图标签（keyframe still for this shot）在此映射为「本镜关键帧参考」行，
 // 避免因没有匹配分支而被兜底写成「道具」参考。

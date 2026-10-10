@@ -1,6 +1,6 @@
 // 与 Go pkg/ai + application/services/ai_service 对齐：读取 ai_service_configs，调用 OpenAI 兼容的 chat completions
 const aiConfigService = require('./aiConfigService');
-const { applyDeepSeekChatOptions } = require('./deepseekConfig');
+const { applyDeepSeekChatOptions, applyExplicitReasoningEffort } = require('./deepseekConfig');
 const https = require('https');
 const http = require('http');
 const { StringDecoder } = require('string_decoder');
@@ -181,8 +181,17 @@ function postJSONStream(url, headers, body, silenceTimeoutMs = 60000, onProgress
           if (data === '[DONE]') continue;
           try {
             const evt = JSON.parse(data);
-            const rc = evt.choices?.[0]?.delta?.reasoning_content;
-            if (rc) reasoningChars += rc.length;   // 只计数（思考内容不进正文），用于空返回时的诊断
+            // 思考内容的字段名各端不一致：OpenAI/DeepSeek 系用 reasoning_content，
+            // Ollama 的 OpenAI 兼容层用 reasoning。原先只读前者，导致本机 Ollama 场景下
+            // reasoningChars 恒为 0 —— 空返回时报错丢失"思考输出了多少字"这条关键线索。
+            const rc = evt.choices?.[0]?.delta?.reasoning_content || evt.choices?.[0]?.delta?.reasoning;
+            if (rc) {
+              reasoningChars += rc.length;   // 只计数（思考内容不进正文），用于空返回时的诊断
+              // 思考阶段也要透出计数：原先 onProgress 只在 delta.content 非空时才调用，
+              // 而"思考吃满预算、正文 0 字"这个最需要诊断的场景里 content 全程为空，
+              // 于是计数永远传不给调用方，报错只能退化成一句无信息量的"AI 返回内容为空"。
+              if (onProgress) onProgress(accumulated.length, 'reasoning', accumulated, reasoningChars);
+            }
             const delta = evt.choices?.[0]?.delta?.content;
             if (delta) {
               if (firstToken) {
@@ -381,13 +390,18 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
     ...(json_mode ? { response_format: { type: 'json_object' } } : {}),
   };
   body = applyDeepSeekChatOptions(config, body);
+  // 显式声明的思考强度透传（如 {"reasoning_effort":"none"} 关闭本地模型思考）。
+  // 必须排在上一步之后：applyDeepSeekChatOptions 在非 thinking 分支里会 delete reasoning_effort。
+  body = applyExplicitReasoningEffort(config, body);
   const startMs = Date.now();
   log.info('AI generateText request', { url: url.slice(0, 60), model, max_tokens: finalMaxTokens ?? '(model default)', json_mode, stream: true });
   // 进度日志节流：每积累约 500 字符记一次。
   // 旧写法 `receivedLen % 500 < 20` 在 500..519 这 20 个连续取值上全部成立，等于每 500 字打 20 行，
   // 实测日志里 30% 都是这一行（2325/7708），把真正的报错埋掉了。
   let lastProgressLogAt = 0;
-  const res = await postJSONStream(url, { Authorization: 'Bearer ' + (config.api_key || '') }, body, 60000, (receivedLen, event, accumulated) => {
+  let reasoningChars = 0;   // 思考输出字数（只统计、不进正文），空返回时用于诊断
+  const res = await postJSONStream(url, { Authorization: 'Bearer ' + (config.api_key || '') }, body, 60000, (receivedLen, event, accumulated, reasoningLen) => {
+    if (typeof reasoningLen === 'number') reasoningChars = reasoningLen;   // 由 postJSONStream 透出
     if (event === 'first_token') {
       log.info('AI stream first token', { model, ttft_ms: Date.now() - startMs });
     } else if (receivedLen - lastProgressLogAt >= 500) {
@@ -401,7 +415,10 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
   const content = res.body;
   const elapsedMs = Date.now() - startMs;
   if (!content) {
-    throw new Error('AI 返回内容为空');
+    // 带上诊断信息：思考 token 也计入 max_tokens，预算被思考吃满时正文为 0 字、finish_reason 只会是 length。
+    // 原先这里只丢一句"AI 返回内容为空"，实测把排查方向完全带偏（本地 Ollama 思考模型必中），
+    // 故与 streamGenerateText 的报错保持同样的提示口径。
+    throw new Error(`AI 返回内容为空（max_tokens=${finalMaxTokens ?? '默认'}，思考输出 ${reasoningChars} 字，正文 0 字 —— 通常是预算被思考吃满，可重试、调大 max_tokens，或对该模型关闭思考 reasoning_effort=none）`);
   }
   log.info('AI raw response received', { model, text_length: content.length, elapsed_ms: elapsedMs, text_preview: content.slice(0, 200) });
   return content;
@@ -490,6 +507,8 @@ async function streamGenerateText(db, log, serviceType, userPrompt, systemPrompt
     ...(json_mode ? { response_format: { type: 'json_object' } } : {}),
   };
   body = applyDeepSeekChatOptions(config, body);
+  // 与 generateText 同样：显式声明的思考强度透传，必须排在 applyDeepSeekChatOptions 之后。
+  body = applyExplicitReasoningEffort(config, body);
   const silenceMs = options.silence_timeout_ms != null ? Number(options.silence_timeout_ms) : 120000;
   const startMs = Date.now();
   log.info('AI streamGenerateText request', {
@@ -769,4 +788,5 @@ module.exports = {
   EXTRACT_PROMPTS,
   isRefusalResponse,
   postJSONWithTimeout,
+  postJSONStream,   // 导出仅供单测覆盖 SSE 解析（reasoning / reasoning_content 字段兼容）
 };

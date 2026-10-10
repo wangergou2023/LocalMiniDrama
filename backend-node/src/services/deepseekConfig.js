@@ -122,9 +122,31 @@ function applyDeepSeekConnectivityOptions(config, body) {
   return next;
 }
 
+/**
+ * 通用「思考强度」透传。
+ *
+ * 背景：本地 Ollama / 部分 OpenAI 兼容端点用 `reasoning_effort` 控制思考强度，且模型模板
+ * 可能把它默认拉满（实测 qwen3.8-27b 模板默认 xhigh）。思考 token **计入 max_tokens**，
+ * 于是一个"只想让它写剧本"的请求会把预算全烧在思考上、正文一个字都不出：
+ * 实测单集剧本 2000 预算被吃满；抬到 12000 后思考仍用掉 11999 token，正文依旧为 0。
+ *
+ * 设计：仅当配置**显式**声明 settings.reasoning_effort 时原样透传，
+ * 例如 {"reasoning_effort":"none"} 关闭思考（实测同一提示词 378s 失败 → 25.6s 成功）。
+ * 默认不生效 —— 既不打扰任何现有配置，也不会给不认该字段的第三方中转站发多余参数（避免 400）。
+ *
+ * 调用顺序：必须在 applyDeepSeekChatOptions **之后**执行，
+ * 因为后者在非 thinking 分支里有 `delete next.reasoning_effort`。
+ */
+function applyExplicitReasoningEffort(config, body) {
+  const raw = parseSettings(config && config.settings).reasoning_effort;
+  if (raw == null || raw === '') return body;
+  return { ...body, reasoning_effort: String(raw) };
+}
+
 module.exports = {
   applyDeepSeekChatOptions,
   applyDeepSeekConnectivityOptions,
+  applyExplicitReasoningEffort,
   isDeepSeekOfficialConfig,
   parseSettings,
   resolveDeepSeekOptions,

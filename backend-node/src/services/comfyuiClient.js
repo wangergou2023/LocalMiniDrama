@@ -258,16 +258,122 @@ function resolveComfyInputDir(config) {
   return path.join(require('os').homedir(), 'ComfyUI', 'input');
 }
 
-async function prepareReferenceImages(referenceUrls, comfyuiInputDir, log, storageLocalPath) {
+/** 判据用主机名，不看端口：ComfyUI 与后端同机时写本地 input 目录最快，跨机则必须走 HTTP 上传。 */
+const COMFY_LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
+
+function isLocalComfyHost(baseUrl) {
+  try {
+    const h = String(new URL(baseUrl).hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+    return COMFY_LOCAL_HOSTS.has(h) || h.endsWith('.localhost');
+  } catch (_) {
+    return true;   // 解析不出来就当作本地，保持改动前的原有行为
+  }
+}
+
+/**
+ * 参考素材的传输方式：
+ * - 'upload'     走 ComfyUI 自带的 POST /upload/image（跨机部署唯一可行的手段）
+ * - 'filesystem' 直接写进 ComfyUI 的 input 目录（要求与 ComfyUI 同机或共享文件系统）
+ *
+ * 为什么必须有 'upload'：后端与 ComfyUI 不在同一台机器时，写本地 input 目录只是写到了
+ * 「后端自己的」磁盘上，ComfyUI 在它的 input 目录里找不到该文件名，会在**校验阶段**直接失败：
+ *   HTTP 400 prompt_outputs_failed_validation / "image - Invalid image file"
+ * 此时工作流还没开始跑，任何显存/模型问题都还没轮到。
+ *
+ * 默认按 base_url 自动判断；可用 settings.reference_transfer 强制覆盖（排查用）。
+ */
+function resolveReferenceTransfer(config, baseUrl) {
+  try {
+    const s = typeof config?.settings === 'string' ? JSON.parse(config.settings) : (config?.settings || {});
+    if (s && (s.reference_transfer === 'upload' || s.reference_transfer === 'filesystem')) {
+      return s.reference_transfer;
+    }
+  } catch (_) {}
+  return isLocalComfyHost(baseUrl) ? 'filesystem' : 'upload';
+}
+
+/**
+ * 通过 ComfyUI 自带的 POST /upload/image 把本地文件送进它的 input 目录，
+ * 返回它在 ComfyUI 侧的文件名（有 subfolder 时拼成 "subfolder/name"，正是 LoadImage 认的写法）。
+ *
+ * 手写 multipart 而不依赖第三方库：与 uploadService.uploadToImageProxy 保持一致的风格。
+ */
+async function uploadFileToComfyUI(baseUrl, filePath, log, timeoutMs = 180000) {
+  const buf = fs.readFileSync(filePath);
+  const filename = path.basename(filePath);
+  const boundary = 'comfyref_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  // ComfyUI 的 /upload/image 表单字段固定为 image，可带 type / subfolder / overwrite
+  const part = (name, value) =>
+    `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`;
+  const head =
+    `--${boundary}\r\nContent-Disposition: form-data; name="image"; filename="${filename}"\r\n` +
+    'Content-Type: application/octet-stream\r\n\r\n';
+  const body = Buffer.concat([
+    Buffer.from(head, 'utf-8'),
+    buf,
+    Buffer.from('\r\n' + part('type', 'input') + part('overwrite', 'true') + `--${boundary}--\r\n`, 'utf-8'),
+  ]);
+
+  const url = String(baseUrl).replace(/\/$/, '') + '/upload/image';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    body,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const raw = await res.text();
+  if (!res.ok) throw new Error(`ComfyUI /upload/image HTTP ${res.status}: ${raw.slice(0, 200)}`);
+  let data = null;
+  try { data = JSON.parse(raw); } catch (_) {}
+  if (!data || !data.name) throw new Error(`ComfyUI /upload/image 返回异常: ${raw.slice(0, 200)}`);
+  const sub = data.subfolder ? String(data.subfolder).replace(/^\/+|\/+$/g, '') : '';
+  const name = sub ? sub + '/' + data.name : data.name;
+  if (log && log.info) log.info('[ComfyUI] 已上传到 ComfyUI: ' + filename + ' -> ' + name + ' (' + Math.round(buf.length / 1024) + ' KB)');
+  return name;
+}
+
+/**
+ * 把已落到本地临时文件的参考素材送进 ComfyUI：优先 HTTP 上传；
+ * 上传失败则回退为「写 input 目录」，保证同机部署/共享文件系统下的老路径仍可用。
+ * 无论成功失败都会清掉临时文件。
+ */
+async function uploadForComfy(baseUrl, localPath, comfyuiInputDir, fallbackName, log, label, via, ref) {
+  try {
+    const name = await uploadFileToComfyUI(baseUrl, localPath, log);
+    log.info('[ComfyUI] ' + label + ' 已就绪 (' + via + '/upload): ' + String(ref).slice(0, 120) + ' -> ' + name);
+    return name;
+  } catch (e) {
+    try {
+      fs.mkdirSync(comfyuiInputDir, { recursive: true });
+      fs.copyFileSync(localPath, path.join(comfyuiInputDir, fallbackName));
+      log.warn('[ComfyUI] ' + label + ' 上传失败，已回退写入 input 目录（仅在与 ComfyUI 同机/共享文件系统时有效）: ' + e.message);
+      return fallbackName;
+    } catch (e2) {
+      throw new Error('上传失败且回退写目录也失败: ' + e.message + ' / ' + e2.message);
+    }
+  } finally {
+    try { fs.unlinkSync(localPath); } catch (_) {}
+  }
+}
+
+async function prepareReferenceImages(referenceUrls, comfyuiInputDir, log, storageLocalPath, opts = {}) {
   if (!Array.isArray(referenceUrls) || referenceUrls.length === 0) return [];
   const filenames = [];
   const srcIndices = [];
-  for (let i = 0; i < referenceUrls.length; i++) {
+  const total = referenceUrls.length;
+  const baseUrl = opts.baseUrl || '';
+  const useUpload = opts.transfer === 'upload' && !!baseUrl;
+  // 上传模式同样先落本机临时目录，但**沿用最终文件名**：这样传到 ComfyUI 侧的名字与
+  // filesystem 模式完全一致，排查时不会看到一串临时名，也不会把 pid/时间戳痕迹带进 ComfyUI。
+  const tmpDir = useUpload ? path.join(require('os').tmpdir(), 'comfyui-ref-' + process.pid) : null;
+  if (useUpload) fs.mkdirSync(tmpDir, { recursive: true });
+  for (let i = 0; i < total; i++) {
     const ref = referenceUrls[i];
     if (!ref) continue;
     try {
       const name = 'ref_' + Date.now() + '_' + i + '.png';
-      const destPath = path.join(comfyuiInputDir, name);
+      // 复用下面同一套「取源」分支，只把落地目标从 input 目录换成临时目录
+      const destPath = useUpload ? path.join(tmpDir, name) : path.join(comfyuiInputDir, name);
       let via = null;
       if (ref.startsWith('data:')) {
         const base64Data = ref.replace(/^data:image\/\w+;base64,/, '');
@@ -283,27 +389,38 @@ async function prepareReferenceImages(referenceUrls, comfyuiInputDir, log, stora
         fs.copyFileSync(path.join(storageLocalPath, ref.replace(/^\//, '')), destPath);
         via = 'storage-rel';
       } else {
-        log.warn('[ComfyUI] 参考图 ' + (i + 1) + '/' + referenceUrls.length + ' 未找到，跳过: ' + String(ref).slice(0, 160));
+        log.warn('[ComfyUI] 参考图 ' + (i + 1) + '/' + total + ' 未找到，跳过: ' + String(ref).slice(0, 160));
         continue;
       }
-      log.info('[ComfyUI] 参考图 ' + (i + 1) + '/' + referenceUrls.length + ' 已就绪 (' + via + '): ' + String(ref).slice(0, 120) + ' -> ' + name);
-      filenames.push(name);
+      const comfyName = useUpload
+        ? await uploadForComfy(baseUrl, destPath, comfyuiInputDir, name, log, '参考图 ' + (i + 1) + '/' + total, via, ref)
+        : name;
+      if (!useUpload) {
+        log.info('[ComfyUI] 参考图 ' + (i + 1) + '/' + total + ' 已就绪 (' + via + '): ' + String(ref).slice(0, 120) + ' -> ' + name);
+      }
+      filenames.push(comfyName);
       srcIndices.push(i);
     } catch (e) {
-      log.warn('[ComfyUI] 参考图 ' + (i + 1) + '/' + referenceUrls.length + ' 处理失败: ' + String(ref).slice(0, 120) + ' err=' + e.message);
+      log.warn('[ComfyUI] 参考图 ' + (i + 1) + '/' + total + ' 处理失败: ' + String(ref).slice(0, 120) + ' err=' + e.message);
     }
   }
+  if (tmpDir) { try { fs.rmdirSync(tmpDir); } catch (_) {} }   // 仅在目录已空时成功，失败无需处理
   filenames.srcIndices = srcIndices;
   return filenames;
 }
 
 /** 把音频参考 URL/路径准备进 ComfyUI input 目录，返回可写入 LoadAudio 的 [{name, ext}] 列表（含 srcIndices 对齐）。 */
-async function prepareReferenceAudios(referenceUrls, comfyuiInputDir, log, storageLocalPath) {
+async function prepareReferenceAudios(referenceUrls, comfyuiInputDir, log, storageLocalPath, opts = {}) {
   if (!Array.isArray(referenceUrls) || referenceUrls.length === 0) return [];
   const filenames = [];
   const srcIndices = [];
+  const total = referenceUrls.length;
+  const baseUrl = opts.baseUrl || '';
+  const useUpload = opts.transfer === 'upload' && !!baseUrl;
+  const tmpDir = useUpload ? path.join(require('os').tmpdir(), 'comfyui-ref-' + process.pid) : null;
+  if (useUpload) fs.mkdirSync(tmpDir, { recursive: true });
   const AUDIO_EXTS = ['.mp3', '.wav', '.m4a', '.oga', '.ogg', '.aac', '.flac', '.mp4'];
-  for (let i = 0; i < referenceUrls.length; i++) {
+  for (let i = 0; i < total; i++) {
     const ref = referenceUrls[i];
     if (!ref) continue;
     try {
@@ -311,7 +428,7 @@ async function prepareReferenceAudios(referenceUrls, comfyuiInputDir, log, stora
       const ext = '.' + (extMatch ? extMatch[1].toLowerCase() : 'mp3');
       const safeExt = AUDIO_EXTS.includes(ext) ? ext : '.mp3';
       const name = 'ref_audio_' + Date.now() + '_' + i + safeExt;
-      const destPath = path.join(comfyuiInputDir, name);
+      const destPath = useUpload ? path.join(tmpDir, name) : path.join(comfyuiInputDir, name);
       let via = null;
       if (ref.startsWith('data:audio')) {
         const base64Data = ref.replace(/^data:audio\/[^;]+;base64,/, '');
@@ -338,20 +455,27 @@ async function prepareReferenceAudios(referenceUrls, comfyuiInputDir, log, stora
           continue;
         }
       }
-      log.info('[ComfyUI] 参考音频 ' + (i + 1) + '/' + referenceUrls.length + ' 已就绪 (' + via + '): ' + String(ref).slice(0, 120) + ' -> ' + name);
       // H3 音色参考裁到 4 秒（见 H3_VOICE_REF_MAX_SECONDS 注释）。非 H3 路径不经过本函数。
+      // 裁剪在临时文件上做；changed 时 trimVoiceReference 会删掉原文件、只留 _trim.wav。
       const trimmed = trimVoiceReference(destPath, log);
       const finalName = trimmed.changed ? path.basename(trimmed.path) : name;
       if (trimmed.changed) {
         log.info('[ComfyUI] 音色参考已裁剪 ' + trimmed.from.toFixed(2) + 's -> ' + trimmed.to.toFixed(2) + 's'
           + (H3_VOICE_REF_SKIP_HEAD_SECONDS > 0 ? '（另跳过开头 ' + H3_VOICE_REF_SKIP_HEAD_SECONDS + 's）' : '') + ': ' + finalName);
       }
-      filenames.push(finalName);
+      let comfyName = finalName;
+      if (useUpload) {
+        comfyName = await uploadForComfy(baseUrl, trimmed.path, comfyuiInputDir, finalName, log, '参考音频 ' + (i + 1) + '/' + total, via, ref);
+      } else {
+        log.info('[ComfyUI] 参考音频 ' + (i + 1) + '/' + total + ' 已就绪 (' + via + '): ' + String(ref).slice(0, 120) + ' -> ' + name);
+      }
+      filenames.push(comfyName);
       srcIndices.push(i);
     } catch (e) {
       log.warn('[ComfyUI] 参考音频 ' + (i + 1) + '/' + referenceUrls.length + ' 处理失败: ' + String(ref).slice(0, 120) + ' err=' + e.message);
     }
   }
+  if (tmpDir) { try { fs.rmdirSync(tmpDir); } catch (_) {} }   // 仅在目录已空时成功，失败无需处理
   filenames.srcIndices = srcIndices;
   return filenames;
 }
@@ -588,10 +712,12 @@ async function callComfyUIImageApi(config, log, opts) {
 
     // 准备参考图
     const inputDir = resolveComfyInputDir(config);
+    // 参考素材传输方式：跨机 ComfyUI 必须走 HTTP 上传（写本地 input 目录它看不到）
+    const refOpts = { baseUrl, transfer: resolveReferenceTransfer(config, baseUrl) };
     if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir, { recursive: true });
     let refFilenames = [];
     if (hasRefs) {
-      refFilenames = await prepareReferenceImages(reference_image_urls.filter(Boolean), inputDir, log, storage_local_path);
+      refFilenames = await prepareReferenceImages(reference_image_urls.filter(Boolean), inputDir, log, storage_local_path, refOpts);
       log.info('[ComfyUI/' + workflowFile + '] Prepared ' + refFilenames.length + ' reference images');
     }
 
@@ -1115,10 +1241,12 @@ async function callComfyUIVideoApi(config, log, opts) {
 
   // Prepare input image
   const inputDir = resolveComfyInputDir(config);
+  // 参考素材传输方式：跨机 ComfyUI 必须走 HTTP 上传（写本地 input 目录它看不到）
+  const refOpts = { baseUrl, transfer: resolveReferenceTransfer(config, baseUrl) };
   if (!fs.existsSync(inputDir)) fs.mkdirSync(inputDir, { recursive: true });
   let imgName = "example.png";
   if (image_url) {
-    const prepared = await prepareReferenceImages([image_url], inputDir, log, storage_local_path);
+    const prepared = await prepareReferenceImages([image_url], inputDir, log, storage_local_path, refOpts);
     if (prepared.length > 0) imgName = prepared[0];
     else log.warn("[ComfyUI/Video] Failed to prepare input image: " + String(image_url).slice(0, 120));
   }
@@ -1163,14 +1291,14 @@ async function callComfyUIVideoApi(config, log, opts) {
       const rawLabels = Array.isArray(reference_labels) ? reference_labels : [];
       const items = rawUrls.map((u, i) => ({ url: u, label: rawLabels[i] || '' }));
       if (items.length) {
-        const prepped = await prepareReferenceImages(items.map((it) => it.url), inputDir, log, storage_local_path);
+        const prepped = await prepareReferenceImages(items.map((it) => it.url), inputDir, log, storage_local_path, refOpts);
         refImages = prepped;
         const srcIndices = prepped.srcIndices || items.map((_, i) => i);
         refLabelsArr = srcIndices.map((si) => (items[si] ? items[si].label : ''));
       }
       if (!refImages || !refImages.length) {
         if (image_url) {
-          refImages = await prepareReferenceImages([image_url], inputDir, log, storage_local_path);
+          refImages = await prepareReferenceImages([image_url], inputDir, log, storage_local_path, refOpts);
           refLabelsArr = [];
         } else {
           refImages = [];
@@ -1187,7 +1315,7 @@ async function callComfyUIVideoApi(config, log, opts) {
         audioNames.unshift(voice_reference_name ? String(voice_reference_name) : '');
       }
       if (audioUrls.length) {
-        refAudios = await prepareReferenceAudios(audioUrls, inputDir, log, storage_local_path);
+        refAudios = await prepareReferenceAudios(audioUrls, inputDir, log, storage_local_path, refOpts);
         voiceRefLabels = audioNames;
       }
     }
@@ -1242,11 +1370,11 @@ async function callComfyUIVideoApi(config, log, opts) {
         try {
           const gf = {};
           if (wantFirst) {
-            const p = await prepareReferenceImages([wantFirst], inputDir, log, storage_local_path);
+            const p = await prepareReferenceImages([wantFirst], inputDir, log, storage_local_path, refOpts);
             if (p && p.length) gf.first = p[0];
           }
           if (wantLast) {
-            const p = await prepareReferenceImages([wantLast], inputDir, log, storage_local_path);
+            const p = await prepareReferenceImages([wantLast], inputDir, log, storage_local_path, refOpts);
             if (p && p.length) gf.last = p[0];
           }
           if (gf.first || gf.last) guideFrames = gf;
@@ -1318,7 +1446,7 @@ async function callComfyUIVideoApi(config, log, opts) {
   throw new Error('ComfyUI 视频配置未选择工作流：请在「AI 配置 → 视频服务」中选择工作流文件（settings.workflow）');
 }
 
-module.exports = { callComfyUIImageApi, callComfyUIVideoApi, resumeComfyUIVideo, cancelComfyUIJob, buildComfyVideoViewUrl, parseSize, hasH3ReferenceNode, applyH3RefsToApi, applyH3GuideFramesToApi, prepareReferenceAudios };
+module.exports = { callComfyUIImageApi, callComfyUIVideoApi, resumeComfyUIVideo, cancelComfyUIJob, buildComfyVideoViewUrl, parseSize, hasH3ReferenceNode, applyH3RefsToApi, applyH3GuideFramesToApi, prepareReferenceAudios, prepareReferenceImages, uploadFileToComfyUI, isLocalComfyHost, resolveReferenceTransfer };
 
 // 经典/首尾帧镜头的主图标签（keyframe still for this shot）在此映射为「本镜关键帧参考」行，
 // 避免因没有匹配分支而被兜底写成「道具」参考。
